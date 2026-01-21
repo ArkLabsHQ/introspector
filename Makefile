@@ -1,4 +1,4 @@
-.PHONY: build build-all clean cov docker-run docker-stop droppg droppgtest help integrationtest lint migrate pg pgsqlc pgtest pgmigrate psql proto proto-lint run run-light run-signer run-wallet run-wallet-nosigner run-simulation run-simulation-and-setup run-large-simulation run-simulation-exact-batch run-simulation-min-batch run-simulation-custom sqlc test vet
+.PHONY: build docker-run docker-stop integrationtest run proto proto-lint
 
 define setup_env
     $(eval include $(1))
@@ -33,3 +33,7 @@ docker-run:
 docker-stop:
 	@echo "Stopping dockerized arkd and arkd wallet in test mode on regtest..."
 	@docker compose -f docker-compose.regtest.yml down -v
+
+build:
+	@echo "Building introspector..."
+	@go build -o build/introspector cmd/introspector.go
