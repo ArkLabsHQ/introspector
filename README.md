@@ -18,7 +18,7 @@ Returns service information including the signer's public key.
 ### SubmitTx
 Submits an Ark transaction for signing along with associated checkpoint transactions.
 
-**Endpoint**: `POST /v1/tx/submit`
+**Endpoint**: `POST /v1/tx`
 
 **Request**:
 ```json
@@ -33,6 +33,73 @@ Submits an Ark transaction for signing along with associated checkpoint transact
 {
   "signed_ark_tx": "base64_encoded_signed_psbt",
   "signed_checkpoint_txs": ["base64_encoded_signed_checkpoint_psbt1", "..."]
+}
+```
+
+### SubmitIntent
+Submits an unsigned intent proof for signing. Executes Arkade scripts on the intent proof and signs it. Must be used before registration of the intent.
+
+**Endpoint**: `POST /v1/intent`
+
+**Request**:
+```json
+{
+  "intent": {
+    "proof": "base64_encoded_psbt",
+    "message": "base64_encoded_register_message"
+  }
+}
+```
+
+**Response**:
+```json
+{
+  "signed_proof": "base64_encoded_signed_psbt"
+}
+```
+
+### SubmitFinalization
+Submits a batch finalization request for signing. Signs forfeits and commitment transactions if the intent proof contains the signer's signature. Validates that forfeits are part of the provided connector and vtxo trees.
+
+**Endpoint**: `POST /v1/finalization`
+
+**Request**:
+```json
+{
+  "signed_intent": {
+    "proof": "base64_encoded_signed_psbt",
+    "message": "base64_encoded_register_message"
+  },
+  "forfeits": ["base64_encoded_forfeit_psbt1", "..."],
+  "connector_tree": [
+    {
+      "txid": "transaction_id",
+      "tx": "base64_encoded_transaction",
+      "children": {
+        "0": "child_txid_1",
+        "1": "child_txid_2"
+      }
+    }
+  ],
+  "vtxo_tree": [
+    {
+      "txid": "transaction_id",
+      "tx": "base64_encoded_transaction",
+      "children": {
+        "0": "child_txid_1",
+        "1": "child_txid_2"
+      }
+    }
+  ],
+  "commitment_tx": "base64_encoded_psbt"
+}
+```
+
+**Response**:
+```json
+{
+  "signed_forfeits": ["base64_encoded_signed_forfeit_psbt1", "..."],
+  "signed_commitment_tx": "base64_encoded_signed_psbt"
 }
 ```
 
