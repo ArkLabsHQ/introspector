@@ -588,7 +588,7 @@ const file_introspector_v1_service_proto_rawDesc = "" +
 	"\fSubmitIntent\x12$.introspector.v1.SubmitIntentRequest\x1a%.introspector.v1.SubmitIntentResponse\"\x12\xb2J\x0fB\x01*\"\n" +
 	"/v1/intent\x12\x87\x01\n" +
 	"\x12SubmitFinalization\x12*.introspector.v1.SubmitFinalizationRequest\x1a+.introspector.v1.SubmitFinalizationResponse\"\x18\xb2J\x15B\x01*\"\x10/v1/finalizationB\xc2\x01\n" +
-	"\x13com.introspector.v1B\fServiceProtoP\x01Z@github.com/arkade-os/introspector/introspector/v1;introspectorv1\xa2\x02\x03IXX\xaa\x02\x0fIntrospector.V1\xca\x02\x0fIntrospector\\V1\xe2\x02\x1bIntrospector\\V1\\GPBMetadata\xea\x02\x10Introspector::V1b\x06proto3"
+	"\x13com.introspector.v1B\fServiceProtoP\x01Z@github.com/ArkLabsHQ/introspector/introspector/v1;introspectorv1\xa2\x02\x03IXX\xaa\x02\x0fIntrospector.V1\xca\x02\x0fIntrospector\\V1\xe2\x02\x1bIntrospector\\V1\\GPBMetadata\xea\x02\x10Introspector::V1b\x06proto3"
 
 var (
 	file_introspector_v1_service_proto_rawDescOnce sync.Once

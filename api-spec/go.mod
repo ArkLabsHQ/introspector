@@ -1,4 +1,4 @@
-module github.com/arkade-os/arkd/api-spec
+module github.com/ArkLabsHQ/introspector/api-spec
 
 go 1.25
 

@@ -3,7 +3,7 @@ package application
 import (
 	"fmt"
 
-	"github.com/arkade-os/introspector/pkg/arkade"
+	"github.com/ArkLabsHQ/introspector/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil/psbt"

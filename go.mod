@@ -1,23 +1,23 @@
-module github.com/arkade-os/introspector
+module github.com/ArkLabsHQ/introspector
 
 go 1.25.3
 
 replace github.com/btcsuite/btcd/btcec/v2 => github.com/btcsuite/btcd/btcec/v2 v2.3.3
 
-replace github.com/arkade-os/introspector/pkg/arkade => ./pkg/arkade
+replace github.com/ArkLabsHQ/introspector/pkg/arkade => ./pkg/arkade
 
-replace github.com/arkade-os/introspector/pkg/client => ./pkg/client
+replace github.com/ArkLabsHQ/introspector/pkg/client => ./pkg/client
 
-replace github.com/arkade-os/introspector/api-spec => ./api-spec
+replace github.com/ArkLabsHQ/introspector/api-spec => ./api-spec
 
 require (
+	github.com/ArkLabsHQ/introspector/api-spec v0.0.0-00010101000000-000000000000
+	github.com/ArkLabsHQ/introspector/pkg/arkade v0.0.0-00010101000000-000000000000
+	github.com/ArkLabsHQ/introspector/pkg/client v0.0.0-00010101000000-000000000000
 	github.com/arkade-os/arkd/pkg/ark-lib v0.8.0
 	github.com/arkade-os/arkd/pkg/errors v0.0.0-20251020193908-f401a905e83f
 	github.com/arkade-os/arkd/pkg/macaroons v0.7.0
 	github.com/arkade-os/go-sdk v0.8.1
-	github.com/arkade-os/introspector/api-spec v0.0.0-00010101000000-000000000000
-	github.com/arkade-os/introspector/pkg/arkade v0.0.0-00010101000000-000000000000
-	github.com/arkade-os/introspector/pkg/client v0.0.0-00010101000000-000000000000
 	github.com/btcsuite/btcd v0.24.3-0.20240921052913-67b8efd3ba53
 	github.com/btcsuite/btcd/btcec/v2 v2.3.5
 	github.com/btcsuite/btcd/btcutil/psbt v1.1.9

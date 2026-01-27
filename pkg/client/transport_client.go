@@ -3,7 +3,7 @@ package client
 import (
 	"context"
 
-	introspectorv1 "github.com/arkade-os/introspector/api-spec/protobuf/gen/introspector/v1"
+	introspectorv1 "github.com/ArkLabsHQ/introspector/api-spec/protobuf/gen/introspector/v1"
 	"google.golang.org/grpc"
 )
 

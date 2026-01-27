@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ArkLabsHQ/introspector/pkg/arkade"
+	introspectorclient "github.com/ArkLabsHQ/introspector/pkg/client"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
@@ -33,8 +35,6 @@ import (
 	"github.com/arkade-os/go-sdk/wallet"
 	singlekeywallet "github.com/arkade-os/go-sdk/wallet/singlekey"
 	inmemorystore "github.com/arkade-os/go-sdk/wallet/singlekey/store/inmemory"
-	"github.com/arkade-os/introspector/pkg/arkade"
-	introspectorclient "github.com/arkade-os/introspector/pkg/client"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil/psbt"

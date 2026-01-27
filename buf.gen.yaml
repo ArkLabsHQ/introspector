@@ -2,7 +2,7 @@ version: v1
 managed:
   enabled: true
   go_package_prefix:
-    default: github.com/arkade-os/introspector
+    default: github.com/ArkLabsHQ/introspector
     except:
       - buf.build/meshapi/grpc-api-gateway
 plugins:

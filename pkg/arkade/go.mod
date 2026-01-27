@@ -1,4 +1,4 @@
-module github.com/arkade-os/introspector/pkg/arkade
+module github.com/ArkLabsHQ/introspector/pkg/arkade
 
 go 1.25.3
 

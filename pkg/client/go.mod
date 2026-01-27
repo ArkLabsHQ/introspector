@@ -1,11 +1,11 @@
-module github.com/arkade-os/introspector/pkg/client
+module github.com/ArkLabsHQ/introspector/pkg/client
 
 go 1.25.3
 
-replace github.com/arkade-os/introspector/api-spec => ../../api-spec
+replace github.com/ArkLabsHQ/introspector/api-spec => ../../api-spec
 
 require (
-	github.com/arkade-os/introspector/api-spec v0.0.0-00010101000000-000000000000
+	github.com/ArkLabsHQ/introspector/api-spec v0.0.0-00010101000000-000000000000
 	google.golang.org/grpc v1.76.0
 )
 

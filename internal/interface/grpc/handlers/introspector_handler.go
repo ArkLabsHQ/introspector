@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strings"
 
+	introspectorv1 "github.com/ArkLabsHQ/introspector/api-spec/protobuf/gen/introspector/v1"
+	"github.com/ArkLabsHQ/introspector/internal/application"
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
-	introspectorv1 "github.com/arkade-os/introspector/api-spec/protobuf/gen/introspector/v1"
-	"github.com/arkade-os/introspector/internal/application"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

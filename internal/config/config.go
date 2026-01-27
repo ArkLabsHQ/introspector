@@ -4,8 +4,8 @@ import (
 	"encoding/hex"
 	"fmt"
 
+	"github.com/ArkLabsHQ/introspector/internal/application"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
-	"github.com/arkade-os/introspector/internal/application"
 	"github.com/btcsuite/btcd/btcec/v2"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
