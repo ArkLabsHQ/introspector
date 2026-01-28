@@ -4,6 +4,7 @@ import (
 	"context"
 
 	introspectorv1 "github.com/ArkLabsHQ/introspector/api-spec/protobuf/gen/introspector/v1"
+	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"google.golang.org/grpc"
 )
 
@@ -12,9 +13,23 @@ type Info struct {
 	SignerPublicKey string
 }
 
+type Intent struct {
+	Proof   string
+	Message string
+}
+
 type TransportClient interface {
 	GetInfo(ctx context.Context) (*Info, error)
-	SubmitTx(ctx context.Context, tx string, checkpoints []string) (signedTx string, signedCheckpoints []string, err error)
+	SubmitTx(ctx context.Context, tx string, checkpoints []string) (
+		signedTx string, signedCheckpoints []string, err error,
+	)
+	SubmitIntent(ctx context.Context, intent Intent) (signedIntent string, err error)
+	SubmitFinalization(
+		ctx context.Context, 
+		intent Intent, 
+		forfeits []string, 
+		connectorTree, vtxoTree tree.FlatTxTree, commitmentTx string,
+	) (signedForfeits []string, signedCommitmentTx string, err error)
 }
 
 // grpcClient implements TransportClient using gRPC
@@ -29,7 +44,6 @@ func NewGRPCClient(conn *grpc.ClientConn) TransportClient {
 	}
 }
 
-// GetInfo retrieves service information
 func (c *grpcClient) GetInfo(ctx context.Context) (*Info, error) {
 	req := &introspectorv1.GetInfoRequest{}
 	resp, err := c.client.GetInfo(ctx, req)
@@ -43,7 +57,6 @@ func (c *grpcClient) GetInfo(ctx context.Context) (*Info, error) {
 	}, nil
 }
 
-// SubmitTx submits a transaction for signing
 func (c *grpcClient) SubmitTx(ctx context.Context, tx string, checkpoints []string) (signedTx string, signedCheckpoints []string, err error) {
 	req := &introspectorv1.SubmitTxRequest{
 		ArkTx:         tx,
@@ -56,4 +69,59 @@ func (c *grpcClient) SubmitTx(ctx context.Context, tx string, checkpoints []stri
 	}
 
 	return resp.GetSignedArkTx(), resp.GetSignedCheckpointTxs(), nil
+}
+
+func (c *grpcClient) SubmitIntent(ctx context.Context, intent Intent) (signedIntent string, err error) {
+	req := &introspectorv1.SubmitIntentRequest{
+		Intent: &introspectorv1.Intent{
+			Proof:   intent.Proof,
+			Message: intent.Message,
+		},
+	}
+
+	resp, err := c.client.SubmitIntent(ctx, req)
+	if err != nil {
+		return "", err
+	}
+
+	return resp.GetSignedProof(), nil
+}
+
+func (c *grpcClient) SubmitFinalization(
+	ctx context.Context,
+	intent Intent, forfeits []string,
+	connectorTree, vtxoTree tree.FlatTxTree, commitmentTx string,
+) (signedForfeits []string, signedCommitmentTx string, err error) {
+	connectorTreeNodes := castTxTree(connectorTree)
+	vtxoTreeNodes := castTxTree(vtxoTree)
+
+	req := &introspectorv1.SubmitFinalizationRequest{
+		SignedIntent: &introspectorv1.Intent{
+			Proof:   intent.Proof,
+			Message: intent.Message,
+		},
+		Forfeits:      forfeits,
+		ConnectorTree: connectorTreeNodes,
+		VtxoTree:      vtxoTreeNodes,
+		CommitmentTx:  commitmentTx,
+	}
+
+	resp, err := c.client.SubmitFinalization(ctx, req)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return resp.GetSignedForfeits(), resp.GetSignedCommitmentTx(), nil
+}
+
+func castTxTree(tree tree.FlatTxTree) []*introspectorv1.TxTreeNode {
+	nodes := make([]*introspectorv1.TxTreeNode, 0, len(tree))
+	for _, node := range tree {
+		nodes = append(nodes, &introspectorv1.TxTreeNode{
+			Txid:     node.Txid,
+			Tx:       node.Tx,
+			Children: node.Children,
+		})
+	}
+	return nodes
 }
