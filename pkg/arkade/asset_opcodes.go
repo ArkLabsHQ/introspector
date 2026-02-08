@@ -2,6 +2,7 @@ package arkade
 
 import (
 	"encoding/binary"
+	"math"
 
 	"github.com/btcsuite/btcd/txscript"
 )
@@ -243,9 +244,15 @@ func opcodeInspectAssetGroupSum(op *opcode, data []byte, vm *Engine) error {
 	group := vm.assetPacket.Groups[k]
 	var inSum, outSum uint64
 	for _, inp := range group.Inputs {
+		if inp.Amount > math.MaxUint64-inSum {
+			return scriptError(txscript.ErrInvalidStackOperation, "asset group input sum overflow")
+		}
 		inSum += inp.Amount
 	}
 	for _, out := range group.Outputs {
+		if out.Amount > math.MaxUint64-outSum {
+			return scriptError(txscript.ErrInvalidStackOperation, "asset group output sum overflow")
+		}
 		outSum += out.Amount
 	}
 	switch source {

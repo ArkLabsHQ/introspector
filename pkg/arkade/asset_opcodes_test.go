@@ -112,7 +112,7 @@ func makeTestTx() *wire.MsgTx {
 	}
 }
 
-func le64(v uint64) []byte {
+func encodeLE64(v uint64) []byte {
 	buf := make([]byte, 8)
 	binary.LittleEndian.PutUint64(buf, v)
 	return buf
@@ -305,7 +305,7 @@ func TestAssetOpcodes(t *testing.T) {
 			script: txscript.NewScriptBuilder().
 				AddOp(OP_INSPECTASSETGROUP).
 				// stack: type_u8 input_index_u32 amount_u64
-				AddData(le64(1000)).   // expected amount
+				AddData(encodeLE64(1000)).   // expected amount
 				AddOp(OP_EQUALVERIFY).
 				AddOp(OP_0).           // expected input_index = 0
 				AddOp(OP_EQUALVERIFY).
@@ -321,7 +321,7 @@ func TestAssetOpcodes(t *testing.T) {
 			script: txscript.NewScriptBuilder().
 				AddOp(OP_INSPECTASSETGROUP).
 				// stack: type_u8 txid_32 output_index_u32 amount_u64
-				AddData(le64(500)).       // expected amount
+				AddData(encodeLE64(500)).       // expected amount
 				AddOp(OP_EQUALVERIFY).
 				AddOp(OP_2).              // expected output_index = 2
 				AddOp(OP_EQUALVERIFY).
@@ -339,7 +339,7 @@ func TestAssetOpcodes(t *testing.T) {
 			script: txscript.NewScriptBuilder().
 				AddOp(OP_INSPECTASSETGROUP).
 				// stack: type_u8 output_index_u32 amount_u64
-				AddData(le64(800)).   // expected amount
+				AddData(encodeLE64(800)).   // expected amount
 				AddOp(OP_EQUALVERIFY).
 				AddOp(OP_0).          // expected output_index = 0
 				AddOp(OP_EQUALVERIFY).
@@ -355,7 +355,7 @@ func TestAssetOpcodes(t *testing.T) {
 			name: "OP_INSPECTASSETGROUPSUM - group 0 input sum = 1500",
 			script: txscript.NewScriptBuilder().
 				AddOp(OP_INSPECTASSETGROUPSUM).
-				AddData(le64(1500)).
+				AddData(encodeLE64(1500)).
 				AddOp(OP_EQUAL),
 			packet: makeTestAssetPacket(),
 			stack:  [][]byte{{0x00}, {0x00}}, // k=0, source=0 (inputs)
@@ -366,7 +366,7 @@ func TestAssetOpcodes(t *testing.T) {
 			name: "OP_INSPECTASSETGROUPSUM - group 0 output sum = 1500",
 			script: txscript.NewScriptBuilder().
 				AddOp(OP_INSPECTASSETGROUPSUM).
-				AddData(le64(1500)).
+				AddData(encodeLE64(1500)).
 				AddOp(OP_EQUAL),
 			packet: makeTestAssetPacket(),
 			stack:  [][]byte{{0x00}, {0x01}}, // k=0, source=1 (outputs)
@@ -377,9 +377,9 @@ func TestAssetOpcodes(t *testing.T) {
 			name: "OP_INSPECTASSETGROUPSUM - group 0 both sums",
 			script: txscript.NewScriptBuilder().
 				AddOp(OP_INSPECTASSETGROUPSUM).
-				AddData(le64(1500)).    // output sum
+				AddData(encodeLE64(1500)).    // output sum
 				AddOp(OP_EQUALVERIFY).
-				AddData(le64(1500)).    // input sum
+				AddData(encodeLE64(1500)).    // input sum
 				AddOp(OP_EQUAL),
 			packet: makeTestAssetPacket(),
 			stack:  [][]byte{{0x00}, {0x02}}, // k=0, source=2 (both)
@@ -404,7 +404,7 @@ func TestAssetOpcodes(t *testing.T) {
 			script: txscript.NewScriptBuilder().
 				AddOp(OP_INSPECTOUTASSETAT).
 				// stack: txid32 gidx_u16 amount_u64
-				AddData(le64(800)).       // expected amount
+				AddData(encodeLE64(800)).       // expected amount
 				AddOp(OP_EQUALVERIFY).
 				AddOp(OP_0).              // expected gidx = 0
 				AddOp(OP_EQUALVERIFY).
@@ -420,7 +420,7 @@ func TestAssetOpcodes(t *testing.T) {
 			name: "OP_INSPECTOUTASSETLOOKUP - found at output 0",
 			script: txscript.NewScriptBuilder().
 				AddOp(OP_INSPECTOUTASSETLOOKUP).
-				AddData(le64(800)).
+				AddData(encodeLE64(800)).
 				AddOp(OP_EQUAL),
 			packet: makeTestAssetPacket(),
 			stack:  [][]byte{{0x00}, testAssetTxid[:], {0x00}}, // o=0, txid, gidx=0
@@ -456,7 +456,7 @@ func TestAssetOpcodes(t *testing.T) {
 			script: txscript.NewScriptBuilder().
 				AddOp(OP_INSPECTINASSETAT).
 				// stack: txid32 gidx_u16 amount_u64
-				AddData(le64(1000)).       // expected amount
+				AddData(encodeLE64(1000)).       // expected amount
 				AddOp(OP_EQUALVERIFY).
 				AddOp(OP_0).               // expected gidx = 0
 				AddOp(OP_EQUALVERIFY).
@@ -472,7 +472,7 @@ func TestAssetOpcodes(t *testing.T) {
 			name: "OP_INSPECTINASSETLOOKUP - found at input 0",
 			script: txscript.NewScriptBuilder().
 				AddOp(OP_INSPECTINASSETLOOKUP).
-				AddData(le64(1000)).
+				AddData(encodeLE64(1000)).
 				AddOp(OP_EQUAL),
 			packet: makeTestAssetPacket(),
 			stack:  [][]byte{{0x00}, testAssetTxid[:], {0x00}}, // i=0, txid, gidx=0
@@ -518,7 +518,7 @@ func TestAssetOpcodes(t *testing.T) {
 			script: txscript.NewScriptBuilder().
 				AddOp(OP_INSPECTGROUPINTENTOUT).
 				// stack: output_index_u32 amount_u64
-				AddData(le64(700)).    // expected amount
+				AddData(encodeLE64(700)).    // expected amount
 				AddOp(OP_EQUALVERIFY).
 				AddOp(OP_1).           // expected output_index = 1
 				AddOp(OP_EQUAL),
@@ -553,7 +553,7 @@ func TestAssetOpcodes(t *testing.T) {
 			script: txscript.NewScriptBuilder().
 				AddOp(OP_INSPECTGROUPINTENTIN).
 				// stack: txid_32 output_index_u32 amount_u64
-				AddData(le64(500)).         // expected amount
+				AddData(encodeLE64(500)).         // expected amount
 				AddOp(OP_EQUALVERIFY).
 				AddOp(OP_2).                // expected output_index = 2
 				AddOp(OP_EQUALVERIFY).
