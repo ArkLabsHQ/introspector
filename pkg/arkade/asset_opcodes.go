@@ -103,7 +103,7 @@ func opcodeInspectAssetGroupCtrl(op *opcode, data []byte, vm *Engine) error {
 }
 
 // OP_FINDASSETGROUPBYASSETID: txid32 gidx_u16 → k | -1
-func opcodeFindassetGroupByAssetID(op *opcode, data []byte, vm *Engine) error {
+func opcodeFindAssetGroupByAssetID(op *opcode, data []byte, vm *Engine) error {
 	if err := checkAssetPacket(vm); err != nil {
 		return err
 	}
