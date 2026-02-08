@@ -163,6 +163,7 @@ type Engine struct {
 	witnessProgram  []byte
 	inputAmount     int64
 	taprootCtx      *taprootExecutionCtx
+	assetPacket     *AssetPacket
 
 	// stepCallback is an optional function that will be called every time
 	// a step has been performed during script execution.
@@ -170,6 +171,11 @@ type Engine struct {
 	// NOTE: This is only meant to be used in debugging, and SHOULD NOT BE
 	// USED during regular operation.
 	stepCallback func(*StepInfo) error
+}
+
+// SetAssetPacket sets the asset packet data for asset introspection opcodes.
+func (vm *Engine) SetAssetPacket(packet *AssetPacket) {
+	vm.assetPacket = packet
 }
 
 // StepInfo houses the current VM state information that is passed back to the
