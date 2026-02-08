@@ -72,6 +72,24 @@ func TestOpcodeDisasm(t *testing.T) {
 		0xdf: "OP_GREATERTHANOREQUAL64", 0xe0: "OP_SCRIPTNUMTOLE64",
 		0xe1: "OP_LE64TOSCRIPTNUM", 0xe2: "OP_LE32TOLE64",
 		0xe3: "OP_ECMULSCALARVERIFY", 0xe4: "OP_TWEAKVERIFY",
+		0xe5: "OP_INSPECTNUMASSETGROUPS",
+		0xe6: "OP_INSPECTASSETGROUPASSETID",
+		0xe7: "OP_INSPECTASSETGROUPCTRL",
+		0xe8: "OP_FINDASSETGROUPBYASSETID",
+		0xe9: "OP_INSPECTASSETGROUPMETADATAHASH",
+		0xea: "OP_INSPECTASSETGROUPNUM",
+		0xeb: "OP_INSPECTASSETGROUP",
+		0xec: "OP_INSPECTASSETGROUPSUM",
+		0xed: "OP_INSPECTOUTASSETCOUNT",
+		0xee: "OP_INSPECTOUTASSETAT",
+		0xef: "OP_INSPECTOUTASSETLOOKUP",
+		0xf0: "OP_INSPECTINASSETCOUNT",
+		0xf1: "OP_INSPECTINASSETAT",
+		0xf2: "OP_INSPECTINASSETLOOKUP",
+		0xf3: "OP_INSPECTGROUPINTENTOUTCOUNT",
+		0xf4: "OP_INSPECTGROUPINTENTOUT",
+		0xf5: "OP_INSPECTGROUPINTENTINCOUNT",
+		0xf6: "OP_INSPECTGROUPINTENTIN",
 	}
 	for opcodeVal, expectedStr := range expectedStrings {
 		var data []byte
@@ -121,7 +139,7 @@ func TestOpcodeDisasm(t *testing.T) {
 			(opcodeVal == 0xc8) || // Unknown between input inspection ops
 			(opcodeVal == 0xce) || // Unknown between input and output ops
 			(opcodeVal == 0xd0) || // Unknown between output ops
-			(opcodeVal >= 0xe5 && opcodeVal <= 0xf9) || // Unknown range after new ops
+			(opcodeVal >= 0xf7 && opcodeVal <= 0xf9) || // Unknown range after new ops
 			opcodeVal == 0xfc:
 			expectedStr = "OP_UNKNOWN" + strconv.Itoa(opcodeVal)
 		}
@@ -193,7 +211,7 @@ func TestOpcodeDisasm(t *testing.T) {
 			(opcodeVal == 0xc8) || // Unknown between input inspection ops
 			(opcodeVal == 0xce) || // Unknown between input and output ops
 			(opcodeVal == 0xd0) || // Unknown between output ops
-			(opcodeVal >= 0xe5 && opcodeVal <= 0xf9) || // Unknown range after new ops
+			(opcodeVal >= 0xf7 && opcodeVal <= 0xf9) || // Unknown range after new ops
 			opcodeVal == 0xfc:
 			expectedStr = "OP_UNKNOWN" + strconv.Itoa(opcodeVal)
 		}
