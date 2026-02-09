@@ -131,7 +131,6 @@ func (h *handler) SubmitFinalization(
 	signedIntent := req.GetSignedIntent()
 	forfeitTxs := req.GetForfeits()
 	connectorTree := req.GetConnectorTree()
-	vtxoTree := req.GetVtxoTree()
 	commitmentTx := req.GetCommitmentTx()
 
 	if signedIntent == nil {
@@ -171,9 +170,6 @@ func (h *handler) SubmitFinalization(
 		if len(connectorTree) <= 0 {
 			return nil, status.Error(codes.InvalidArgument, "missing connector tree")
 		}
-		if len(vtxoTree) <= 0 {
-			return nil, status.Error(codes.InvalidArgument, "missing vtxo tree")
-		}
 
 		connectorTxTree, err := parseTxTree(connectorTree)
 		if err != nil {
@@ -184,14 +180,7 @@ func (h *handler) SubmitFinalization(
 			return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("invalid connector tree: %v", err))
 		}
 
-		vtxoTxTree, err := parseTxTree(vtxoTree)
-		if err != nil {
-			return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("invalid vtxo tree: %v", err))
-		}
-
-		if err := verifyTreeRelatedToCommitment(commitmentPtx, vtxoTxTree); err != nil {
-			return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("invalid vtxo tree: %v", err))
-		}
+		batchFinalization.ConnectorTree = connectorTxTree
 	}
 
 	signedBatchFinalization, err := h.svc.SubmitFinalization(ctx, batchFinalization)
@@ -208,15 +197,19 @@ func (h *handler) SubmitFinalization(
 		encodedForfeits = append(encodedForfeits, encodedForfeit)
 	}
 
-	encodedCommitmentTx, err := signedBatchFinalization.CommitmentTx.B64Encode()
-	if err != nil {
-		return nil, status.Error(codes.Internal, "failed to encode commitment tx")
+	resp := &introspectorv1.SubmitFinalizationResponse{
+		SignedForfeits:     encodedForfeits,
 	}
 
-	return &introspectorv1.SubmitFinalizationResponse{
-		SignedForfeits:     encodedForfeits,
-		SignedCommitmentTx: encodedCommitmentTx,
-	}, nil
+	if signedBatchFinalization.CommitmentTx != nil {
+		encodedCommitmentTx, err := signedBatchFinalization.CommitmentTx.B64Encode()
+		if err != nil {
+			return nil, status.Error(codes.Internal, "failed to encode commitment tx")
+		}
+		resp.SignedCommitmentTx = encodedCommitmentTx
+	}
+
+	return resp, nil
 }
 
 func verifyTreeRelatedToCommitment(commitmentPtx *psbt.Packet, txTree *tree.TxTree) error {

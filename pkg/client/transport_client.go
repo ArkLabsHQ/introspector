@@ -28,7 +28,7 @@ type TransportClient interface {
 		ctx context.Context,
 		intent Intent,
 		forfeits []string,
-		connectorTree, vtxoTree tree.FlatTxTree, commitmentTx string,
+		connectorTree tree.FlatTxTree, commitmentTx string,
 	) (signedForfeits []string, signedCommitmentTx string, err error)
 }
 
@@ -90,10 +90,9 @@ func (c *grpcClient) SubmitIntent(ctx context.Context, intent Intent) (string, e
 func (c *grpcClient) SubmitFinalization(
 	ctx context.Context,
 	intent Intent, forfeits []string,
-	connectorTree, vtxoTree tree.FlatTxTree, commitmentTx string,
+	connectorTree tree.FlatTxTree, commitmentTx string,
 ) (signedForfeits []string, signedCommitmentTx string, err error) {
 	connectorTreeNodes := castTxTree(connectorTree)
-	vtxoTreeNodes := castTxTree(vtxoTree)
 
 	req := &introspectorv1.SubmitFinalizationRequest{
 		SignedIntent: &introspectorv1.Intent{
@@ -102,7 +101,6 @@ func (c *grpcClient) SubmitFinalization(
 		},
 		Forfeits:      forfeits,
 		ConnectorTree: connectorTreeNodes,
-		VtxoTree:      vtxoTreeNodes,
 		CommitmentTx:  commitmentTx,
 	}
 

@@ -115,9 +115,8 @@ func (s arkadeScript) execute(spendingTx *wire.MsgTx, prevoutFetcher txscript.Pr
 	}
 
 	if err := engine.Execute(); err != nil {
-		return fmt.Errorf("failed to execute custom script: %w", err)
+		return fmt.Errorf("failed to execute arkade script: %w", err)
 	}
 
 	return nil
-
 }

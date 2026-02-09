@@ -59,8 +59,7 @@ message SubmitFinalizationRequest {
   Intent signed_intent = 1;
   repeated string forfeits = 2;
   repeated TxTreeNode connector_tree = 3;
-  repeated TxTreeNode vtxo_tree = 4;
-  string commitment_tx = 5;
+  string commitment_tx = 4;
 }
 message SubmitFinalizationResponse {
   repeated string signed_forfeits = 1;

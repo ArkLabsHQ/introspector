@@ -307,8 +307,7 @@ type SubmitFinalizationRequest struct {
 	SignedIntent  *Intent                `protobuf:"bytes,1,opt,name=signed_intent,json=signedIntent,proto3" json:"signed_intent,omitempty"`
 	Forfeits      []string               `protobuf:"bytes,2,rep,name=forfeits,proto3" json:"forfeits,omitempty"`
 	ConnectorTree []*TxTreeNode          `protobuf:"bytes,3,rep,name=connector_tree,json=connectorTree,proto3" json:"connector_tree,omitempty"`
-	VtxoTree      []*TxTreeNode          `protobuf:"bytes,4,rep,name=vtxo_tree,json=vtxoTree,proto3" json:"vtxo_tree,omitempty"`
-	CommitmentTx  string                 `protobuf:"bytes,5,opt,name=commitment_tx,json=commitmentTx,proto3" json:"commitment_tx,omitempty"`
+	CommitmentTx  string                 `protobuf:"bytes,4,opt,name=commitment_tx,json=commitmentTx,proto3" json:"commitment_tx,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -360,13 +359,6 @@ func (x *SubmitFinalizationRequest) GetForfeits() []string {
 func (x *SubmitFinalizationRequest) GetConnectorTree() []*TxTreeNode {
 	if x != nil {
 		return x.ConnectorTree
-	}
-	return nil
-}
-
-func (x *SubmitFinalizationRequest) GetVtxoTree() []*TxTreeNode {
-	if x != nil {
-		return x.VtxoTree
 	}
 	return nil
 }
@@ -560,13 +552,12 @@ const file_introspector_v1_service_proto_rawDesc = "" +
 	"\x13SubmitIntentRequest\x12/\n" +
 	"\x06intent\x18\x01 \x01(\v2\x17.introspector.v1.IntentR\x06intent\"9\n" +
 	"\x14SubmitIntentResponse\x12!\n" +
-	"\fsigned_proof\x18\x01 \x01(\tR\vsignedProof\"\x98\x02\n" +
+	"\fsigned_proof\x18\x01 \x01(\tR\vsignedProof\"\xde\x01\n" +
 	"\x19SubmitFinalizationRequest\x12<\n" +
 	"\rsigned_intent\x18\x01 \x01(\v2\x17.introspector.v1.IntentR\fsignedIntent\x12\x1a\n" +
 	"\bforfeits\x18\x02 \x03(\tR\bforfeits\x12B\n" +
-	"\x0econnector_tree\x18\x03 \x03(\v2\x1b.introspector.v1.TxTreeNodeR\rconnectorTree\x128\n" +
-	"\tvtxo_tree\x18\x04 \x03(\v2\x1b.introspector.v1.TxTreeNodeR\bvtxoTree\x12#\n" +
-	"\rcommitment_tx\x18\x05 \x01(\tR\fcommitmentTx\"w\n" +
+	"\x0econnector_tree\x18\x03 \x03(\v2\x1b.introspector.v1.TxTreeNodeR\rconnectorTree\x12#\n" +
+	"\rcommitment_tx\x18\x04 \x01(\tR\fcommitmentTx\"w\n" +
 	"\x1aSubmitFinalizationResponse\x12'\n" +
 	"\x0fsigned_forfeits\x18\x01 \x03(\tR\x0esignedForfeits\x120\n" +
 	"\x14signed_commitment_tx\x18\x02 \x01(\tR\x12signedCommitmentTx\"\xb4\x01\n" +
@@ -620,21 +611,20 @@ var file_introspector_v1_service_proto_depIdxs = []int32{
 	9,  // 0: introspector.v1.SubmitIntentRequest.intent:type_name -> introspector.v1.Intent
 	9,  // 1: introspector.v1.SubmitFinalizationRequest.signed_intent:type_name -> introspector.v1.Intent
 	8,  // 2: introspector.v1.SubmitFinalizationRequest.connector_tree:type_name -> introspector.v1.TxTreeNode
-	8,  // 3: introspector.v1.SubmitFinalizationRequest.vtxo_tree:type_name -> introspector.v1.TxTreeNode
-	10, // 4: introspector.v1.TxTreeNode.children:type_name -> introspector.v1.TxTreeNode.ChildrenEntry
-	0,  // 5: introspector.v1.IntrospectorService.GetInfo:input_type -> introspector.v1.GetInfoRequest
-	2,  // 6: introspector.v1.IntrospectorService.SubmitTx:input_type -> introspector.v1.SubmitTxRequest
-	4,  // 7: introspector.v1.IntrospectorService.SubmitIntent:input_type -> introspector.v1.SubmitIntentRequest
-	6,  // 8: introspector.v1.IntrospectorService.SubmitFinalization:input_type -> introspector.v1.SubmitFinalizationRequest
-	1,  // 9: introspector.v1.IntrospectorService.GetInfo:output_type -> introspector.v1.GetInfoResponse
-	3,  // 10: introspector.v1.IntrospectorService.SubmitTx:output_type -> introspector.v1.SubmitTxResponse
-	5,  // 11: introspector.v1.IntrospectorService.SubmitIntent:output_type -> introspector.v1.SubmitIntentResponse
-	7,  // 12: introspector.v1.IntrospectorService.SubmitFinalization:output_type -> introspector.v1.SubmitFinalizationResponse
-	9,  // [9:13] is the sub-list for method output_type
-	5,  // [5:9] is the sub-list for method input_type
-	5,  // [5:5] is the sub-list for extension type_name
-	5,  // [5:5] is the sub-list for extension extendee
-	0,  // [0:5] is the sub-list for field type_name
+	10, // 3: introspector.v1.TxTreeNode.children:type_name -> introspector.v1.TxTreeNode.ChildrenEntry
+	0,  // 4: introspector.v1.IntrospectorService.GetInfo:input_type -> introspector.v1.GetInfoRequest
+	2,  // 5: introspector.v1.IntrospectorService.SubmitTx:input_type -> introspector.v1.SubmitTxRequest
+	4,  // 6: introspector.v1.IntrospectorService.SubmitIntent:input_type -> introspector.v1.SubmitIntentRequest
+	6,  // 7: introspector.v1.IntrospectorService.SubmitFinalization:input_type -> introspector.v1.SubmitFinalizationRequest
+	1,  // 8: introspector.v1.IntrospectorService.GetInfo:output_type -> introspector.v1.GetInfoResponse
+	3,  // 9: introspector.v1.IntrospectorService.SubmitTx:output_type -> introspector.v1.SubmitTxResponse
+	5,  // 10: introspector.v1.IntrospectorService.SubmitIntent:output_type -> introspector.v1.SubmitIntentResponse
+	7,  // 11: introspector.v1.IntrospectorService.SubmitFinalization:output_type -> introspector.v1.SubmitFinalizationResponse
+	8,  // [8:12] is the sub-list for method output_type
+	4,  // [4:8] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_introspector_v1_service_proto_init() }

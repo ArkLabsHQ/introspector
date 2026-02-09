@@ -243,11 +243,6 @@ func TestOffchain(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	for _, checkpoint := range validCheckpoints {
-		err := txutils.SetArkPsbtField(checkpoint, 0, arkade.ArkadeScriptField, arkadeScript)
-		require.NoError(t, err)
-	}
-
 	err = txutils.SetArkPsbtField(validTx, 0, arkade.ArkadeScriptField, arkadeScript)
 	require.NoError(t, err)
 
@@ -272,11 +267,6 @@ func TestOffchain(t *testing.T) {
 		checkpointScriptBytes,
 	)
 	require.NoError(t, err)
-
-	for _, checkpoint := range invalidCheckpoints {
-		err := txutils.SetArkPsbtField(checkpoint, 0, arkade.ArkadeScriptField, arkadeScript)
-		require.NoError(t, err)
-	}
 
 	err = txutils.SetArkPsbtField(invalidTx, 0, arkade.ArkadeScriptField, arkadeScript)
 	require.NoError(t, err)
@@ -361,8 +351,6 @@ func TestOffchain(t *testing.T) {
 }
 
 func TestSettlement(t *testing.T) {
-	t.Skip("TODO: fix")
-
 	ctx := context.Background()
 	alice, grpcClient := setupArkSDK(t)
 	defer grpcClient.Close()
@@ -572,14 +560,19 @@ func TestSettlement(t *testing.T) {
 	intent.Inputs[0].Unknowns = append(intent.Inputs[0].Unknowns, taptreeField)
 	intent.Inputs[1].Unknowns = append(intent.Inputs[1].Unknowns, taptreeField)
 
-	encodedIntent, err := intent.B64Encode()
+	intentPtx := &intent.Packet
+	err = txutils.SetArkPsbtField(intentPtx, 1, arkade.ArkadeScriptField, arkadeScript)
+	require.NoError(t, err)
+
+	encodedIntentProof, err := intentPtx.B64Encode()
 	require.NoError(t, err)
 
 	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
 	require.NoError(t, err)
 
-	signedIntentProof, err := bobWallet.SignTransaction(ctx, explorer, encodedIntent)
+	signedIntentProof, err := bobWallet.SignTransaction(ctx, explorer, encodedIntentProof)
 	require.NoError(t, err)
+	require.NotEqual(t, signedIntentProof, encodedIntentProof)
 
 	// SubmitIntent make the introspector execute the arkade script on the intent tx
 	// if valid, it will sign the intent and return it
@@ -588,8 +581,6 @@ func TestSettlement(t *testing.T) {
 		Message: message,
 	})
 	require.NoError(t, err)
-
-	t.Logf("approvedIntentProof: %s", approvedIntentProof)
 
 	signedIntent := introspectorclient.Intent{
 		Proof:   approvedIntentProof,

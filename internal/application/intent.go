@@ -27,6 +27,13 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 	signerPublicKey := s.signer.secretKey.PubKey()
 
 	for inputIndex := range ptx.Inputs {
+		if inputIndex == 0 {
+			// in intent proof, input index 0 is the message input
+			// the signature script equals to the input 1 script
+			// so we can skip it and handle it later if input index 1 is an arkade script
+			continue 
+		}
+
 		script, err := readArkadeScript(ptx, inputIndex, signerPublicKey)
 		if err != nil {
 			// skip if the input is not an arkade script
@@ -43,6 +50,12 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 			return nil, fmt.Errorf("failed to sign input %d: %w", inputIndex, err)
 		}
 
+		// if input index 1 is valid and signed, we can also sign the intent message input (index 0)
+		if inputIndex == 1 {
+			if err := s.signer.signInput(ptx, 0, script.hash, prevoutFetcher); err != nil {
+				return nil, fmt.Errorf("failed to sign fake message input: %w", err)
+			}
+		}
 	}
 
 	return ptx, nil

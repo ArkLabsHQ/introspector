@@ -31,7 +31,6 @@ type BatchFinalization struct {
 	Intent        Intent
 	Forfeits      []*psbt.Packet
 	ConnectorTree *tree.TxTree
-	VtxoTree      *tree.TxTree
 	CommitmentTx  *psbt.Packet
 }
 

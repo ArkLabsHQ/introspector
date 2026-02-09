@@ -15,10 +15,11 @@ type signer struct {
 }
 
 func (s signer) signInput(ptx *psbt.Packet, inputIndex int, tweak []byte, prevoutFetcher txscript.PrevOutputFetcher) error {
-	signingKey := arkade.ComputeArkadeScriptPrivateKey(s.secretKey, tweak)
 	if len(ptx.Inputs) <= inputIndex || len(ptx.UnsignedTx.TxIn) <= inputIndex {
 		return fmt.Errorf("input index out of range, cannot sign")
 	}
+
+	signingKey := arkade.ComputeArkadeScriptPrivateKey(s.secretKey, tweak)
 
 	input := ptx.Inputs[inputIndex]
 	// if not a taproot input, skip because arkd-wallet is taproot only accounts

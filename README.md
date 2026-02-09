@@ -59,7 +59,7 @@ Submits an unsigned intent proof for signing. Executes Arkade scripts on the int
 ```
 
 ### SubmitFinalization
-Submits a batch finalization request for signing. Signs forfeits and commitment transactions if the intent proof contains the signer's signature. Validates that forfeits are part of the provided connector and vtxo trees.
+Submits a batch finalization request for signing. Signs forfeits and commitment transactions if the intent proof contains the signer's signature. Validates that forfeits are part of the provided connector tree.
 
 **Endpoint**: `POST /v1/finalization`
 
@@ -72,16 +72,6 @@ Submits a batch finalization request for signing. Signs forfeits and commitment 
   },
   "forfeits": ["base64_encoded_forfeit_psbt1", "..."],
   "connector_tree": [
-    {
-      "txid": "transaction_id",
-      "tx": "base64_encoded_transaction",
-      "children": {
-        "0": "child_txid_1",
-        "1": "child_txid_2"
-      }
-    }
-  ],
-  "vtxo_tree": [
     {
       "txid": "transaction_id",
       "tx": "base64_encoded_transaction",

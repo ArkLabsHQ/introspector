@@ -96,6 +96,7 @@ func (h *delegateBatchEventsHandler) OnTreeSigningStarted(
 	if err != nil {
 		return false, err
 	}
+	h.forfeitAddress = arkInfos.ForfeitAddress
 
 	forfeitPubKeyBytes, err := hex.DecodeString(arkInfos.ForfeitPubKey)
 	if err != nil {
@@ -195,14 +196,8 @@ func (h *delegateBatchEventsHandler) OnBatchFinalization(
 		return err
 	}
 
-	flatVtxoTree, err := vtxoTree.Serialize()
-	if err != nil {
-		return err
-	}
-
-	signedForfeits, signedCommitmentTx, err := h.introspectorClient.SubmitFinalization(ctx,
-		h.intent, forfeits,
-		flatConnectorTree, flatVtxoTree, event.Tx,
+	signedForfeits, signedCommitmentTx, err := h.introspectorClient.SubmitFinalization(
+		ctx, h.intent, forfeits, flatConnectorTree, event.Tx,
 	)
 	if err != nil {
 		return err

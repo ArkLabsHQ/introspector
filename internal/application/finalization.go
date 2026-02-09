@@ -57,12 +57,6 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 				return nil, fmt.Errorf("connector %s is not part of the tree", connector)
 			}
 
-			// validate vtxo is part of the vtxo tree
-			vtxo := forfeit.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
-			if !hasLeaf(finalization.VtxoTree, vtxo) {
-				return nil, fmt.Errorf("vtxo %s is not part of the tree", vtxo)
-			}
-
 			// sign the forfeit
 			prevoutFetcher, err := computePrevoutFetcher(forfeit)
 			if err != nil {
@@ -72,6 +66,7 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 				return nil, fmt.Errorf("failed to sign input %d: %w", inputIndex, err)
 			}
 			signedForfeits = append(signedForfeits, forfeit)
+			delete(signedInputs, input.PreviousOutPoint)
 		}
 	}
 
@@ -127,6 +122,13 @@ func getSignedInputs(ptx psbt.Packet, signerPublicKey *btcec.PublicKey) (map[wir
 	}
 
 	for inputIndex, input := range ptx.Inputs {
+		if inputIndex == 0 {
+			// in intent proof, input index 0 is the message input
+			// it is not a valid vtxo output : no forfeit will be associated to it
+			// we can skip it
+			continue
+		}
+
 		if len(input.TaprootScriptSpendSig) == 0 {
 			continue // not signed: skip
 		}
@@ -168,21 +170,34 @@ func getSignedInputs(ptx psbt.Packet, signerPublicKey *btcec.PublicKey) (map[wir
 
 func hasLeaf(tree *tree.TxTree, outpoint wire.OutPoint) bool {
 	if tree == nil {
+		fmt.Println("tree is nil")
 		return false
+	}
+
+	flatTree, err := tree.Serialize()
+	if err != nil {
+		return false
+	}
+	leaves := flatTree.Leaves()
+	for _, leaf := range leaves {
+		fmt.Println("leaf", leaf.Txid)
 	}
 
 	node := tree.Find(outpoint.Hash.String())
 	if node == nil {
+		fmt.Println("node is nil")
 		return false
 	}
 
 	if len(node.Children) != 0 {
 		// not a leaf
+		fmt.Println("not a leaf")
 		return false
 	}
 
 	if len(node.Root.UnsignedTx.TxOut) <= int(outpoint.Index) {
 		// index out of range
+		fmt.Println("index out of range")
 		return false
 	}
 
