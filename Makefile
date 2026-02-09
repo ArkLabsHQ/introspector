@@ -36,7 +36,7 @@ docker-stop:
 
 build:
 	@echo "Building introspector..."
-	@go build -o build/introspector cmd/introspector.go
+	@go build -o build/introspector-$(shell go env GOOS)-$(shell go env GOARCH) cmd/introspector.go
 
 lint:
 	golangci-lint run --fix

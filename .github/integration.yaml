@@ -1,0 +1,40 @@
+name: integration
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - '*'
+
+jobs:
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '>=1.25.7'
+
+      - name: Run Nigiri
+        uses: vulpemventures/nigiri-github-action@v1
+
+      - name: Run regtest environment
+        run: make docker-run
+
+      - name: Run integration tests
+        run: make integrationtest
+
+      - name: Capture logs
+        if: failure()
+        run: |
+          echo "=== Introspector logs ==="
+          docker logs introspector 2>&1 || true
+          echo "=== Arkd logs ==="
+          docker logs arkd 2>&1 || true
+
+      - name: Tear down
+        if: always()
+        run: make docker-stop
