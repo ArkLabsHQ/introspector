@@ -40,11 +40,10 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 			continue
 		}
 
-		log.Debugf("executing arkade script: %x", script.script)
 		if err := script.execute(ptx.UnsignedTx, prevoutFetcher, inputIndex); err != nil {
-			return nil, fmt.Errorf("failed to execute arkade script: %w", err)
+			log.WithError(err).WithField("input_index", inputIndex).Error("arkade script execution failed")
+			return nil, fmt.Errorf("failed to execute arkade script at input %d: %w", inputIndex, err)
 		}
-		log.Debugf("execution of %x succeeded", script.script)
 
 		if err := s.signer.signInput(ptx, inputIndex, script.hash, prevoutFetcher); err != nil {
 			return nil, fmt.Errorf("failed to sign input %d: %w", inputIndex, err)

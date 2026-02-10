@@ -10,7 +10,6 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/btcsuite/btcd/btcutil/psbt"
-	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -57,7 +56,7 @@ func (h *handler) SubmitTx(
 		return nil, status.Error(codes.InvalidArgument, "invalid ark tx")
 	}
 
-	checkpointPsbt := make([]*psbt.Packet, 0)
+	checkpointPsbt := make([]*psbt.Packet, 0, len(checkpoints))
 	for _, checkpoint := range checkpoints {
 		checkpointPtx, err := psbt.NewFromRawBytes(strings.NewReader(checkpoint), true)
 		if err != nil {
@@ -81,7 +80,7 @@ func (h *handler) SubmitTx(
 		return nil, status.Error(codes.Internal, "failed to encode ark tx")
 	}
 
-	encodedCheckpointTxs := make([]string, 0)
+	encodedCheckpointTxs := make([]string, 0, len(approvedTx.Checkpoints))
 	for _, checkpoint := range approvedTx.Checkpoints {
 		encodedCheckpointTx, err := checkpoint.B64Encode()
 		if err != nil {
@@ -151,7 +150,7 @@ func (h *handler) SubmitFinalization(
 		return nil, status.Error(codes.InvalidArgument, "invalid commitment tx")
 	}
 
-	forfeitPsbt := make([]*psbt.Packet, 0)
+	forfeitPsbt := make([]*psbt.Packet, 0, len(forfeitTxs))
 	for _, forfeit := range forfeitTxs {
 		forfeitPtx, err := psbt.NewFromRawBytes(strings.NewReader(forfeit), true)
 		if err != nil {
@@ -188,7 +187,7 @@ func (h *handler) SubmitFinalization(
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	encodedForfeits := make([]string, 0)
+	encodedForfeits := make([]string, 0, len(signedBatchFinalization.Forfeits))
 	for _, forfeit := range signedBatchFinalization.Forfeits {
 		encodedForfeit, err := forfeit.B64Encode()
 		if err != nil {
@@ -267,13 +266,11 @@ func parseIntent(fromProto *introspectorv1.Intent) (*application.Intent, error) 
 
 	proofPsbt, err := psbt.NewFromRawBytes(strings.NewReader(proof), true)
 	if err != nil {
-		log.WithError(err).WithField("proof", proof).Debug("invalid proof")
 		return nil, fmt.Errorf("invalid proof: %w", err)
 	}
 
 	var registerMessage intent.RegisterMessage
 	if err := registerMessage.Decode(message); err != nil {
-		log.WithError(err).WithField("message", message).Debug("invalid message")
 		return nil, fmt.Errorf("invalid message: %w", err)
 	}
 
