@@ -25,7 +25,7 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 	}
 
 	if len(signedInputs) == 0 {
-		return nil, fmt.Errorf("no signed inputs found")
+		return nil, fmt.Errorf("no signed inputs found in intent proof")
 	}
 
 	signedForfeits := make([]*psbt.Packet, 0)

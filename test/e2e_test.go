@@ -39,7 +39,9 @@ import (
 	inmemorystore "github.com/arkade-os/go-sdk/wallet/singlekey/store/inmemory"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/btcutil/psbt"
+	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcwallet/waddrmgr"
@@ -610,6 +612,274 @@ func TestSettlement(t *testing.T) {
 		introspectorClient: introspectorClient,
 		wallet:             bobWallet,
 		client:             grpcClient,
+	}
+
+	topics := arksdk.GetEventStreamTopics([]types.Outpoint{vtxo.Outpoint}, []tree.SignerSession{treeSignerSession})
+	eventStream, stop, err := grpcClient.GetEventStream(ctx, topics)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		stop()
+	})
+
+	commitmentTxid, err := arksdk.JoinBatchSession(ctx, eventStream, introspectorBatchHandler)
+	require.NoError(t, err)
+	require.NotEmpty(t, commitmentTxid)
+}
+
+func TestBoarding(t *testing.T) {
+	ctx := context.Background()
+	alice, grpcClient := setupArkSDK(t)
+	defer grpcClient.Close()
+
+	bobPrivKey, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	configStore, err := inmemorystoreconfig.NewConfigStore()
+	require.NoError(t, err)
+
+	walletStore, err := inmemorystore.NewWalletStore()
+	require.NoError(t, err)
+
+	bobWallet, err := singlekeywallet.NewBitcoinWallet(
+		configStore,
+		walletStore,
+	)
+	require.NoError(t, err)
+
+	_, err = bobWallet.Create(ctx, password, hex.EncodeToString(bobPrivKey.Serialize()))
+	require.NoError(t, err)
+
+	_, err = bobWallet.Unlock(ctx, password)
+	require.NoError(t, err)
+
+	bobPubKey := bobPrivKey.PubKey()
+
+	_, offchainAddr, _, err := alice.Receive(ctx)
+	require.NoError(t, err)
+
+	aliceAddr, err := arklib.DecodeAddressV0(offchainAddr)
+	require.NoError(t, err)
+
+	alicePkScript, err := script.P2TRScript(aliceAddr.VtxoTapKey)
+	require.NoError(t, err)
+
+	// script verifying that the spending tx includes an output going to alice's address
+	arkadeScript, err := txscript.NewScriptBuilder().
+		AddInt64(0).
+		AddOp(arkade.OP_INSPECTOUTPUTSCRIPTPUBKEY).
+		AddOp(arkade.OP_1).
+		AddOp(arkade.OP_EQUALVERIFY).
+		AddData(alicePkScript[2:]). // only witness program is pushed
+		AddOp(arkade.OP_EQUAL).
+		Script()
+	require.NoError(t, err)
+
+	// create the client
+	conn, err := grpc.NewClient("localhost:7073", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	introspectorClient := introspectorclient.NewGRPCClient(conn)
+
+	introspectorInfo, err := introspectorClient.GetInfo(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, introspectorInfo)
+
+	publicKeyBytes, err := hex.DecodeString(introspectorInfo.SignerPublicKey)
+	require.NoError(t, err)
+	publicKey, err := btcec.ParsePubKey(publicKeyBytes)
+	require.NoError(t, err)
+
+	arkadeKey := arkade.ComputeArkadeScriptPublicKey(
+		publicKey,
+		arkade.ArkadeScriptHash(arkadeScript),
+	)
+
+	arkInfos, err := grpcClient.GetInfo(ctx)
+	require.NoError(t, err)
+
+	boardingExitDelay := getBatchExpiryLocktime(uint32(arkInfos.BoardingExitDelay))
+
+	vtxoScript := script.TapscriptsVtxoScript{
+		Closures: []script.Closure{
+			&script.MultisigClosure{
+				PubKeys: []*btcec.PublicKey{bobPubKey, aliceAddr.Signer, arkadeKey},
+			},
+			&script.CSVMultisigClosure{
+				MultisigClosure: script.MultisigClosure{
+					PubKeys: []*btcec.PublicKey{bobPubKey},
+				},
+				Locktime: boardingExitDelay,
+			},
+		},
+	}
+
+	vtxoTapKey, vtxoTapTree, err := vtxoScript.TapTree()
+	require.NoError(t, err)
+
+	closure := vtxoScript.ForfeitClosures()[0]
+
+	arkadeTapscript, err := closure.Script()
+	require.NoError(t, err)
+
+	merkleProof, err := vtxoTapTree.GetTaprootMerkleProof(
+		txscript.NewBaseTapLeaf(arkadeTapscript).TapHash(),
+	)
+	require.NoError(t, err)
+
+	ctrlBlock, err := txscript.ParseControlBlock(merkleProof.ControlBlock)
+	require.NoError(t, err)
+
+	// compute the P2TR bitcoin address for the contract
+	contractBtcAddr, err := btcutil.NewAddressTaproot(
+		schnorr.SerializePubKey(vtxoTapKey), &chaincfg.RegressionNetParams,
+	)
+	require.NoError(t, err)
+
+	// faucet the contract address with onchain funds
+	faucetOutput, err := runCommand("nigiri", "faucet", contractBtcAddr.EncodeAddress())
+	require.NoError(t, err)
+
+	faucetTxid := strings.TrimSpace(strings.TrimPrefix(faucetOutput, "txId:"))
+
+	time.Sleep(5 * time.Second)
+
+	// get the raw transaction to find the contract output
+	rawTxHex, err := runCommand("nigiri", "rpc", "getrawtransaction", faucetTxid)
+	require.NoError(t, err)
+
+	rawTxBytes, err := hex.DecodeString(strings.TrimSpace(rawTxHex))
+	require.NoError(t, err)
+
+	faucetMsgTx := wire.NewMsgTx(wire.TxVersion)
+	err = faucetMsgTx.Deserialize(bytes.NewReader(rawTxBytes))
+	require.NoError(t, err)
+
+	contractPkScript, err := script.P2TRScript(vtxoTapKey)
+	require.NoError(t, err)
+
+	var contractOutput *wire.TxOut
+	var contractOutputIndex uint32
+	for i, out := range faucetMsgTx.TxOut {
+		if bytes.Equal(out.PkScript, contractPkScript) {
+			contractOutput = out
+			contractOutputIndex = uint32(i)
+			break
+		}
+	}
+	require.NotNil(t, contractOutput)
+
+
+	// create the intent
+
+	randomKey, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+	treeSignerSession := tree.NewTreeSignerSession(randomKey)
+	require.NoError(t, err)
+
+	message, err := intent.RegisterMessage{
+		BaseMessage: intent.BaseMessage{
+			Type: intent.IntentMessageTypeRegister,
+		},
+		OnchainOutputIndexes: nil,
+		ExpireAt:             0,
+		ValidAt:              0,
+		CosignersPublicKeys:  []string{treeSignerSession.GetPublicKey()},
+	}.Encode()
+	require.NoError(t, err)
+
+	intent, err := intent.New(
+		message,
+		[]intent.Input{
+			{
+				OutPoint: &wire.OutPoint{
+					Hash:  faucetMsgTx.TxHash(),
+					Index: contractOutputIndex,
+				},
+				Sequence:    wire.MaxTxInSequenceNum,
+				WitnessUtxo: contractOutput,
+			},
+		},
+		[]*wire.TxOut{
+			{
+				Value:    contractOutput.Value,
+				PkScript: alicePkScript,
+			},
+		},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, intent)
+	tapscripts, err := vtxoScript.Encode()
+	require.NoError(t, err)
+	taptreeField, err := txutils.VtxoTaprootTreeField.Encode(tapscripts)
+	require.NoError(t, err)
+
+	ctrlBlockBytes, err := ctrlBlock.ToBytes()
+	require.NoError(t, err)
+
+	tapLeafScript := []*psbt.TaprootTapLeafScript{
+		{
+			LeafVersion:  txscript.BaseLeafVersion,
+			ControlBlock: ctrlBlockBytes,
+			Script:       merkleProof.Script,
+		},
+	}
+	intent.Inputs[0].TaprootLeafScript = tapLeafScript
+	intent.Inputs[1].TaprootLeafScript = tapLeafScript
+	intent.Inputs[0].Unknowns = append(intent.Inputs[0].Unknowns, taptreeField)
+	intent.Inputs[1].Unknowns = append(intent.Inputs[1].Unknowns, taptreeField)
+
+	intentPtx := &intent.Packet
+	err = txutils.SetArkPsbtField(intentPtx, 1, arkade.ArkadeScriptField, arkadeScript)
+	require.NoError(t, err)
+
+	encodedIntentProof, err := intentPtx.B64Encode()
+	require.NoError(t, err)
+
+	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+	require.NoError(t, err)
+
+	signedIntentProof, err := bobWallet.SignTransaction(ctx, explorer, encodedIntentProof)
+	require.NoError(t, err)
+	require.NotEqual(t, signedIntentProof, encodedIntentProof)
+
+	// SubmitIntent make the introspector execute the arkade script on the intent tx
+	// if valid, it will sign the intent and return it
+	approvedIntentProof, err := introspectorClient.SubmitIntent(ctx, introspectorclient.Intent{
+		Proof:   signedIntentProof,
+		Message: message,
+	})
+	require.NoError(t, err)
+
+	signedIntent := introspectorclient.Intent{
+		Proof:   approvedIntentProof,
+		Message: message,
+	}
+
+	intentId, err := grpcClient.RegisterIntent(ctx, signedIntent.Proof, signedIntent.Message)
+	require.NoError(t, err)
+
+	vtxo := client.TapscriptsVtxo{
+		Vtxo: types.Vtxo{
+			Outpoint: types.Outpoint{
+				Txid: faucetMsgTx.TxHash().String(),
+				VOut: contractOutputIndex,
+			},
+			Script: hex.EncodeToString(arkadeTapscript),
+			Amount: uint64(contractOutput.Value),
+		},
+		Tapscripts: tapscripts,
+	}
+
+	introspectorBatchHandler := &boardingBatchEventsHandler{
+		delegateBatchEventsHandler: &delegateBatchEventsHandler{
+			intentId:           intentId,
+			intent:             signedIntent,
+			signerSession:      treeSignerSession,
+			introspectorClient: introspectorClient,
+			wallet:             bobWallet,
+			client:             grpcClient,
+			explorer:           explorer,
+		},
+		boardingVtxo: vtxo,
 	}
 
 	topics := arksdk.GetEventStreamTopics([]types.Outpoint{vtxo.Outpoint}, []tree.SignerSession{treeSignerSession})

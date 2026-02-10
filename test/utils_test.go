@@ -337,6 +337,88 @@ func (h *delegateBatchEventsHandler) createAndSignForfeits(
 	return signedForfeitTxs, nil
 }
 
+type boardingBatchEventsHandler struct {
+	*delegateBatchEventsHandler
+	boardingVtxo client.TapscriptsVtxo
+}
+
+func (h *boardingBatchEventsHandler) OnBatchFinalization(
+	ctx context.Context, event client.BatchFinalizationEvent,
+	vtxoTree, connectorTree *tree.TxTree,
+) error {
+	commitmentPtx, err := psbt.NewFromRawBytes(strings.NewReader(event.Tx), true)
+	if err != nil {
+		return err
+	}
+
+	boardingVtxoScript, err := script.ParseVtxoScript(h.boardingVtxo.Tapscripts)
+	if err != nil {
+		return err
+	}
+
+	forfeitClosures := boardingVtxoScript.ForfeitClosures()
+	if len(forfeitClosures) <= 0 {
+		return fmt.Errorf("no forfeit closures found")
+	}
+
+	forfeitClosure := forfeitClosures[0]
+
+	forfeitScript, err := forfeitClosure.Script()
+	if err != nil {
+		return err
+	}
+
+	_, taprootTree, err := boardingVtxoScript.TapTree()
+	if err != nil {
+		return err
+	}
+
+	forfeitLeaf := txscript.NewBaseTapLeaf(forfeitScript)
+	forfeitProof, err := taprootTree.GetTaprootMerkleProof(forfeitLeaf.TapHash())
+	if err != nil {
+		return fmt.Errorf(
+			"failed to get taproot merkle proof for boarding utxo: %s", err,
+		)
+	}
+
+	tapscript := &psbt.TaprootTapLeafScript{
+		ControlBlock: forfeitProof.ControlBlock,
+		Script:       forfeitProof.Script,
+		LeafVersion:  txscript.BaseLeafVersion,
+	}
+
+	for i := range commitmentPtx.Inputs {
+		prevout := commitmentPtx.UnsignedTx.TxIn[i].PreviousOutPoint
+
+		if h.boardingVtxo.Txid == prevout.Hash.String() &&
+			h.boardingVtxo.VOut == prevout.Index {
+			commitmentPtx.Inputs[i].TaprootLeafScript = []*psbt.TaprootTapLeafScript{
+				tapscript,
+			}
+			break
+		}
+	}
+
+	b64, err := commitmentPtx.B64Encode()
+	if err != nil {
+		return err
+	}
+
+	signedCommitmentTx, err := h.wallet.SignTransaction(ctx, h.explorer, b64)
+	if err != nil {
+		return err
+	}
+
+	_, signedCommitmentTx, err = h.introspectorClient.SubmitFinalization(
+		ctx, h.intent, []string{}, nil, signedCommitmentTx,
+	)
+	if err != nil {
+		return err
+	}
+
+	return h.client.SubmitSignedForfeitTxs(ctx, []string{}, signedCommitmentTx)
+}
+
 func getBatchExpiryLocktime(expiry uint32) arklib.RelativeLocktime {
 	if expiry >= 512 {
 		return arklib.RelativeLocktime{Type: arklib.LocktimeTypeSecond, Value: expiry}
