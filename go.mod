@@ -10,11 +10,13 @@ replace github.com/ArkLabsHQ/introspector/pkg/client => ./pkg/client
 
 replace github.com/ArkLabsHQ/introspector/api-spec => ./api-spec
 
+replace github.com/arkade-os/arkd/pkg/errors => github.com/arkade-os/arkd/pkg/errors v0.0.0-20260213160542-d57655255d93
+
 require (
 	github.com/ArkLabsHQ/introspector/api-spec v0.0.0-00010101000000-000000000000
 	github.com/ArkLabsHQ/introspector/pkg/arkade v0.0.0-00010101000000-000000000000
 	github.com/ArkLabsHQ/introspector/pkg/client v0.0.0-00010101000000-000000000000
-	github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260102141947-c66f85422174
+	github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260213160542-d57655255d93
 	github.com/arkade-os/arkd/pkg/errors v0.0.0-20251020193908-f401a905e83f
 	github.com/arkade-os/arkd/pkg/macaroons v0.7.0
 	github.com/arkade-os/go-sdk v0.8.2-0.20260121113217-12e71e4566e6

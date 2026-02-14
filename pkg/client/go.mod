@@ -6,7 +6,7 @@ replace github.com/ArkLabsHQ/introspector/api-spec => ../../api-spec
 
 require (
 	github.com/ArkLabsHQ/introspector/api-spec v0.0.0-00010101000000-000000000000
-	github.com/arkade-os/arkd/pkg/ark-lib v0.8.0
+	github.com/arkade-os/arkd/pkg/ark-lib v0.0.0-20260210000000-6bc3c9709d36
 	google.golang.org/grpc v1.76.0
 )
 

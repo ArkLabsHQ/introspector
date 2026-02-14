@@ -1,4 +1,4 @@
-.PHONY: build docker-run docker-stop format integrationtest run proto proto-lint
+.PHONY: build docker-run docker-stop format integrationtest run test proto proto-lint
 
 define setup_env
     $(eval include $(1))
@@ -19,6 +19,10 @@ run:
 	@echo "Running introspector..."
 	$(call setup_env, envs/introspector.dev.env)
 	@go run cmd/introspector.go
+
+test:
+	@echo "Running unit tests..."
+	@go test -v $$(go list ./... | grep -v '/test$$') github.com/ArkLabsHQ/introspector/pkg/arkade/... github.com/ArkLabsHQ/introspector/pkg/client/...
 
 integrationtest:
 	@echo "Running integration test..."
