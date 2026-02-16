@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"strings"
 
+	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
@@ -114,6 +115,7 @@ type Engine struct {
 	sigCache       *txscript.SigCache
 	hashCache      *txscript.TxSigHashes
 	prevOutFetcher txscript.PrevOutputFetcher
+	assetPacket    asset.Packet
 
 	// The following fields handle keeping track of the current execution state
 	// of the engine.
@@ -195,6 +197,11 @@ type StepInfo struct {
 // hasFlag returns whether the script engine instance has the passed flag set.
 func (vm *Engine) hasFlag(flag txscript.ScriptFlags) bool {
 	return vm.flags&flag == flag
+}
+
+// SetAssetPacket sets the asset packet on the engine for script introspection.
+func (vm *Engine) SetAssetPacket(packet asset.Packet) {
+	vm.assetPacket = packet
 }
 
 // isBranchExecuting returns whether or not the current conditional branch is
