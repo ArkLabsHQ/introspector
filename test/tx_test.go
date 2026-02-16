@@ -75,45 +75,8 @@ func TestOffchain(t *testing.T) {
 	alice, grpcAlice := setupArkSDK(t)
 	defer grpcAlice.Close()
 
-	bobPrivKey, err := btcec.NewPrivateKey()
-	require.NoError(t, err)
-
-	configStore, err := inmemorystoreconfig.NewConfigStore()
-	require.NoError(t, err)
-
-	walletStore, err := inmemorystore.NewWalletStore()
-	require.NoError(t, err)
-
-	bobWallet, err := singlekeywallet.NewBitcoinWallet(
-		configStore,
-		walletStore,
-	)
-	require.NoError(t, err)
-
-	_, err = bobWallet.Create(ctx, password, hex.EncodeToString(bobPrivKey.Serialize()))
-	require.NoError(t, err)
-
-	_, err = bobWallet.Unlock(ctx, password)
-	require.NoError(t, err)
-
-	bobPubKey := bobPrivKey.PubKey()
-
-	// Fund Alice's account
-	_, offchainAddr, boardingAddress, err := alice.Receive(ctx)
-	require.NoError(t, err)
-
-	aliceAddr, err := arklib.DecodeAddressV0(offchainAddr)
-	require.NoError(t, err)
-
-	_, err = runCommand("nigiri", "faucet", boardingAddress)
-	require.NoError(t, err)
-
-	time.Sleep(5 * time.Second)
-
-	_, err = alice.Settle(ctx)
-	require.NoError(t, err)
-
-	time.Sleep(5 * time.Second)
+	bobWallet, _, bobPubKey := setupBobWallet(t, ctx)
+	aliceAddr := fundAndSettleAlice(t, ctx, alice)
 
 	const sendAmount = 10000
 
@@ -132,33 +95,13 @@ func TestOffchain(t *testing.T) {
 	require.NoError(t, err)
 
 	// create the client
-	conn, err := grpc.NewClient("localhost:7073", grpc.WithTransportCredentials(insecure.NewCredentials()))
-	require.NoError(t, err)
-	introspectorClient := introspectorclient.NewGRPCClient(conn)
+	introspectorClient, publicKey, conn := setupIntrospectorClient(t, ctx)
+	t.Cleanup(func() {
+		//nolint:errcheck
+		conn.Close()
+	})
 
-	introspectorInfo, err := introspectorClient.GetInfo(ctx)
-	require.NoError(t, err)
-	require.NotNil(t, introspectorInfo)
-
-	publicKeyBytes, err := hex.DecodeString(introspectorInfo.SignerPublicKey)
-	require.NoError(t, err)
-	publicKey, err := btcec.ParsePubKey(publicKeyBytes)
-	require.NoError(t, err)
-
-	vtxoScript := script.TapscriptsVtxoScript{
-		Closures: []script.Closure{
-			&script.MultisigClosure{
-				PubKeys: []*btcec.PublicKey{
-					bobPubKey,
-					aliceAddr.Signer,
-					arkade.ComputeArkadeScriptPublicKey(
-						publicKey,
-						arkade.ArkadeScriptHash(arkadeScript),
-					),
-				},
-			},
-		},
-	}
+	vtxoScript := createVtxoScriptWithArkade(bobPubKey, aliceAddr.Signer, publicKey, arkade.ArkadeScriptHash(arkadeScript))
 
 	vtxoTapKey, vtxoTapTree, err := vtxoScript.TapTree()
 	require.NoError(t, err)
@@ -357,45 +300,8 @@ func TestSettlement(t *testing.T) {
 	alice, grpcClient := setupArkSDK(t)
 	defer grpcClient.Close()
 
-	bobPrivKey, err := btcec.NewPrivateKey()
-	require.NoError(t, err)
-
-	configStore, err := inmemorystoreconfig.NewConfigStore()
-	require.NoError(t, err)
-
-	walletStore, err := inmemorystore.NewWalletStore()
-	require.NoError(t, err)
-
-	bobWallet, err := singlekeywallet.NewBitcoinWallet(
-		configStore,
-		walletStore,
-	)
-	require.NoError(t, err)
-
-	_, err = bobWallet.Create(ctx, password, hex.EncodeToString(bobPrivKey.Serialize()))
-	require.NoError(t, err)
-
-	_, err = bobWallet.Unlock(ctx, password)
-	require.NoError(t, err)
-
-	bobPubKey := bobPrivKey.PubKey()
-
-	// Fund Alice's account
-	_, offchainAddr, boardingAddress, err := alice.Receive(ctx)
-	require.NoError(t, err)
-
-	aliceAddr, err := arklib.DecodeAddressV0(offchainAddr)
-	require.NoError(t, err)
-
-	_, err = runCommand("nigiri", "faucet", boardingAddress)
-	require.NoError(t, err)
-
-	time.Sleep(5 * time.Second)
-
-	_, err = alice.Settle(ctx)
-	require.NoError(t, err)
-
-	time.Sleep(5 * time.Second)
+	bobWallet, _, bobPubKey := setupBobWallet(t, ctx)
+	aliceAddr := fundAndSettleAlice(t, ctx, alice)
 
 	const sendAmount = 10000
 
@@ -414,42 +320,13 @@ func TestSettlement(t *testing.T) {
 	require.NoError(t, err)
 
 	// create the client
-	conn, err := grpc.NewClient("localhost:7073", grpc.WithTransportCredentials(insecure.NewCredentials()))
-	require.NoError(t, err)
-	introspectorClient := introspectorclient.NewGRPCClient(conn)
+	introspectorClient, publicKey, conn := setupIntrospectorClient(t, ctx)
+	t.Cleanup(func() {
+		//nolint:errcheck
+		conn.Close()
+	})
 
-	introspectorInfo, err := introspectorClient.GetInfo(ctx)
-	require.NoError(t, err)
-	require.NotNil(t, introspectorInfo)
-
-	publicKeyBytes, err := hex.DecodeString(introspectorInfo.SignerPublicKey)
-	require.NoError(t, err)
-	publicKey, err := btcec.ParsePubKey(publicKeyBytes)
-	require.NoError(t, err)
-
-	vtxoScript := script.TapscriptsVtxoScript{
-		Closures: []script.Closure{
-			&script.MultisigClosure{
-				PubKeys: []*btcec.PublicKey{
-					bobPubKey,
-					aliceAddr.Signer,
-					arkade.ComputeArkadeScriptPublicKey(
-						publicKey,
-						arkade.ArkadeScriptHash(arkadeScript),
-					),
-				},
-			},
-			&script.CSVMultisigClosure{
-				MultisigClosure: script.MultisigClosure{
-					PubKeys: []*btcec.PublicKey{
-						bobPubKey,
-						aliceAddr.Signer,
-					},
-				},
-				Locktime: arklib.RelativeLocktime{Type: arklib.LocktimeTypeSecond, Value: 512 * 10},
-			},
-		},
-	}
+	vtxoScript := createVtxoScriptWithArkadeAndCSV(bobPubKey, aliceAddr.Signer, publicKey, arkade.ArkadeScriptHash(arkadeScript))
 
 	vtxoTapKey, vtxoTapTree, err := vtxoScript.TapTree()
 	require.NoError(t, err)
@@ -766,7 +643,6 @@ func TestBoarding(t *testing.T) {
 		}
 	}
 	require.NotNil(t, contractOutput)
-
 
 	// create the intent
 

@@ -22,10 +22,10 @@ github.com/aead/siphash v1.0.1/go.mod h1:Nywa3cDsYNNK3gaciGTWPwHt0wlpNV15vwmswBA
 github.com/antihax/optional v1.0.0/go.mod h1:uupD/76wgC+ih3iEmQUL+0Ugr19nfwCT1kdvxnR2qWY=
 github.com/antlr4-go/antlr/v4 v4.13.0 h1:lxCg3LAv+EUK6t1i0y1V6/SLeUi0eKEKdhQAlS8TVTI=
 github.com/antlr4-go/antlr/v4 v4.13.0/go.mod h1:pfChB/xh/Unjila75QW7+VU4TSnWnnk9UTnmpPaOR2g=
-github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260102141947-c66f85422174 h1:8dqg456g2y0AjWOWHDDpd7YZ+QiDXZP6Y2eWqfSJlL0=
-github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260102141947-c66f85422174/go.mod h1:0qz9emEemKohm0e29jdGSzHXmBUdQ6JYSGFzmuM+ZSk=
-github.com/arkade-os/arkd/pkg/errors v0.0.0-20251020193908-f401a905e83f h1:kew2xpRoAwDwq5FiTBlOjTT9q3vwJmhMRBkGKBO9tos=
-github.com/arkade-os/arkd/pkg/errors v0.0.0-20251020193908-f401a905e83f/go.mod h1:c2/yYOyW+e9Y17xpbTRKgYkRtLipL+As9/QqWoHqf8w=
+github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260213160542-d57655255d93 h1:BoQa24cm5laV+QbNj1EyTOEbWdlQtuydWA+I7c7cd5Y=
+github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260213160542-d57655255d93/go.mod h1:k/5HLBp1TM0c5FXmbxn5a+Z+H889M1eUrnj32JLTZBY=
+github.com/arkade-os/arkd/pkg/errors v0.0.0-20260213160542-d57655255d93 h1:HOY3/sS6P3uOe8Wau5RoOUlKiKfsMd10EIvH2YBA1zM=
+github.com/arkade-os/arkd/pkg/errors v0.0.0-20260213160542-d57655255d93/go.mod h1:dA/wF5R+y+JyZACR0xAr3l4FirybLY+gsl05Xv0LlUc=
 github.com/arkade-os/arkd/pkg/kvdb v0.7.0 h1:+XN0FeUEilKLuNHarP/mpwsCWla2iAHc6z9H0rsh+HY=
 github.com/arkade-os/arkd/pkg/kvdb v0.7.0/go.mod h1:8SEm4dAIcGtnGqZ8+QRk58Z1VjIIctl6bZJLQwaOePo=
 github.com/arkade-os/arkd/pkg/macaroons v0.7.0 h1:BZfaeCDGNu/u/efnlesDjzzEPMYpCQO//jeE4d/3CwY=

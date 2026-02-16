@@ -249,3 +249,52 @@ These opcodes allow incremental SHA256 hashing by maintaining hash state on the 
 | OP_SHA256INITIALIZE | 196 | 0xc4 | data | state | Initializes a SHA256 context with the given data and pushes the hash state onto the stack. |
 | OP_SHA256UPDATE | 197 | 0xc5 | data state | newState | Updates a SHA256 context by adding data to the stream being hashed. Pushes the updated state. |
 | OP_SHA256FINALIZE | 198 | 0xc6 | data state | hash | Finalizes a SHA256 hash by adding data and completing padding. Pushes the final 32-byte hash value. |
+
+### Asset Introspection Opcodes
+
+These opcodes provide access to the Arkade Asset V1 packet embedded in the transaction. Asset IDs are represented as two stack items: (txid32, gidx_u16).
+
+#### Packet & Groups
+
+| Word | Opcode | Hex | Input | Output | Description |
+|------|--------|-----|-------|--------|-------------|
+| OP_INSPECTNUMASSETGROUPS | 229 | 0xe5 | Nothing | K | Returns the number of asset groups in the packet. |
+| OP_INSPECTASSETGROUPASSETID | 230 | 0xe6 | k | txid32 gidx_u16 | Returns the Asset ID of group k. Fresh groups use this transaction's ID. |
+| OP_INSPECTASSETGROUPCTRL | 231 | 0xe7 | k | -1 or txid32 gidx_u16 | Returns the control Asset ID if present, else -1. |
+| OP_FINDASSETGROUPBYASSETID | 232 | 0xe8 | txid32 gidx_u16 | -1 or k | Finds group index by Asset ID, or -1 if absent. |
+
+#### Metadata
+
+| Word | Opcode | Hex | Input | Output | Description |
+|------|--------|-----|-------|--------|-------------|
+| OP_INSPECTASSETGROUPMETADATAHASH | 233 | 0xe9 | k | hash32 | Returns the immutable metadata Merkle root (set at genesis). |
+
+#### Per-Group I/O
+
+| Word | Opcode | Hex | Input | Output | Description |
+|------|--------|-----|-------|--------|-------------|
+| OP_INSPECTASSETGROUPNUM | 234 | 0xea | k source_u8 | count_u16 or in_u16 out_u16 | Returns count of inputs/outputs. source: 0=inputs, 1=outputs, 2=both. |
+| OP_INSPECTASSETGROUP | 235 | 0xeb | k j source_u8 | type_u8 [data...] amount_u64 | Returns j-th input/output of group k. source: 0=input, 1=output. |
+| OP_INSPECTASSETGROUPSUM | 236 | 0xec | k source_u8 | sum_u64 or in_u64 out_u64 | Returns sum of amounts with overflow safety. source: 0=inputs, 1=outputs, 2=both. |
+
+**OP_INSPECTASSETGROUP return values by type:**
+- LOCAL input (0x01): `type_u8 input_index_u32 amount_u64`
+- INTENT input (0x02): `type_u8 txid_32 output_index_u32 amount_u64`
+- LOCAL output (0x01): `type_u8 output_index_u32 amount_u64`
+
+#### Cross-Output (Multi-Asset per UTXO)
+
+| Word | Opcode | Hex | Input | Output | Description |
+|------|--------|-----|-------|--------|-------------|
+| OP_INSPECTOUTASSETCOUNT | 237 | 0xed | o | n | Returns number of asset entries assigned to output o. |
+| OP_INSPECTOUTASSETAT | 238 | 0xee | o t | txid32 gidx_u16 amount_u64 | Returns t-th asset at output o. |
+| OP_INSPECTOUTASSETLOOKUP | 239 | 0xef | o txid32 gidx_u16 | amount_u64 or -1 | Returns amount of asset at output o, or -1 if not found. |
+
+#### Cross-Input (Packet-Declared)
+
+| Word | Opcode | Hex | Input | Output | Description |
+|------|--------|-----|-------|--------|-------------|
+| OP_INSPECTINASSETCOUNT | 240 | 0xf0 | i | n | Returns number of assets declared for input i. |
+| OP_INSPECTINASSETAT | 241 | 0xf1 | i t | txid32 gidx_u16 amount_u64 | Returns t-th asset declared for input i. |
+| OP_INSPECTINASSETLOOKUP | 242 | 0xf2 | i txid32 gidx_u16 | amount_u64 or -1 | Returns declared amount for asset at input i, or -1 if not found. |
+
