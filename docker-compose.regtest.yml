@@ -20,7 +20,7 @@ services:
     image: postgres:16
     container_name: pgnbxplorer
     ports:
-      - 5432:5432
+      - 5433:5432
     environment:
       - POSTGRES_HOST_AUTH_METHOD=trust
     volumes:
