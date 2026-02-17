@@ -45,7 +45,7 @@ func TestOffchainTxWithAsset(t *testing.T) {
 	alicePkScript, err := script.P2TRScript(aliceAddr.VtxoTapKey)
 	require.NoError(t, err)
 
-	assetPacket := createAssetPacket(t, 0, assetAmount)
+	assetPacket := createIssuanceAssetPacket(t, 0, assetAmount)
 	arkadeScript := createArkadeScriptWithAssetChecks(t, alicePkScript, assetAmount)
 	introspectorClient, publicKey, conn := setupIntrospectorClient(t, ctx)
 	t.Cleanup(func() {
@@ -330,7 +330,7 @@ func TestSettlementWithAsset(t *testing.T) {
 	require.NotNil(t, intentProof)
 
 	// Add asset packet to intent transaction
-	assetPacket := createAssetPacket(t, 0, assetAmount)
+	assetPacket := createIssuanceAssetPacket(t, 0, assetAmount)
 	assetPacketOut, err := assetPacket.TxOut()
 	require.NoError(t, err)
 
