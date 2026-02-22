@@ -1,9 +1,16 @@
 # Introspector
 
+[![test](https://github.com/ArkLabsHQ/introspector/actions/workflows/test.yaml/badge.svg)](https://github.com/ArkLabsHQ/introspector/actions/workflows/test.yaml)
+[![quality](https://github.com/ArkLabsHQ/introspector/actions/workflows/quality.yaml/badge.svg)](https://github.com/ArkLabsHQ/introspector/actions/workflows/quality.yaml)
+[![Trivy Security Scan](https://github.com/ArkLabsHQ/introspector/actions/workflows/trivy.yaml/badge.svg)](https://github.com/ArkLabsHQ/introspector/actions/workflows/trivy.yaml)
+
+Introspector is a signing service for the [Arkade](https://docs.arkadeos.com/) protocol, executing [Arkade Script](https://docs.arkadeos.com/experimental/arkade-script).
+
 ## API
 
 ### GetInfo
-Returns service information including the signer's public key.
+
+Returns service metadata including the signer's public key. The public key should be tweaked with the Arkade script hash before being used in a VTXO tapscript.
 
 **Endpoint**: `GET /v1/info`
 
@@ -11,12 +18,13 @@ Returns service information including the signer's public key.
 ```json
 {
   "version": "0.0.1",
-  "signer_pubkey": "02..."
+  "signer_pubkey": "compressed_public_key"
 }
 ```
 
 ### SubmitTx
-Submits an Ark transaction for signing along with associated checkpoint transactions.
+
+Signs an Ark transaction and its associated checkpoint transactions by executing Arkade scripts on the Ark transaction inputs. The scripts are executed only on the Ark transaction, not on checkpoints.
 
 **Endpoint**: `POST /v1/tx`
 
@@ -37,7 +45,8 @@ Submits an Ark transaction for signing along with associated checkpoint transact
 ```
 
 ### SubmitIntent
-Submits an unsigned intent proof for signing. Executes Arkade scripts on the intent proof and signs it. Must be used before registration of the intent.
+
+Signs an intent proof after validating the register message and executing Arkade scripts on the proof transaction. Must be called before intent registration.
 
 **Endpoint**: `POST /v1/intent`
 
@@ -59,7 +68,8 @@ Submits an unsigned intent proof for signing. Executes Arkade scripts on the int
 ```
 
 ### SubmitFinalization
-Submits a batch finalization request for signing. Signs forfeits and commitment transactions if the intent proof contains the signer's signature. Validates that forfeits are part of the provided connector tree.
+
+Conditionally signs forfeit and/or boarding inputs during batch finalization. Only signs if the signer's signature is found in the intent proof. The connector tree is used to verify the forfeits are part of a real batch session.
 
 **Endpoint**: `POST /v1/finalization`
 
@@ -111,7 +121,7 @@ The service can be configured using environment variables:
 
 ### Prerequisites
 
-- Go 1.25.3+
+- Go 1.25+
 - Docker and Docker Compose
 - Buf CLI (for protocol buffer generation)
 
@@ -135,7 +145,10 @@ make run
 ### Testing
 
 ```bash
-# Run docker infrastructure
+# Run unit tests
+make test
+
+# Run docker regtest environment
 make docker-run
 
 # Run integration tests
@@ -297,4 +310,3 @@ These opcodes provide access to the Arkade Asset V1 packet embedded in the trans
 | OP_INSPECTINASSETCOUNT | 240 | 0xf0 | i | n | Returns number of assets declared for input i. |
 | OP_INSPECTINASSETAT | 241 | 0xf1 | i t | txid32 gidx_u16 amount_u64 | Returns t-th asset declared for input i. |
 | OP_INSPECTINASSETLOOKUP | 242 | 0xf2 | i txid32 gidx_u16 | amount_u64 or -1 | Returns declared amount for asset at input i, or -1 if not found. |
-
