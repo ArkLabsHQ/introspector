@@ -1,8 +1,10 @@
 github.com/aead/siphash v1.0.1/go.mod h1:Nywa3cDsYNNK3gaciGTWPwHt0wlpNV15vwmswBAUSII=
-github.com/arkade-os/arkd/pkg/ark-lib v0.0.0-20260213160542-d57655255d93 h1:c4UDnUQpJP2VFd42Dy7cLW4aaF84jeckr4enzIXttfM=
-github.com/arkade-os/arkd/pkg/ark-lib v0.0.0-20260213160542-d57655255d93/go.mod h1:k/5HLBp1TM0c5FXmbxn5a+Z+H889M1eUrnj32JLTZBY=
-github.com/arkade-os/arkd/pkg/errors v0.0.0-20260213160542-d57655255d93 h1:HOY3/sS6P3uOe8Wau5RoOUlKiKfsMd10EIvH2YBA1zM=
-github.com/arkade-os/arkd/pkg/errors v0.0.0-20260213160542-d57655255d93/go.mod h1:dA/wF5R+y+JyZACR0xAr3l4FirybLY+gsl05Xv0LlUc=
+github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260216152434-74a173c67a37 h1:dBSLrywZbu9KxP+VZerJjnV/Ok0j5mjdj1q/fd5uJak=
+github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260216152434-74a173c67a37/go.mod h1:k/5HLBp1TM0c5FXmbxn5a+Z+H889M1eUrnj32JLTZBY=
+github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260220163635-76f077b0e63b h1:MFjmOw2lTxu4HJGDRnrIfCZ9szHc77ex6EPmt+Ahuyg=
+github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260220163635-76f077b0e63b/go.mod h1:k/5HLBp1TM0c5FXmbxn5a+Z+H889M1eUrnj32JLTZBY=
+github.com/arkade-os/arkd/pkg/errors v0.0.0-20260216152434-74a173c67a37 h1:cDXZLco5slUoojBLTY/ZOPDQs1AcLyA877IjM/NseKU=
+github.com/arkade-os/arkd/pkg/errors v0.0.0-20260216152434-74a173c67a37/go.mod h1:dA/wF5R+y+JyZACR0xAr3l4FirybLY+gsl05Xv0LlUc=
 github.com/btcsuite/btcd v0.20.1-beta/go.mod h1:wVuoA8VJLEcwgqHBwHmzLRazpKxTv13Px/pDuV7OomQ=
 github.com/btcsuite/btcd v0.22.0-beta.0.20220111032746-97732e52810c/go.mod h1:tjmYdS6MLJ5/s0Fj4DbLgSbDHbEqLJrtnHecBFkdz5M=
 github.com/btcsuite/btcd v0.23.5-0.20231215221805-96c9fd8078fd/go.mod h1:nm3Bko6zh6bWP60UxwoT5LzdGJsQJaPo6HjduXq9p6A=

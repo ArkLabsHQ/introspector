@@ -73,12 +73,16 @@ func TestMain(m *testing.M) {
 func TestOffchain(t *testing.T) {
 	ctx := context.Background()
 	alice, grpcAlice := setupArkSDK(t)
-	defer grpcAlice.Close()
+	t.Cleanup(func() {
+		grpcAlice.Close()
+	})
+
+	const (
+		sendAmount = 10000
+	)
 
 	bobWallet, _, bobPubKey := setupBobWallet(t, ctx)
-	aliceAddr := fundAndSettleAlice(t, ctx, alice)
-
-	const sendAmount = 10000
+	aliceAddr := fundAndSettleAlice(t, ctx, alice, sendAmount)
 
 	alicePkScript, err := script.P2TRScript(aliceAddr.VtxoTapKey)
 	require.NoError(t, err)
@@ -101,7 +105,7 @@ func TestOffchain(t *testing.T) {
 		conn.Close()
 	})
 
-	vtxoScript := createVtxoScriptWithArkade(bobPubKey, aliceAddr.Signer, publicKey, arkade.ArkadeScriptHash(arkadeScript))
+	vtxoScript := createVtxoScriptWithArkadeScript(bobPubKey, aliceAddr.Signer, publicKey, arkade.ArkadeScriptHash(arkadeScript))
 
 	vtxoTapKey, vtxoTapTree, err := vtxoScript.TapTree()
 	require.NoError(t, err)
@@ -298,12 +302,16 @@ func TestOffchain(t *testing.T) {
 func TestSettlement(t *testing.T) {
 	ctx := context.Background()
 	alice, grpcClient := setupArkSDK(t)
-	defer grpcClient.Close()
+	t.Cleanup(func() {
+		grpcClient.Close()
+	})
+
+	const (
+		sendAmount = 10000
+	)
 
 	bobWallet, _, bobPubKey := setupBobWallet(t, ctx)
-	aliceAddr := fundAndSettleAlice(t, ctx, alice)
-
-	const sendAmount = 10000
+	aliceAddr := fundAndSettleAlice(t, ctx, alice, sendAmount)
 
 	alicePkScript, err := script.P2TRScript(aliceAddr.VtxoTapKey)
 	require.NoError(t, err)
@@ -506,7 +514,9 @@ func TestSettlement(t *testing.T) {
 func TestBoarding(t *testing.T) {
 	ctx := context.Background()
 	alice, grpcClient := setupArkSDK(t)
-	defer grpcClient.Close()
+	t.Cleanup(func() {
+		grpcClient.Close()
+	})
 
 	bobPrivKey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)

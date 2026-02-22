@@ -10,6 +10,7 @@ import (
 	"github.com/ArkLabsHQ/introspector/pkg/arkade"
 	introspectorclient "github.com/ArkLabsHQ/introspector/pkg/client"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
+	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
@@ -34,26 +35,31 @@ import (
 func TestOffchainTxWithAsset(t *testing.T) {
 	ctx := context.Background()
 	alice, grpcAlice := setupArkSDK(t)
-	defer grpcAlice.Close()
+	t.Cleanup(func() {
+		grpcAlice.Close()
+	})
+
+	const (
+		sendAmount  = 10000
+		assetAmount = 1000
+	)
 
 	bobWallet, _, bobPubKey := setupBobWallet(t, ctx)
-	aliceAddr := fundAndSettleAlice(t, ctx, alice)
-
-	const sendAmount = 10000
-	const assetAmount = 1000
+	aliceAddr := fundAndSettleAlice(t, ctx, alice, sendAmount)
 
 	alicePkScript, err := script.P2TRScript(aliceAddr.VtxoTapKey)
 	require.NoError(t, err)
 
 	assetPacket := createIssuanceAssetPacket(t, 0, assetAmount)
-	arkadeScript := createArkadeScriptWithAssetChecks(t, alicePkScript, assetAmount)
+	// Asset packet at index 0, P2A at index 1
+	arkadeScript := createArkadeScriptWithAssetIntrospection(t, alicePkScript, assetAmount)
 	introspectorClient, publicKey, conn := setupIntrospectorClient(t, ctx)
 	t.Cleanup(func() {
 		//nolint:errcheck
 		conn.Close()
 	})
 
-	vtxoScript := createVtxoScriptWithArkade(bobPubKey, aliceAddr.Signer, publicKey, arkade.ArkadeScriptHash(arkadeScript))
+	vtxoScript := createVtxoScriptWithArkadeScript(bobPubKey, aliceAddr.Signer, publicKey, arkade.ArkadeScriptHash(arkadeScript))
 
 	vtxoTapKey, vtxoTapTree, err := vtxoScript.TapTree()
 	require.NoError(t, err)
@@ -141,15 +147,11 @@ func TestOffchainTxWithAsset(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// Add the arkade script field
+	addAssetPacketToTx(t, validTx, assetPacket)
+
+	// Add the arkade script field on the input (index 0)
 	err = txutils.SetArkPsbtField(validTx, 0, arkade.ArkadeScriptField, arkadeScript)
 	require.NoError(t, err)
-
-	// Add the asset packet to the transaction as an OP_RETURN output
-	assetPacketOut, err := assetPacket.TxOut()
-	require.NoError(t, err)
-	validTx.UnsignedTx.AddTxOut(assetPacketOut)
-	validTx.Outputs = append(validTx.Outputs, psbt.POutput{})
 
 	encodedValidTx, err := validTx.B64Encode()
 	require.NoError(t, err)
@@ -213,57 +215,85 @@ func TestOffchainTxWithAsset(t *testing.T) {
 }
 
 // TestSettlementWithAsset tests the settlement flow with an asset packet in the intent.
-// Similar to TestSettlement but includes asset introspection in the arkade script.
+// First mints the asset via an offchain tx, then settles the resulting VTXO with a transfer packet.
 func TestSettlementWithAsset(t *testing.T) {
 	ctx := context.Background()
 	alice, grpcClient := setupArkSDK(t)
-	defer grpcClient.Close()
+	t.Cleanup(func() {
+		grpcClient.Close()
+	})
+
+	const (
+		sendAmount  = 10000
+		assetAmount = 1000
+	)
 
 	bobWallet, _, bobPubKey := setupBobWallet(t, ctx)
-	aliceAddr := fundAndSettleAlice(t, ctx, alice)
-
-	const sendAmount = 10000
-	const assetAmount = 500
-
+	aliceAddr := fundAndSettleAlice(t, ctx, alice, sendAmount)
 	alicePkScript, err := script.P2TRScript(aliceAddr.VtxoTapKey)
 	require.NoError(t, err)
 
-	arkadeScript := createArkadeScriptWithAssetChecks(t, alicePkScript, assetAmount)
 	introspectorClient, publicKey, conn := setupIntrospectorClient(t, ctx)
 	t.Cleanup(func() {
 		//nolint:errcheck
 		conn.Close()
 	})
 
-	vtxoScript := createVtxoScriptWithArkadeAndCSV(bobPubKey, aliceAddr.Signer, publicKey, arkade.ArkadeScriptHash(arkadeScript))
-
-	vtxoTapKey, vtxoTapTree, err := vtxoScript.TapTree()
+	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
 	require.NoError(t, err)
 
-	closure := vtxoScript.ForfeitClosures()[0]
+	// =========================================================================
+	// Phase 1: Create settle and mint contract addresses
+	// =========================================================================
 
-	contractAddress := arklib.Address{
+	// Settle arkade script: checks output goes to Alice, 1 asset group, sum = assetAmount
+	settleArkadeScript := createArkadeScriptWithAssetIntrospection(t, alicePkScript, assetAmount)
+	settleVtxoScript := createVtxoScriptWithArkadeAndCSV(bobPubKey, aliceAddr.Signer, publicKey, arkade.ArkadeScriptHash(settleArkadeScript))
+	settleContractTapKey, settleContractTapTree, err := settleVtxoScript.TapTree()
+	require.NoError(t, err)
+
+	settleContractPkScript, err := script.P2TRScript(settleContractTapKey)
+	require.NoError(t, err)
+
+	// Mint arkade script: checks output goes to settle contract, 1 asset group, sum = assetAmount
+	mintArkadeScript := createArkadeScriptWithAssetIntrospection(t, settleContractPkScript, assetAmount)
+	mintVtxoScript := createVtxoScriptWithArkadeScript(bobPubKey, aliceAddr.Signer, publicKey, arkade.ArkadeScriptHash(mintArkadeScript))
+	mintContractTapKey, mintContractTapTree, err := mintVtxoScript.TapTree()
+	require.NoError(t, err)
+
+	mintContractAddress := arklib.Address{
 		HRP:        "tark",
-		VtxoTapKey: vtxoTapKey,
+		VtxoTapKey: mintContractTapKey,
 		Signer:     aliceAddr.Signer,
 	}
 
-	arkadeTapscript, err := closure.Script()
+	mintClosure := mintVtxoScript.ForfeitClosures()[0]
+	mintArkadeTapscript, err := mintClosure.Script()
 	require.NoError(t, err)
 
-	merkleProof, err := vtxoTapTree.GetTaprootMerkleProof(
-		txscript.NewBaseTapLeaf(arkadeTapscript).TapHash(),
+	mintMerkleProof, err := mintContractTapTree.GetTaprootMerkleProof(
+		txscript.NewBaseTapLeaf(mintArkadeTapscript).TapHash(),
 	)
 	require.NoError(t, err)
 
-	ctrlBlock, err := txscript.ParseControlBlock(merkleProof.ControlBlock)
+	mintCtrlBlock, err := txscript.ParseControlBlock(mintMerkleProof.ControlBlock)
 	require.NoError(t, err)
 
-	contractAddressStr, err := contractAddress.EncodeV0()
+	mintTapscript := &waddrmgr.Tapscript{
+		ControlBlock:   mintCtrlBlock,
+		RevealedScript: mintMerkleProof.Script,
+	}
+
+	// =========================================================================
+	// Phase 2: Mint asset via offchain tx
+	// =========================================================================
+
+	mintContractAddressStr, err := mintContractAddress.EncodeV0()
 	require.NoError(t, err)
 
+	// Alice sends to the mint contract address
 	txid, err := alice.SendOffChain(
-		ctx, []types.Receiver{{To: contractAddressStr, Amount: sendAmount}},
+		ctx, []types.Receiver{{To: mintContractAddressStr, Amount: sendAmount}},
 	)
 	require.NoError(t, err)
 	require.NotEmpty(t, txid)
@@ -275,26 +305,145 @@ func TestSettlementWithAsset(t *testing.T) {
 	require.NotEmpty(t, fundingTx)
 	require.Len(t, fundingTx.Txs, 1)
 
-	redeemPtx, err := psbt.NewFromRawBytes(strings.NewReader(fundingTx.Txs[0]), true)
+	mintInputPtx, err := psbt.NewFromRawBytes(strings.NewReader(fundingTx.Txs[0]), true)
 	require.NoError(t, err)
 
-	var contractOutput *wire.TxOut
-	var contractOutputIndex uint32
-	for i, out := range redeemPtx.UnsignedTx.TxOut {
-		if bytes.Equal(out.PkScript[2:], schnorr.SerializePubKey(contractAddress.VtxoTapKey)) {
-			contractOutput = out
-			contractOutputIndex = uint32(i)
+	var mintVtxoOutput *wire.TxOut
+	var mintVtxoOutputIndex uint32
+	for i, out := range mintInputPtx.UnsignedTx.TxOut {
+		if bytes.Equal(out.PkScript[2:], schnorr.SerializePubKey(mintContractAddress.VtxoTapKey)) {
+			mintVtxoOutput = out
+			mintVtxoOutputIndex = uint32(i)
 			break
 		}
 	}
-	require.NotNil(t, contractOutput)
+	require.NotNil(t, mintVtxoOutput)
 
-	// Create the intent with asset packet
+	infos, err := grpcClient.GetInfo(ctx)
+	require.NoError(t, err)
+
+	checkpointScriptBytes, err := hex.DecodeString(infos.CheckpointTapscript)
+	require.NoError(t, err)
+
+	// Build mint offchain tx: input = mint VTXO, output = settle contract address
+	mintTx, mintCheckpoints, err := offchain.BuildTxs(
+		[]offchain.VtxoInput{
+			{
+				Outpoint: &wire.OutPoint{
+					Hash:  mintInputPtx.UnsignedTx.TxHash(),
+					Index: mintVtxoOutputIndex,
+				},
+				Tapscript:          mintTapscript,
+				Amount:             mintVtxoOutput.Value,
+				RevealedTapscripts: []string{hex.EncodeToString(mintArkadeTapscript)},
+			},
+		},
+		[]*wire.TxOut{
+			{
+				Value:    mintVtxoOutput.Value,
+				PkScript: settleContractPkScript,
+			},
+		},
+		checkpointScriptBytes,
+	)
+	require.NoError(t, err)
+
+	// Add issuance asset packet to the mint tx
+	issuancePacket := createIssuanceAssetPacket(t, 0, assetAmount)
+	addAssetPacketToTx(t, mintTx, issuancePacket)
+
+	// Set the mint arkade script on input 0
+	err = txutils.SetArkPsbtField(mintTx, 0, arkade.ArkadeScriptField, mintArkadeScript)
+	require.NoError(t, err)
+
+	encodedMintTx, err := mintTx.B64Encode()
+	require.NoError(t, err)
+
+	signedMintTx, err := bobWallet.SignTransaction(ctx, explorer, encodedMintTx)
+	require.NoError(t, err)
+
+	encodedMintCheckpoints := make([]string, 0, len(mintCheckpoints))
+	for _, checkpoint := range mintCheckpoints {
+		encoded, err := checkpoint.B64Encode()
+		require.NoError(t, err)
+		encodedMintCheckpoints = append(encodedMintCheckpoints, encoded)
+	}
+
+	// Submit mint tx to introspector
+	signedMintTx, signedByIntrospectorMintCheckpoints, err := introspectorClient.SubmitTx(ctx, signedMintTx, encodedMintCheckpoints)
+	require.NoError(t, err)
+	require.NotEmpty(t, signedMintTx)
+
+	// Submit mint tx to server
+	mintTxid, _, signedByServerMintCheckpoints, err := grpcClient.SubmitTx(ctx, signedMintTx, encodedMintCheckpoints)
+	require.NoError(t, err)
+
+	// Combine and finalize mint checkpoints
+	finalMintCheckpoints := make([]string, 0, len(signedByIntrospectorMintCheckpoints))
+	for i, checkpoint := range signedByServerMintCheckpoints {
+		finalCheckpoint, err := bobWallet.SignTransaction(ctx, explorer, checkpoint)
+		require.NoError(t, err)
+
+		byIntrospectorPtx, err := psbt.NewFromRawBytes(strings.NewReader(signedByIntrospectorMintCheckpoints[i]), true)
+		require.NoError(t, err)
+
+		checkpointPtx, err := psbt.NewFromRawBytes(strings.NewReader(finalCheckpoint), true)
+		require.NoError(t, err)
+
+		checkpointPtx.Inputs[0].TaprootScriptSpendSig = append(
+			checkpointPtx.Inputs[0].TaprootScriptSpendSig,
+			byIntrospectorPtx.Inputs[0].TaprootScriptSpendSig...,
+		)
+
+		finalCheckpoint, err = checkpointPtx.B64Encode()
+		require.NoError(t, err)
+
+		finalMintCheckpoints = append(finalMintCheckpoints, finalCheckpoint)
+	}
+
+	err = grpcClient.FinalizeTx(ctx, mintTxid, finalMintCheckpoints)
+	require.NoError(t, err)
+
+	// =========================================================================
+	// Phase 3: Settle the VTXO with a transfer asset packet
+	// =========================================================================
+
+	// Retrieve the mint tx to find the settle VTXO
+	mintResult, err := indexerSvc.GetVirtualTxs(ctx, []string{mintTxid})
+	require.NoError(t, err)
+	require.NotEmpty(t, mintResult)
+	require.Len(t, mintResult.Txs, 1)
+
+	mintResultPtx, err := psbt.NewFromRawBytes(strings.NewReader(mintResult.Txs[0]), true)
+	require.NoError(t, err)
+
+	var settleVtxoOutput *wire.TxOut
+	var settleVtxoOutputIndex uint32
+	for i, out := range mintResultPtx.UnsignedTx.TxOut {
+		if bytes.Equal(out.PkScript[2:], schnorr.SerializePubKey(settleContractTapKey)) {
+			settleVtxoOutput = out
+			settleVtxoOutputIndex = uint32(i)
+			break
+		}
+	}
+	require.NotNil(t, settleVtxoOutput)
+
+	// Build the settlement intent
+	settleClosure := settleVtxoScript.ForfeitClosures()[0]
+	settleArkadeTapscript, err := settleClosure.Script()
+	require.NoError(t, err)
+
+	settleMerkleProof, err := settleContractTapTree.GetTaprootMerkleProof(
+		txscript.NewBaseTapLeaf(settleArkadeTapscript).TapHash(),
+	)
+	require.NoError(t, err)
+
+	settleCtrlBlock, err := txscript.ParseControlBlock(settleMerkleProof.ControlBlock)
+	require.NoError(t, err)
 
 	randomKey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
 	treeSignerSession := tree.NewTreeSignerSession(randomKey)
-	require.NoError(t, err)
 
 	message, err := intent.RegisterMessage{
 		BaseMessage: intent.BaseMessage{
@@ -312,16 +461,16 @@ func TestSettlementWithAsset(t *testing.T) {
 		[]intent.Input{
 			{
 				OutPoint: &wire.OutPoint{
-					Hash:  redeemPtx.UnsignedTx.TxHash(),
-					Index: contractOutputIndex,
+					Hash:  mintResultPtx.UnsignedTx.TxHash(),
+					Index: settleVtxoOutputIndex,
 				},
 				Sequence:    wire.MaxTxInSequenceNum,
-				WitnessUtxo: contractOutput,
+				WitnessUtxo: settleVtxoOutput,
 			},
 		},
 		[]*wire.TxOut{
 			{
-				Value:    contractOutput.Value,
+				Value:    settleVtxoOutput.Value,
 				PkScript: alicePkScript,
 			},
 		},
@@ -329,28 +478,27 @@ func TestSettlementWithAsset(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, intentProof)
 
-	// Add asset packet to intent transaction
-	assetPacket := createIssuanceAssetPacket(t, 0, assetAmount)
-	assetPacketOut, err := assetPacket.TxOut()
+	// Add TRANSFER asset packet (not issuance!) referencing the minted asset
+	mintTxHash := mintResultPtx.UnsignedTx.TxHash()
+	transferPacket := createTransferAssetPacket(t, mintTxHash, 0, 1, 0, uint64(assetAmount))
+	transferPacketOut, err := transferPacket.TxOut()
 	require.NoError(t, err)
-
-	// Add asset packet as OP_RETURN output to intent transaction
-	intentProof.UnsignedTx.AddTxOut(assetPacketOut)
+	intentProof.UnsignedTx.AddTxOut(transferPacketOut)
 	intentProof.Outputs = append(intentProof.Outputs, psbt.POutput{})
 
-	tapscripts, err := vtxoScript.Encode()
+	settleTapscripts, err := settleVtxoScript.Encode()
 	require.NoError(t, err)
-	taptreeField, err := txutils.VtxoTaprootTreeField.Encode(tapscripts)
+	taptreeField, err := txutils.VtxoTaprootTreeField.Encode(settleTapscripts)
 	require.NoError(t, err)
 
-	ctrlBlockBytes, err := ctrlBlock.ToBytes()
+	settleCtrlBlockBytes, err := settleCtrlBlock.ToBytes()
 	require.NoError(t, err)
 
 	tapLeafScript := []*psbt.TaprootTapLeafScript{
 		{
 			LeafVersion:  txscript.BaseLeafVersion,
-			ControlBlock: ctrlBlockBytes,
-			Script:       merkleProof.Script,
+			ControlBlock: settleCtrlBlockBytes,
+			Script:       settleMerkleProof.Script,
 		},
 	}
 	intentProof.Inputs[0].TaprootLeafScript = tapLeafScript
@@ -359,20 +507,17 @@ func TestSettlementWithAsset(t *testing.T) {
 	intentProof.Inputs[1].Unknowns = append(intentProof.Inputs[1].Unknowns, taptreeField)
 
 	intentPtx := &intentProof.Packet
-	err = txutils.SetArkPsbtField(intentPtx, 1, arkade.ArkadeScriptField, arkadeScript)
+	err = txutils.SetArkPsbtField(intentPtx, 1, arkade.ArkadeScriptField, settleArkadeScript)
 	require.NoError(t, err)
 
 	encodedIntentProof, err := intentPtx.B64Encode()
-	require.NoError(t, err)
-
-	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
 	require.NoError(t, err)
 
 	signedIntentProof, err := bobWallet.SignTransaction(ctx, explorer, encodedIntentProof)
 	require.NoError(t, err)
 	require.NotEqual(t, signedIntentProof, encodedIntentProof)
 
-	// SubmitIntent will execute the arkade script on the intent tx with the asset packet
+	// Submit intent to introspector (validates the settle arkade script with transfer packet)
 	approvedIntentProof, err := introspectorClient.SubmitIntent(ctx, introspectorclient.Intent{
 		Proof:   signedIntentProof,
 		Message: message,
@@ -390,13 +535,13 @@ func TestSettlementWithAsset(t *testing.T) {
 	vtxo := client.TapscriptsVtxo{
 		Vtxo: types.Vtxo{
 			Outpoint: types.Outpoint{
-				Txid: redeemPtx.UnsignedTx.TxHash().String(),
-				VOut: contractOutputIndex,
+				Txid: mintResultPtx.UnsignedTx.TxHash().String(),
+				VOut: settleVtxoOutputIndex,
 			},
-			Script: hex.EncodeToString(arkadeTapscript),
-			Amount: uint64(contractOutput.Value),
+			Script: hex.EncodeToString(settleArkadeTapscript),
+			Amount: uint64(settleVtxoOutput.Value),
 		},
-		Tapscripts: tapscripts,
+		Tapscripts: settleTapscripts,
 	}
 
 	introspectorBatchHandler := &delegateBatchEventsHandler{
@@ -419,4 +564,15 @@ func TestSettlementWithAsset(t *testing.T) {
 	commitmentTxid, err := arksdk.JoinBatchSession(ctx, eventStream, introspectorBatchHandler)
 	require.NoError(t, err)
 	require.NotEmpty(t, commitmentTxid)
+}
+
+// addAssetPacketToTx adds the asset packet to the transaction as an OP_RETURN output (before the last output, which is the P2A)
+func addAssetPacketToTx(t *testing.T, tx *psbt.Packet, assetPacket asset.Packet) {
+	assetPacketOut, err := assetPacket.TxOut()
+	require.NoError(t, err)
+	p2aOutputIndex := len(tx.UnsignedTx.TxOut) - 1
+	p2aOutput := tx.UnsignedTx.TxOut[p2aOutputIndex]
+	tx.UnsignedTx.TxOut[p2aOutputIndex] = assetPacketOut
+	tx.UnsignedTx.AddTxOut(p2aOutput)
+	tx.Outputs = append(tx.Outputs, psbt.POutput{})
 }

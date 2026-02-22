@@ -1,6 +1,10 @@
 github.com/aead/siphash v1.0.1/go.mod h1:Nywa3cDsYNNK3gaciGTWPwHt0wlpNV15vwmswBAUSII=
-github.com/arkade-os/arkd/pkg/ark-lib v0.0.0-20260213160542-d57655255d93 h1:c4UDnUQpJP2VFd42Dy7cLW4aaF84jeckr4enzIXttfM=
-github.com/arkade-os/arkd/pkg/ark-lib v0.0.0-20260213160542-d57655255d93/go.mod h1:k/5HLBp1TM0c5FXmbxn5a+Z+H889M1eUrnj32JLTZBY=
+github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260216152434-74a173c67a37 h1:dBSLrywZbu9KxP+VZerJjnV/Ok0j5mjdj1q/fd5uJak=
+github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260216152434-74a173c67a37/go.mod h1:k/5HLBp1TM0c5FXmbxn5a+Z+H889M1eUrnj32JLTZBY=
+github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260220163635-76f077b0e63b h1:MFjmOw2lTxu4HJGDRnrIfCZ9szHc77ex6EPmt+Ahuyg=
+github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260220163635-76f077b0e63b/go.mod h1:k/5HLBp1TM0c5FXmbxn5a+Z+H889M1eUrnj32JLTZBY=
+github.com/arkade-os/arkd/pkg/errors v0.0.0-20260220163635-76f077b0e63b h1:JUuedUj5tN2TozZf7wqYhj/2q+zwYN2iwhASi2YkK4Q=
+github.com/arkade-os/arkd/pkg/errors v0.0.0-20260220163635-76f077b0e63b/go.mod h1:dA/wF5R+y+JyZACR0xAr3l4FirybLY+gsl05Xv0LlUc=
 github.com/btcsuite/btcd v0.20.1-beta/go.mod h1:wVuoA8VJLEcwgqHBwHmzLRazpKxTv13Px/pDuV7OomQ=
 github.com/btcsuite/btcd v0.22.0-beta.0.20220111032746-97732e52810c/go.mod h1:tjmYdS6MLJ5/s0Fj4DbLgSbDHbEqLJrtnHecBFkdz5M=
 github.com/btcsuite/btcd v0.23.5-0.20231215221805-96c9fd8078fd/go.mod h1:nm3Bko6zh6bWP60UxwoT5LzdGJsQJaPo6HjduXq9p6A=
@@ -88,6 +92,8 @@ github.com/onsi/gomega v1.10.1/go.mod h1:iN09h71vgCQne3DLsj+A5owkum+a2tYe+TOCB1y
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 h1:Jamvg5psRIccs7FGNTlIRMkT8wgtp5eCXdBlqhYGL6U=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
+github.com/sirupsen/logrus v1.9.3 h1:dueUQJ1C2q9oE3F7wvmSGAaVtTmUizReu6fjN8uqzbQ=
+github.com/sirupsen/logrus v1.9.3/go.mod h1:naHLuLoDiP4jHNo9R0sCBMtWGeIprob74mVsIT4qYEQ=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
@@ -128,6 +134,7 @@ golang.org/x/sys v0.0.0-20191120155948-bd437916bb0e/go.mod h1:h1NjWce9XRLGQEsW7w
 golang.org/x/sys v0.0.0-20200323222414-85ca7c5b95cd/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
 golang.org/x/sys v0.0.0-20200519105757-fe76b779f299/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
 golang.org/x/sys v0.0.0-20200814200057-3d37ad5750ed/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+golang.org/x/sys v0.0.0-20220715151400-c0bba94af5f8/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
 golang.org/x/sys v0.34.0 h1:H5Y5sJ2L2JRdyv7ROF1he/lPdvFsd0mJHFw2ThKHxLA=
 golang.org/x/sys v0.34.0/go.mod h1:BJP2sWEmIv4KK5OTEluFJCKSidICx8ciO85XgH3Ak8k=
 golang.org/x/text v0.3.0/go.mod h1:NqM8EUOU14njkJ3fqMW+pc6Ldnwhi/IjpwHt7yyuwOQ=
