@@ -10,6 +10,7 @@
         "tags": [
           "IntrospectorService"
         ],
+        "description": "SubmitFinalization conditionally signs forfeit and/or boarding inputs.\nIt only signs if the signer's signature is found in the intent proof.\nconnector tree is used to verify the forfeits are part of a real batch session.\nSubmitFinalization works in sequence with SubmitIntent.\n1. SubmitIntent before intent registration.\n2. SubmitFinalization during batch finalization.",
         "operationId": "IntrospectorService_SubmitFinalization",
         "requestBody": {
           "content": {
@@ -50,6 +51,7 @@
         "tags": [
           "IntrospectorService"
         ],
+        "description": "GetInfo returns service metadata including the base signer's public key.\nthe public key should be tweaked with the arkade script hash before being used as forfeit.",
         "operationId": "IntrospectorService_GetInfo",
         "responses": {
           "200": {
@@ -80,6 +82,7 @@
         "tags": [
           "IntrospectorService"
         ],
+        "description": "SubmitIntent signs an intent proof after validating the register message\nand executing Arkade Script on the intent proof transaction.",
         "operationId": "IntrospectorService_SubmitIntent",
         "requestBody": {
           "content": {
@@ -120,6 +123,7 @@
         "tags": [
           "IntrospectorService"
         ],
+        "description": "SubmitTx signs an Ark transaction and its associated checkpoint\ntransactions by executing Arkade scripts on each input.\nthe script is executed only on the ark transaction, not on checkpoints.",
         "operationId": "IntrospectorService_SubmitTx",
         "requestBody": {
           "content": {
@@ -177,7 +181,8 @@
         "type": "object",
         "properties": {
           "signerPubkey": {
-            "type": "string"
+            "type": "string",
+            "description": "hex-encoded compressed public key of the signer."
           },
           "version": {
             "type": "string"
@@ -277,10 +282,12 @@
         "type": "object",
         "properties": {
           "arkTx": {
-            "type": "string"
+            "type": "string",
+            "description": "base64 psbt"
           },
           "checkpointTxs": {
             "type": "array",
+            "description": "base64 psbts",
             "items": {
               "type": "string"
             }

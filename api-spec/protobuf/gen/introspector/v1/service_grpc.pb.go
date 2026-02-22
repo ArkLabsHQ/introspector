@@ -29,9 +29,22 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type IntrospectorServiceClient interface {
+	// GetInfo returns service metadata including the base signer's public key.
+	// the public key should be tweaked with the arkade script hash before being used as forfeit.
 	GetInfo(ctx context.Context, in *GetInfoRequest, opts ...grpc.CallOption) (*GetInfoResponse, error)
+	// SubmitTx signs an Ark transaction and its associated checkpoint
+	// transactions by executing Arkade scripts on each input.
+	// the script is executed only on the ark transaction, not on checkpoints.
 	SubmitTx(ctx context.Context, in *SubmitTxRequest, opts ...grpc.CallOption) (*SubmitTxResponse, error)
+	// SubmitIntent signs an intent proof after validating the register message
+	// and executing Arkade Script on the intent proof transaction.
 	SubmitIntent(ctx context.Context, in *SubmitIntentRequest, opts ...grpc.CallOption) (*SubmitIntentResponse, error)
+	// SubmitFinalization conditionally signs forfeit and/or boarding inputs.
+	// It only signs if the signer's signature is found in the intent proof.
+	// connector tree is used to verify the forfeits are part of a real batch session.
+	// SubmitFinalization works in sequence with SubmitIntent.
+	// 1. SubmitIntent before intent registration.
+	// 2. SubmitFinalization during batch finalization.
 	SubmitFinalization(ctx context.Context, in *SubmitFinalizationRequest, opts ...grpc.CallOption) (*SubmitFinalizationResponse, error)
 }
 
@@ -87,9 +100,22 @@ func (c *introspectorServiceClient) SubmitFinalization(ctx context.Context, in *
 // All implementations should embed UnimplementedIntrospectorServiceServer
 // for forward compatibility.
 type IntrospectorServiceServer interface {
+	// GetInfo returns service metadata including the base signer's public key.
+	// the public key should be tweaked with the arkade script hash before being used as forfeit.
 	GetInfo(context.Context, *GetInfoRequest) (*GetInfoResponse, error)
+	// SubmitTx signs an Ark transaction and its associated checkpoint
+	// transactions by executing Arkade scripts on each input.
+	// the script is executed only on the ark transaction, not on checkpoints.
 	SubmitTx(context.Context, *SubmitTxRequest) (*SubmitTxResponse, error)
+	// SubmitIntent signs an intent proof after validating the register message
+	// and executing Arkade Script on the intent proof transaction.
 	SubmitIntent(context.Context, *SubmitIntentRequest) (*SubmitIntentResponse, error)
+	// SubmitFinalization conditionally signs forfeit and/or boarding inputs.
+	// It only signs if the signer's signature is found in the intent proof.
+	// connector tree is used to verify the forfeits are part of a real batch session.
+	// SubmitFinalization works in sequence with SubmitIntent.
+	// 1. SubmitIntent before intent registration.
+	// 2. SubmitFinalization during batch finalization.
 	SubmitFinalization(context.Context, *SubmitFinalizationRequest) (*SubmitFinalizationResponse, error)
 }
 

@@ -59,9 +59,10 @@ func (*GetInfoRequest) Descriptor() ([]byte, []int) {
 }
 
 type GetInfoResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Version       string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
-	SignerPubkey  string                 `protobuf:"bytes,2,opt,name=signer_pubkey,json=signerPubkey,proto3" json:"signer_pubkey,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Version string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
+	// hex-encoded compressed public key of the signer.
+	SignerPubkey  string `protobuf:"bytes,2,opt,name=signer_pubkey,json=signerPubkey,proto3" json:"signer_pubkey,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -111,9 +112,11 @@ func (x *GetInfoResponse) GetSignerPubkey() string {
 }
 
 type SubmitTxRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ArkTx         string                 `protobuf:"bytes,1,opt,name=ark_tx,json=arkTx,proto3" json:"ark_tx,omitempty"`
-	CheckpointTxs []string               `protobuf:"bytes,2,rep,name=checkpoint_txs,json=checkpointTxs,proto3" json:"checkpoint_txs,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// base64 psbt
+	ArkTx string `protobuf:"bytes,1,opt,name=ark_tx,json=arkTx,proto3" json:"ark_tx,omitempty"`
+	// base64 psbts
+	CheckpointTxs []string `protobuf:"bytes,2,rep,name=checkpoint_txs,json=checkpointTxs,proto3" json:"checkpoint_txs,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
