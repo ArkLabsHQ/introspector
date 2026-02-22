@@ -1,3 +1,14 @@
+// Package arkade implements a custom Bitcoin Script virtual machine forked from
+// btcd/txscript (github.com/btcsuite/btcd v0.24.3).
+//
+// Key differences from the upstream btcd/txscript engine:
+//   - Only taproot/tapscript execution is supported (segwit v0 and legacy are rejected).
+//   - All opcodes that btcd disables (OP_CAT, OP_SUBSTR, etc.) are re-enabled for arkade script use.
+//   - Custom introspection opcodes are added for transaction input/output inspection,
+//     64-bit arithmetic, SHA256 streaming, elliptic curve operations, and asset introspection.
+//
+// When updating btcd dependencies, review upstream txscript changes for security
+// patches that may need to be backported to this fork.
 package arkade
 
 import (
@@ -183,7 +194,7 @@ type StepInfo struct {
 
 	// OpcodeIndex is the index of the next opcode that will be executed.
 	// In case the execution has completed, the opcode index will be
-	// incrementet beyond the number of the current script's opcodes. This
+	// incremented beyond the number of the current script's opcodes. This
 	// indicates no new script is being executed, and execution is done.
 	OpcodeIndex int
 
@@ -213,13 +224,6 @@ func (vm *Engine) isBranchExecuting() bool {
 		return true
 	}
 	return vm.condStack[len(vm.condStack)-1] == txscript.OpCondTrue
-}
-
-// isOpcodeDisabled returns whether or not the opcode is disabled and thus is
-// always bad to see in the instruction stream (even if turned off by a
-// conditional).
-func isOpcodeDisabled(opcode byte) bool {
-	return false
 }
 
 // isOpcodeAlwaysIllegal returns whether or not the opcode is always illegal
@@ -306,13 +310,6 @@ func checkMinimalDataPush(op *opcode, data []byte) error {
 // whether or not it is hidden by conditionals, but some rules still must be
 // tested in this case.
 func (vm *Engine) executeOpcode(op *opcode, data []byte) error {
-	// Disabled opcodes are fail on program counter.
-	if isOpcodeDisabled(op.value) {
-		str := fmt.Sprintf("attempt to execute disabled opcode %s", op.name)
-		return scriptError(txscript.ErrDisabledOpcode, str)
-	}
-
-	// Always-illegal opcodes are fail on program counter.
 	if isOpcodeAlwaysIllegal(op.value) {
 		str := fmt.Sprintf("attempt to execute reserved opcode %s", op.name)
 		return scriptError(txscript.ErrReservedOpcode, str)

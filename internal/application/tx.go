@@ -13,10 +13,15 @@ import (
 func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, error) {
 	arkPtx := tx.ArkTx
 
-	// index checkpoints by txid for easy lookup whiloe signing ark transaction
+	// index checkpoints by txid for easy lookup while signing ark transaction
 	indexedCheckpoints := make(map[string]*psbt.Packet) // txid => checkpoint psbt
 	for _, checkpoint := range tx.Checkpoints {
 		indexedCheckpoints[checkpoint.UnsignedTx.TxID()] = checkpoint
+	}
+	// preserve original checkpoint order for deterministic response
+	orderedCheckpointTxids := make([]string, 0, len(tx.Checkpoints))
+	for _, checkpoint := range tx.Checkpoints {
+		orderedCheckpointTxids = append(orderedCheckpointTxids, checkpoint.UnsignedTx.TxID())
 	}
 
 	prevoutFetcher, err := computePrevoutFetcher(arkPtx)
@@ -60,9 +65,9 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		}
 	}
 
-	signedCheckpointTxs := make([]*psbt.Packet, 0)
-	for _, checkpoint := range indexedCheckpoints {
-		signedCheckpointTxs = append(signedCheckpointTxs, checkpoint)
+	signedCheckpointTxs := make([]*psbt.Packet, 0, len(orderedCheckpointTxids))
+	for _, txid := range orderedCheckpointTxids {
+		signedCheckpointTxs = append(signedCheckpointTxs, indexedCheckpoints[txid])
 	}
 
 	return &OffchainTx{

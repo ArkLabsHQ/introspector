@@ -74,8 +74,8 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 		Forfeits: signedForfeits,
 	}
 
-	if len(signedForfeits) == len(signedInputs) {
-		// all forfeits are signed, it means no boarding inputs, we can return
+	if len(signedInputs) == 0 {
+		// all signed inputs were matched to forfeits, no boarding inputs remain
 		return signedBatchFinalization, nil
 	}
 

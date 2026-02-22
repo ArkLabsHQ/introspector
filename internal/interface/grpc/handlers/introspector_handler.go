@@ -10,6 +10,7 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/btcsuite/btcd/btcutil/psbt"
+	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -72,7 +73,8 @@ func (h *handler) SubmitTx(
 
 	approvedTx, err := h.svc.SubmitTx(ctx, offchainTx)
 	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		log.WithError(err).Error("failed to process transaction")
+		return nil, status.Error(codes.Internal, "failed to process transaction")
 	}
 
 	encodedArkTx, err := approvedTx.ArkTx.B64Encode()
@@ -111,7 +113,8 @@ func (h *handler) SubmitIntent(
 
 	signedIntentProof, err := h.svc.SubmitIntent(ctx, *intent)
 	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		log.WithError(err).Error("failed to process intent")
+		return nil, status.Error(codes.Internal, "failed to process intent")
 	}
 
 	encodedProof, err := signedIntentProof.B64Encode()
@@ -184,7 +187,8 @@ func (h *handler) SubmitFinalization(
 
 	signedBatchFinalization, err := h.svc.SubmitFinalization(ctx, batchFinalization)
 	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		log.WithError(err).Error("failed to process finalization")
+		return nil, status.Error(codes.Internal, "failed to process finalization")
 	}
 
 	encodedForfeits := make([]string, 0, len(signedBatchFinalization.Forfeits))

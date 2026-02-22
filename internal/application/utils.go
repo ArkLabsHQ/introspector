@@ -97,6 +97,12 @@ func readArkadeScript(ptx *psbt.Packet, inputIndex int, signerPublicKey *btcec.P
 }
 
 func (s arkadeScript) execute(spendingTx *wire.MsgTx, prevoutFetcher txscript.PrevOutputFetcher, inputIndex int) error {
+	prevOut := prevoutFetcher.FetchPrevOutput(spendingTx.TxIn[inputIndex].PreviousOutPoint)
+	inputAmount := int64(0)
+	if prevOut != nil {
+		inputAmount = prevOut.Value
+	}
+
 	engine, err := arkade.NewEngine(
 		s.script,
 		spendingTx,
@@ -104,7 +110,7 @@ func (s arkadeScript) execute(spendingTx *wire.MsgTx, prevoutFetcher txscript.Pr
 		txscript.StandardVerifyFlags,
 		txscript.NewSigCache(100),
 		txscript.NewTxSigHashes(spendingTx, prevoutFetcher),
-		0, // TODO : add input amount if need CHECKSIG in custom script?
+		inputAmount,
 		prevoutFetcher,
 	)
 	if err != nil {
