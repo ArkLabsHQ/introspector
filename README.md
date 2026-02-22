@@ -4,7 +4,80 @@
 [![quality](https://github.com/ArkLabsHQ/introspector/actions/workflows/quality.yaml/badge.svg)](https://github.com/ArkLabsHQ/introspector/actions/workflows/quality.yaml)
 [![Trivy Security Scan](https://github.com/ArkLabsHQ/introspector/actions/workflows/trivy.yaml/badge.svg)](https://github.com/ArkLabsHQ/introspector/actions/workflows/trivy.yaml)
 
-Introspector is a signing service for the [Arkade](https://docs.arkadeos.com/) protocol, executing [Arkade Script](https://docs.arkadeos.com/experimental/arkade-script).
+_Introspector is a signing service for the [Arkade](https://docs.arkadeos.com/) protocol, executing [Arkade Script](https://docs.arkadeos.com/experimental/arkade-script)._
+
+This is achieved by signing any Ark transaction (offchain or intent proof) expecting the signature of a [tweaked public key](pkg/arkade/tweak.go). The tweaked key is `introspector_key + hash(arkade_script)`, where the script hash is a [tagged hash](pkg/arkade/tweak.go#L15) (`"ArkScriptHash"`). The Arkade script is revealed via custom [PSBT fields](pkg/arkade/psbt_field.go) (`arkadescript`). If the script requires witness arguments, the extra witness is also passed via PSBT fields (`arkadescriptwitness`).
+
+## Example: Pay-to-Two-Outputs
+
+This example builds a VTXO that can only be spent if two specific outputs are created with exact amounts. The introspector enforces these conditions via an Arkade script. See the full test in [`test/pay_2_out_test.go`](test/pay_2_out_test.go).
+
+### 1. Build the Arkade script
+
+The script uses introspection opcodes to verify the transaction outputs match the expected addresses and amounts:
+
+```go
+arkadeScript, _ := txscript.NewScriptBuilder().
+    // output 0 must pay to alice
+    AddInt64(0).AddOp(arkade.OP_INSPECTOUTPUTSCRIPTPUBKEY).
+    AddOp(arkade.OP_1).AddOp(arkade.OP_EQUALVERIFY).       // segwit v1
+    AddData(alicePkScript[2:]).AddOp(arkade.OP_EQUALVERIFY). // witness program
+    // output 0 must have exact amount
+    AddInt64(0).AddOp(arkade.OP_INSPECTOUTPUTVALUE).
+    AddData(uint64LE(aliceAmount)).AddOp(arkade.OP_EQUALVERIFY).
+    // output 1 must pay to bob
+    AddInt64(1).AddOp(arkade.OP_INSPECTOUTPUTSCRIPTPUBKEY).
+    AddOp(arkade.OP_1).AddOp(arkade.OP_EQUALVERIFY).
+    AddData(bobPkScript[2:]).AddOp(arkade.OP_EQUALVERIFY).
+    // output 1 must have exact amount
+    AddInt64(1).AddOp(arkade.OP_INSPECTOUTPUTVALUE).
+    AddData(uint64LE(bobAmount)).AddOp(arkade.OP_EQUAL).
+    Script()
+```
+
+### 2. Compute the tweaked key and build the VTXO tapscript
+
+The VTXO uses a `MultisigClosure` with three keys: two user keys and the introspector's tweaked key.
+
+```go
+scriptHash := arkade.ArkadeScriptHash(arkadeScript)
+tweakedKey := arkade.ComputeArkadeScriptPublicKey(introspectorPubKey, scriptHash)
+
+vtxoScript := script.TapscriptsVtxoScript{
+    Closures: []script.Closure{
+        &script.MultisigClosure{
+            PubKeys: []*btcec.PublicKey{bobKey, aliceKey, tweakedKey},
+        },
+    },
+}
+vtxoTapKey, _, _ := vtxoScript.TapTree()
+```
+
+### 3. Build the PSBT and attach the Arkade script
+
+Build the offchain transaction with outputs matching the script, then attach the Arkade script via the custom PSBT field:
+
+```go
+tx, checkpoints, _ := offchain.BuildTxs(
+    []offchain.VtxoInput{vtxoInput},
+    []*wire.TxOut{
+        {Value: aliceAmount, PkScript: alicePkScript},
+        {Value: bobAmount, PkScript: bobPkScript},
+    },
+    checkpointScript,
+)
+
+// attach the arkade script to input 0
+txutils.SetArkPsbtField(tx, 0, arkade.ArkadeScriptField, arkadeScript)
+```
+
+### 4. Submit to the introspector
+
+The introspector [decodes the tapscript](internal/application/utils.go), verifies it is a `MultisigClosure` containing the expected tweaked key, [executes the Arkade script](internal/application/tx.go) against the transaction, and signs if it passes:
+
+```go
+signedTx, signedCheckpoints, _ := introspectorClient.SubmitTx(ctx, encodedTx, encodedCheckpoints)
+```
 
 ## API
 
