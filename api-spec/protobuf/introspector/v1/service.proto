@@ -5,12 +5,17 @@ package introspector.v1;
 import "meshapi/gateway/annotations.proto";
 
 service IntrospectorService {
+  // GetInfo returns service metadata including the base signer's public key.
+  // the public key should be tweaked with the arkade script hash before being used as forfeit.
   rpc GetInfo(GetInfoRequest) returns (GetInfoResponse) {
     option (meshapi.gateway.http) = {
       get: "/v1/info"
     };
   }
 
+  // SubmitTx signs an Ark transaction and its associated checkpoint
+  // transactions by executing Arkade scripts on each input.
+  // the script is executed only on the ark transaction, not on checkpoints.
   rpc SubmitTx(SubmitTxRequest) returns (SubmitTxResponse) {
     option (meshapi.gateway.http) = {
       post: "/v1/tx"
@@ -18,6 +23,8 @@ service IntrospectorService {
     };
   }
 
+  // SubmitIntent signs an intent proof after validating the register message
+  // and executing Arkade Script on the intent proof transaction.
   rpc SubmitIntent(SubmitIntentRequest) returns (SubmitIntentResponse) {
     option (meshapi.gateway.http) = {
       post: "/v1/intent"
@@ -25,6 +32,12 @@ service IntrospectorService {
     };
   }
 
+  // SubmitFinalization conditionally signs forfeit and/or boarding inputs.
+  // It only signs if the signer's signature is found in the intent proof.
+  // connector tree is used to verify the forfeits are part of a real batch session.
+  // SubmitFinalization works in sequence with SubmitIntent.
+  // 1. SubmitIntent before intent registration.
+  // 2. SubmitFinalization during batch finalization.
   rpc SubmitFinalization(SubmitFinalizationRequest) returns (SubmitFinalizationResponse) {
     option (meshapi.gateway.http) = {
       post: "/v1/finalization"
@@ -36,11 +49,14 @@ service IntrospectorService {
 message GetInfoRequest {}
 message GetInfoResponse {
   string version = 1;
+  // hex-encoded compressed public key of the signer.
   string signer_pubkey = 2;
 }
 
 message SubmitTxRequest {
+  // base64 psbt
   string ark_tx = 1;
+  // base64 psbts
   repeated string checkpoint_txs = 2;
 }
 message SubmitTxResponse {
