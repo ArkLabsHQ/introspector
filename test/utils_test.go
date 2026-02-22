@@ -471,7 +471,6 @@ func fundAndSettleAlice(t *testing.T, ctx context.Context, alice arksdk.ArkClien
 	aliceAddr, err := arklib.DecodeAddressV0(offchainAddr)
 	require.NoError(t, err)
 
-
 	amountBtc := strings.TrimSuffix(btcutil.Amount(amount).Format(btcutil.AmountBTC), " BTC")
 
 	_, err = runCommand("nigiri", "faucet", boardingAddress, amountBtc)

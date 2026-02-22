@@ -112,8 +112,8 @@ func TestPayToTwoOutputs(t *testing.T) {
 		AddInt64(0).
 		AddOp(arkade.OP_INSPECTOUTPUTSCRIPTPUBKEY).
 		AddOp(arkade.OP_1).
-		AddOp(arkade.OP_EQUALVERIFY).   // version == 1
-		AddData(alicePkScript[2:]).      // witness program
+		AddOp(arkade.OP_EQUALVERIFY). // version == 1
+		AddData(alicePkScript[2:]).   // witness program
 		AddOp(arkade.OP_EQUALVERIFY).
 		// Check output 0 value == aliceAmount
 		AddInt64(0).
@@ -124,14 +124,14 @@ func TestPayToTwoOutputs(t *testing.T) {
 		AddInt64(1).
 		AddOp(arkade.OP_INSPECTOUTPUTSCRIPTPUBKEY).
 		AddOp(arkade.OP_1).
-		AddOp(arkade.OP_EQUALVERIFY).   // version == 1
-		AddData(bobPkScript[2:]).        // witness program
+		AddOp(arkade.OP_EQUALVERIFY). // version == 1
+		AddData(bobPkScript[2:]).     // witness program
 		AddOp(arkade.OP_EQUALVERIFY).
 		// Check output 1 value == bobAmount
 		AddInt64(1).
 		AddOp(arkade.OP_INSPECTOUTPUTVALUE).
 		AddData(uint64LE(bobAmount)).
-		AddOp(arkade.OP_EQUAL).         // final check leaves result on stack
+		AddOp(arkade.OP_EQUAL). // final check leaves result on stack
 		Script()
 	require.NoError(t, err)
 
@@ -249,7 +249,7 @@ func TestPayToTwoOutputs(t *testing.T) {
 	invalidAddrTx, invalidAddrCheckpoints, err := offchain.BuildTxs(
 		[]offchain.VtxoInput{vtxoInput},
 		[]*wire.TxOut{
-			{Value: aliceAmount, PkScript: []byte{0x6a}},  // OP_RETURN, wrong address
+			{Value: aliceAmount, PkScript: []byte{0x6a}}, // OP_RETURN, wrong address
 			{Value: bobAmount, PkScript: bobPkScript},
 		},
 		checkpointScriptBytes,
