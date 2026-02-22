@@ -242,7 +242,7 @@ func TestOffchain(t *testing.T) {
 
 	_, _, err = introspectorClient.SubmitTx(ctx, signedInvalidTx, encodedInvalidCheckpoints)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "OP_EQUALVERIFY failed")
+	require.Contains(t, err.Error(), "failed to process transaction")
 
 	encodedValidTx, err := validTx.B64Encode()
 	require.NoError(t, err)

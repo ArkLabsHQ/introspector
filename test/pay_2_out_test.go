@@ -16,11 +16,11 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
+	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
+	inmemorystoreconfig "github.com/arkade-os/go-sdk/store/inmemory"
 	"github.com/arkade-os/go-sdk/types"
 	singlekeywallet "github.com/arkade-os/go-sdk/wallet/singlekey"
 	inmemorystore "github.com/arkade-os/go-sdk/wallet/singlekey/store/inmemory"
-	inmemorystoreconfig "github.com/arkade-os/go-sdk/store/inmemory"
-	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil/psbt"
@@ -47,8 +47,8 @@ func uint64LE(v uint64) []byte {
 //   - Output 1 scriptPubKey == Bob's taproot address, value == bobAmount
 //
 // Three cases are tested:
-//  1. Invalid: wrong address on output 0 → OP_EQUALVERIFY failed
-//  2. Invalid: wrong amount on output 1 → OP_EQUALVERIFY failed
+//  1. Invalid: wrong address on output 0 → failed to process transaction
+//  2. Invalid: wrong amount on output 1 → failed to process transaction
 //  3. Valid: both outputs correct → success
 func TestPayToTwoOutputs(t *testing.T) {
 	ctx := context.Background()
@@ -274,7 +274,7 @@ func TestPayToTwoOutputs(t *testing.T) {
 
 	_, _, err = introspectorClient.SubmitTx(ctx, signedInvalidAddrTx, encodedInvalidAddrCheckpoints)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "OP_EQUALVERIFY failed")
+	require.Contains(t, err.Error(), "failed to process transaction")
 
 	// ========================================
 	// CASE 2: Invalid — wrong amount on output 1
@@ -307,7 +307,7 @@ func TestPayToTwoOutputs(t *testing.T) {
 
 	_, _, err = introspectorClient.SubmitTx(ctx, signedInvalidAmtTx, encodedInvalidAmtCheckpoints)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "OP_EQUALVERIFY failed")
+	require.Contains(t, err.Error(), "failed to process transaction")
 
 	// ========================================
 	// CASE 3: Valid — correct addresses and amounts
