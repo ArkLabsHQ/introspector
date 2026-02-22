@@ -37,7 +37,7 @@ arkadeScript, _ := txscript.NewScriptBuilder().
 
 ### 2. Compute the tweaked key and build the VTXO tapscript
 
-The VTXO uses a `MultisigClosure` with three keys: two user keys and the introspector's tweaked key.
+The VTXO uses a `MultisigClosure` with three keys: the ark server, the user and the introspector's tweaked key.
 
 ```go
 scriptHash := arkade.ArkadeScriptHash(arkadeScript)
@@ -46,7 +46,7 @@ tweakedKey := arkade.ComputeArkadeScriptPublicKey(introspectorPubKey, scriptHash
 vtxoScript := script.TapscriptsVtxoScript{
     Closures: []script.Closure{
         &script.MultisigClosure{
-            PubKeys: []*btcec.PublicKey{bobKey, aliceKey, tweakedKey},
+            PubKeys: []*btcec.PublicKey{aliceKey, tweakedKey, serverKey},
         },
     },
 }
