@@ -719,7 +719,6 @@ func TestAssetOpcodes(t *testing.T) {
 				engine, err := NewEngine(
 					script,
 					simpleTx, 0,
-					txscript.StandardVerifyFlags&txscript.ScriptVerifyTaproot,
 					txscript.NewSigCache(100),
 					txscript.NewTxSigHashes(simpleTx, prevoutFetcher),
 					0,

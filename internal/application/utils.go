@@ -107,7 +107,6 @@ func (s arkadeScript) execute(spendingTx *wire.MsgTx, prevoutFetcher txscript.Pr
 		s.script,
 		spendingTx,
 		inputIndex,
-		txscript.StandardVerifyFlags,
 		txscript.NewSigCache(100),
 		txscript.NewTxSigHashes(spendingTx, prevoutFetcher),
 		inputAmount,

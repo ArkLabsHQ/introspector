@@ -12,14 +12,11 @@
 package arkade
 
 import (
-	"bytes"
 	"fmt"
 	"math"
-	"math/big"
 	"strings"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
-	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
@@ -37,9 +34,6 @@ const (
 	// tapscript sighash when no code separator was found in the script.
 	blankCodeSepValue = math.MaxUint32
 )
-
-// halforder is used to tame ECDSA malleability (see BIP0062).
-var halfOrder = new(big.Int).Rsh(btcec.S256().N, 1)
 
 // taprootExecutionCtx houses the special context-specific information we need
 // to validate a taproot script spend. This includes the annex, the running sig
@@ -89,40 +83,29 @@ type Engine struct {
 	// changed afterwards.  The entries of the signature cache are mutated
 	// during execution, however, the cache pointer itself is not changed.
 	//
-	// flags specifies the additional flags which modify the execution behavior
-	// of the engine.
-	//
 	// tx identifies the transaction that contains the input which in turn
 	// contains the signature script being executed.
 	//
 	// txIdx identifies the input index within the transaction that contains
 	// the signature script being executed.
 	//
-	// version specifies the version of the public key script to execute.  Since
-	// signature scripts redeem public keys scripts, this means the same version
-	// also extends to signature scripts and redeem scripts in the case of
-	// pay-to-script-hash.
-	//
-	// bip16 specifies that the public key script is of a special form that
-	// indicates it is a BIP16 pay-to-script-hash and therefore the
-	// execution must be treated as such.
+	// version specifies the version of the public key script to execute.
+	// Always 0 in this taproot-only engine.
 	//
 	// sigCache caches the results of signature verifications.  This is useful
 	// since transaction scripts are often executed more than once from various
 	// contexts (e.g. new block templates, when transactions are first seen
 	// prior to being mined, part of full block verification, etc).
 	//
-	// hashCache caches the midstate of segwit v0 and v1 sighashes to
-	// optimize worst-case hashing complexity.
+	// hashCache caches the midstate of segwit v1 sighashes to optimize
+	// worst-case hashing complexity.
 	//
 	// prevOutFetcher is used to look up all the previous output of
 	// taproot transactions, as that information is hashed into the
 	// sighash digest for such inputs.
-	flags          txscript.ScriptFlags
 	tx             wire.MsgTx
 	txIdx          int
 	version        uint16
-	bip16          bool
 	sigCache       *txscript.SigCache
 	hashCache      *txscript.TxSigHashes
 	prevOutFetcher txscript.PrevOutputFetcher
@@ -132,8 +115,7 @@ type Engine struct {
 	// of the engine.
 	//
 	// scripts houses the raw scripts that are executed by the engine.  This
-	// includes the signature script as well as the public key script.  It also
-	// includes the redeem script in the case of pay-to-script-hash.
+	// includes the signature script as well as the public key script.
 	//
 	// scriptIdx tracks the index into the scripts array for the current program
 	// counter.
@@ -148,9 +130,6 @@ type Engine struct {
 	// tokenizer provides the token stream of the current script being executed
 	// and doubles as state tracking for the program counter within the script.
 	//
-	// savedFirstStack keeps a copy of the stack from the first script when
-	// performing pay-to-script-hash execution.
-	//
 	// dstack is the primary data stack the various opcodes push and pop data
 	// to and from during execution.
 	//
@@ -159,23 +138,18 @@ type Engine struct {
 	//
 	// condStack tracks the conditional execution state with support for
 	// multiple nested conditional execution opcodes.
-	//
-	// numOps tracks the total number of non-push operations in a script and is
-	// primarily used to enforce maximum limits.
-	scripts         [][]byte
-	scriptIdx       int
-	opcodeIdx       int
-	lastCodeSep     int
-	tokenizer       ScriptTokenizer
-	savedFirstStack [][]byte
-	dstack          stack
-	astack          stack
-	condStack       []int
-	numOps          int
-	witnessVersion  int
-	witnessProgram  []byte
-	inputAmount     int64
-	taprootCtx      *taprootExecutionCtx
+	scripts        [][]byte
+	scriptIdx      int
+	opcodeIdx      int
+	lastCodeSep    int
+	tokenizer      ScriptTokenizer
+	dstack         stack
+	astack         stack
+	condStack      []int
+	witnessVersion int
+	witnessProgram []byte
+	inputAmount    int64
+	taprootCtx     *taprootExecutionCtx
 
 	// stepCallback is an optional function that will be called every time
 	// a step has been performed during script execution.
@@ -203,11 +177,6 @@ type StepInfo struct {
 
 	// AltStack is the Engine's current content on the alt stack.
 	AltStack [][]byte
-}
-
-// hasFlag returns whether the script engine instance has the passed flag set.
-func (vm *Engine) hasFlag(flag txscript.ScriptFlags) bool {
-	return vm.flags&flag == flag
 }
 
 // SetAssetPacket sets the asset packet on the engine for script introspection.
@@ -315,16 +284,8 @@ func (vm *Engine) executeOpcode(op *opcode, data []byte) error {
 		return scriptError(txscript.ErrReservedOpcode, str)
 	}
 
-	// Note that this includes OP_RESERVED which counts as a push operation.
-	if vm.taprootCtx == nil && op.value > OP_16 {
-		vm.numOps++
-		if vm.numOps > txscript.MaxOpsPerScript {
-			str := fmt.Sprintf("exceeded max operation limit of %d",
-				txscript.MaxOpsPerScript)
-			return scriptError(txscript.ErrTooManyOperations, str)
-		}
-
-	} else if len(data) > txscript.MaxScriptElementSize {
+	// In taproot, we enforce element size limits instead of op count limits.
+	if len(data) > txscript.MaxScriptElementSize {
 		str := fmt.Sprintf("element size %d exceeds max allowed size %d",
 			len(data), txscript.MaxScriptElementSize)
 		return scriptError(txscript.ErrElementTooBig, str)
@@ -368,177 +329,133 @@ func (vm *Engine) isWitnessVersionActive(version uint) bool {
 // verifyWitnessProgram validates the stored witness program using the passed
 // witness as input.
 func (vm *Engine) verifyWitnessProgram(witness wire.TxWitness) error {
-	switch {
-	case vm.isWitnessVersionActive(txscript.BaseSegwitWitnessVersion):
+	if !vm.isWitnessVersionActive(txscript.TaprootWitnessVersion) ||
+		len(vm.witnessProgram) != payToTaprootDataSize {
 		return fmt.Errorf("arkscript engine only supports taproot")
-	case vm.isWitnessVersionActive(txscript.TaprootWitnessVersion) &&
-		len(vm.witnessProgram) == payToTaprootDataSize && !vm.bip16:
-
-		// If taproot isn't currently active, then we'll return a
-		// success here in place as we don't apply the new rules unless
-		// the flag flips, as governed by the version bits deployment.
-		if !vm.hasFlag(txscript.ScriptVerifyTaproot) {
-			return nil
-		}
-
-		// If there're no stack elements at all, then this is an
-		// invalid spend.
-		if len(witness) == 0 {
-			return scriptError(txscript.ErrWitnessProgramEmpty, "witness "+
-				"program empty passed empty witness")
-		}
-
-		// At this point, we know taproot is active, so we'll populate
-		// the taproot execution context.
-		vm.taprootCtx = newTaprootExecutionCtx(
-			int32(witness.SerializeSize()),
-		)
-
-		// If we can detect the annex, then drop that off the stack,
-		// we'll only need it to compute the sighash later.
-		if isAnnexedWitness(witness) {
-			vm.taprootCtx.annex, _ = extractAnnex(witness)
-
-			// Snip the annex off the end of the witness stack.
-			witness = witness[:len(witness)-1]
-		}
-
-		// From here, we'll either be validating a normal key spend, or
-		// a spend from the tap script leaf using a committed leaf.
-		switch {
-		// If there's only a single element left on the stack (the
-		// signature), then we'll apply the normal top-level schnorr
-		// signature verification.
-		case len(witness) == 1:
-			// As we only have a single element left (after maybe
-			// removing the annex), we'll do normal taproot
-			// keyspend validation.
-			rawSig := witness[0]
-			err := txscript.VerifyTaprootKeySpend(
-				vm.witnessProgram, rawSig, &vm.tx, vm.txIdx,
-				vm.prevOutFetcher, vm.hashCache, vm.sigCache,
-			)
-			if err != nil {
-				// TODO(roasbeef): proper error
-				return err
-			}
-
-			// TODO(roasbeef): or remove the other items from the stack?
-			vm.taprootCtx.mustSucceed = true
-			return nil
-
-		// Otherwise, we need to attempt full tapscript leaf
-		// verification in place.
-		default:
-			// First, attempt to parse the control block, if this
-			// isn't formatted properly, then we'll end execution
-			// right here.
-			controlBlock, err := txscript.ParseControlBlock(
-				witness[len(witness)-1],
-			)
-			if err != nil {
-				return err
-			}
-
-			// Now that we know the control block is valid, we'll
-			// verify the top-level taproot commitment, which
-			// proves that the specified script was committed to in
-			// the merkle tree.
-			witnessScript := witness[len(witness)-2]
-			err = txscript.VerifyTaprootLeafCommitment(
-				controlBlock, vm.witnessProgram, witnessScript,
-			)
-			if err != nil {
-				return err
-			}
-
-			// Before we proceed with normal execution, check the
-			// leaf version of the script, as if the policy flag is
-			// active, then we should only allow the base leaf
-			// version.
-			if controlBlock.LeafVersion != txscript.BaseLeafVersion {
-				switch {
-				case vm.hasFlag(txscript.ScriptVerifyDiscourageUpgradeableTaprootVersion):
-					errStr := fmt.Sprintf("tapscript is attempting "+
-						"to use version: %v", controlBlock.LeafVersion)
-					return scriptError(
-						txscript.ErrDiscourageUpgradeableTaprootVersion, errStr,
-					)
-				default:
-					// If the policy flag isn't active,
-					// then execution succeeds here as we
-					// don't know the rules of the future
-					// leaf versions.
-					vm.taprootCtx.mustSucceed = true
-					return nil
-				}
-			}
-
-			// Now that we know we don't have any op success
-			// fields, ensure that the script parses properly.
-			//
-			// TODO(roasbeef): combine w/ the above?
-			err = checkScriptParses(vm.version, witnessScript)
-			if err != nil {
-				return err
-			}
-
-			// Now that we know the script parses, and we have a
-			// valid leaf version, we'll save the tapscript hash of
-			// the leaf, as we need that for signature validation
-			// later.
-			vm.taprootCtx.tapLeafHash = txscript.NewBaseTapLeaf(
-				witnessScript,
-			).TapHash()
-
-			// Otherwise, we'll now "recurse" one level deeper, and
-			// set the remaining witness (leaving off the annex and
-			// the witness script) as the execution stack, and
-			// enter further execution.
-			vm.scripts = append(vm.scripts, witnessScript)
-			vm.SetStack(witness[:len(witness)-2])
-		}
-
-	case vm.hasFlag(txscript.ScriptVerifyDiscourageUpgradeableWitnessProgram):
-		errStr := fmt.Sprintf("new witness program versions "+
-			"invalid: %v", vm.witnessProgram)
-
-		return scriptError(txscript.ErrDiscourageUpgradableWitnessProgram, errStr)
-	default:
-		// If we encounter an unknown witness program version and we
-		// aren't discouraging future unknown witness based soft-forks,
-		// then we de-activate the segwit behavior within the VM for
-		// the remainder of execution.
-		vm.witnessProgram = nil
 	}
 
-	// TODO(roasbeef): other sanity checks here
+	// If there're no stack elements at all, then this is an
+	// invalid spend.
+	if len(witness) == 0 {
+		return scriptError(txscript.ErrWitnessProgramEmpty, "witness "+
+			"program empty passed empty witness")
+	}
+
+	// At this point, we know taproot is active, so we'll populate
+	// the taproot execution context.
+	vm.taprootCtx = newTaprootExecutionCtx(
+		int32(witness.SerializeSize()),
+	)
+
+	// If we can detect the annex, then drop that off the stack,
+	// we'll only need it to compute the sighash later.
+	if isAnnexedWitness(witness) {
+		vm.taprootCtx.annex, _ = extractAnnex(witness)
+
+		// Snip the annex off the end of the witness stack.
+		witness = witness[:len(witness)-1]
+	}
+
+	// From here, we'll either be validating a normal key spend, or
+	// a spend from the tap script leaf using a committed leaf.
 	switch {
+	// If there's only a single element left on the stack (the
+	// signature), then we'll apply the normal top-level schnorr
+	// signature verification.
+	case len(witness) == 1:
+		// As we only have a single element left (after maybe
+		// removing the annex), we'll do normal taproot
+		// keyspend validation.
+		rawSig := witness[0]
+		err := txscript.VerifyTaprootKeySpend(
+			vm.witnessProgram, rawSig, &vm.tx, vm.txIdx,
+			vm.prevOutFetcher, vm.hashCache, vm.sigCache,
+		)
+		if err != nil {
+			return err
+		}
+
+		vm.taprootCtx.mustSucceed = true
+		return nil
+
+	// Otherwise, we need to attempt full tapscript leaf
+	// verification in place.
+	default:
+		// First, attempt to parse the control block, if this
+		// isn't formatted properly, then we'll end execution
+		// right here.
+		controlBlock, err := txscript.ParseControlBlock(
+			witness[len(witness)-1],
+		)
+		if err != nil {
+			return err
+		}
+
+		// Now that we know the control block is valid, we'll
+		// verify the top-level taproot commitment, which
+		// proves that the specified script was committed to in
+		// the merkle tree.
+		witnessScript := witness[len(witness)-2]
+		err = txscript.VerifyTaprootLeafCommitment(
+			controlBlock, vm.witnessProgram, witnessScript,
+		)
+		if err != nil {
+			return err
+		}
+
+		// Before we proceed with normal execution, check the
+		// leaf version of the script, as if the policy flag is
+		// active, then we should only allow the base leaf
+		// version.
+		if controlBlock.LeafVersion != txscript.BaseLeafVersion {
+			errStr := fmt.Sprintf("tapscript is attempting "+
+				"to use version: %v", controlBlock.LeafVersion)
+			return scriptError(
+				txscript.ErrDiscourageUpgradeableTaprootVersion, errStr,
+			)
+		}
+
+		// Now that we know we don't have any op success
+		// fields, ensure that the script parses properly.
+		err = checkScriptParses(vm.version, witnessScript)
+		if err != nil {
+			return err
+		}
+
+		// Now that we know the script parses, and we have a
+		// valid leaf version, we'll save the tapscript hash of
+		// the leaf, as we need that for signature validation
+		// later.
+		vm.taprootCtx.tapLeafHash = txscript.NewBaseTapLeaf(
+			witnessScript,
+		).TapHash()
+
+		// Otherwise, we'll now "recurse" one level deeper, and
+		// set the remaining witness (leaving off the annex and
+		// the witness script) as the execution stack, and
+		// enter further execution.
+		vm.scripts = append(vm.scripts, witnessScript)
+		vm.SetStack(witness[:len(witness)-2])
+	}
 
 	// In addition to the normal script element size limits, taproot also
 	// enforces a limit on the max _starting_ stack size.
-	case vm.isWitnessVersionActive(txscript.TaprootWitnessVersion):
-		if vm.dstack.Depth() > txscript.MaxStackSize {
-			str := fmt.Sprintf("tapscript stack size %d > max allowed %d",
-				vm.dstack.Depth(), txscript.MaxStackSize)
-			return scriptError(txscript.ErrStackOverflow, str)
-		}
+	if vm.dstack.Depth() > txscript.MaxStackSize {
+		str := fmt.Sprintf("tapscript stack size %d > max allowed %d",
+			vm.dstack.Depth(), txscript.MaxStackSize)
+		return scriptError(txscript.ErrStackOverflow, str)
+	}
 
-		fallthrough
-	case vm.isWitnessVersionActive(txscript.BaseSegwitWitnessVersion):
-		// All elements within the witness stack must not be greater
-		// than the maximum bytes which are allowed to be pushed onto
-		// the stack.
-		for _, witElement := range vm.GetStack() {
-			if len(witElement) > txscript.MaxScriptElementSize {
-				str := fmt.Sprintf("element size %d exceeds "+
-					"max allowed size %d", len(witElement),
-					txscript.MaxScriptElementSize)
-				return scriptError(txscript.ErrElementTooBig, str)
-			}
+	// All elements within the witness stack must not be greater
+	// than the maximum bytes which are allowed to be pushed onto
+	// the stack.
+	for _, witElement := range vm.GetStack() {
+		if len(witElement) > txscript.MaxScriptElementSize {
+			str := fmt.Sprintf("element size %d exceeds "+
+				"max allowed size %d", len(witElement),
+				txscript.MaxScriptElementSize)
+			return scriptError(txscript.ErrElementTooBig, str)
 		}
-
-		return nil
 	}
 
 	return nil
@@ -586,9 +503,7 @@ func (vm *Engine) DisasmPC() (string, error) {
 
 // DisasmScript returns the disassembly string for the script at the requested
 // offset index.  Index 0 is the signature script and 1 is the public key
-// script.  In the case of pay-to-script-hash, index 2 is the redeem script once
-// the execution has progressed far enough to have successfully verified script
-// hash and thus add the script to the scripts to execute.
+// script.
 func (vm *Engine) DisasmScript(idx int) (string, error) {
 	if idx >= len(vm.scripts) {
 		str := fmt.Sprintf("script index %d >= total scripts %d", idx,
@@ -624,21 +539,9 @@ func (vm *Engine) CheckErrorCondition(finalScript bool) error {
 			"error check when script unfinished")
 	}
 
-	// If we're in version zero witness execution mode, and this was the
-	// final script, then the stack MUST be clean in order to maintain
-	// compatibility with BIP16.
-	if finalScript && vm.isWitnessVersionActive(txscript.BaseSegwitWitnessVersion) &&
-		vm.dstack.Depth() != 1 {
-		return scriptError(txscript.ErrEvalFalse, "witness program must "+
-			"have clean stack")
-	}
-
-	// The final script must end with exactly one data stack item when the
-	// verify clean stack flag is set.  Otherwise, there must be at least one
-	// data stack item in order to interpret it as a boolean.
-	cleanStackActive := vm.hasFlag(txscript.ScriptVerifyCleanStack) || vm.taprootCtx != nil
-	if finalScript && cleanStackActive && vm.dstack.Depth() != 1 {
-
+	// The final script must end with exactly one data stack item (taproot
+	// always requires a clean stack).
+	if finalScript && vm.dstack.Depth() != 1 {
 		str := fmt.Sprintf("stack must contain exactly one item (contains %d)",
 			vm.dstack.Depth())
 		return scriptError(txscript.ErrCleanStack, str)
@@ -715,43 +618,12 @@ func (vm *Engine) Step() (done bool, err error) {
 		// Alt stack doesn't persist between scripts.
 		_ = vm.astack.DropN(vm.astack.Depth())
 
-		// The number of operations is per script.
-		vm.numOps = 0
-
 		// Reset the opcode index for the next script.
 		vm.opcodeIdx = 0
 
 		// Advance to the next script as needed.
 		switch {
-		case vm.scriptIdx == 0 && vm.bip16:
-			vm.scriptIdx++
-			vm.savedFirstStack = vm.GetStack()
-
-		case vm.scriptIdx == 1 && vm.bip16:
-			// Put us past the end for CheckErrorCondition()
-			vm.scriptIdx++
-
-			// Check script ran successfully.
-			err := vm.CheckErrorCondition(false)
-			if err != nil {
-				return false, err
-			}
-
-			// Obtain the redeem script from the first stack and ensure it
-			// parses.
-			script := vm.savedFirstStack[len(vm.savedFirstStack)-1]
-			if err := checkScriptParses(vm.version, script); err != nil {
-				return false, err
-			}
-			vm.scripts = append(vm.scripts, script)
-
-			// Set stack to be the stack from first script minus the redeem
-			// script itself
-			vm.SetStack(vm.savedFirstStack[:len(vm.savedFirstStack)-1])
-
-		case vm.scriptIdx == 1 && vm.witnessProgram != nil,
-			vm.scriptIdx == 2 && vm.witnessProgram != nil && vm.bip16: // np2sh
-
+		case vm.scriptIdx == 1 && vm.witnessProgram != nil:
 			vm.scriptIdx++
 
 			witness := vm.tx.TxIn[vm.txIdx].Witness
@@ -797,8 +669,9 @@ func copyStack(stk [][]byte) [][]byte {
 // for successful validation or an error if one occurred.
 func (vm *Engine) Execute() (err error) {
 	// All script versions other than 0 currently execute without issue,
-	// making all outputs to them anyone can pay. In the future this
-	// will allow for the addition of new scripting languages.
+	// making all outputs to them anyone can pay. The version field is always
+	// 0 in this taproot-only engine, but this check is retained from upstream
+	// btcd as a safety net.
 	if vm.version != 0 {
 		return nil
 	}
@@ -855,251 +728,6 @@ func (vm *Engine) Execute() (err error) {
 	return vm.CheckErrorCondition(true)
 }
 
-// subScript returns the script since the last OP_CODESEPARATOR.
-func (vm *Engine) subScript() []byte {
-	return vm.scripts[vm.scriptIdx][vm.lastCodeSep:]
-}
-
-// checkHashTypeEncoding returns whether or not the passed hashtype adheres to
-// the strict encoding requirements if enabled.
-func (vm *Engine) checkHashTypeEncoding(hashType txscript.SigHashType) error {
-	if !vm.hasFlag(txscript.ScriptVerifyStrictEncoding) {
-		return nil
-	}
-
-	sigHashType := hashType & ^txscript.SigHashAnyOneCanPay
-	if sigHashType < txscript.SigHashAll || sigHashType > txscript.SigHashSingle {
-		str := fmt.Sprintf("invalid hash type 0x%x", hashType)
-		return scriptError(txscript.ErrInvalidSigHashType, str)
-	}
-	return nil
-}
-
-// checkPubKeyEncoding returns whether or not the passed public key adheres to
-// the strict encoding requirements if enabled.
-func (vm *Engine) checkPubKeyEncoding(pubKey []byte) error {
-	if vm.hasFlag(txscript.ScriptVerifyWitnessPubKeyType) &&
-		vm.isWitnessVersionActive(txscript.BaseSegwitWitnessVersion) &&
-		!btcec.IsCompressedPubKey(pubKey) {
-
-		str := "only compressed keys are accepted post-segwit"
-		return scriptError(txscript.ErrWitnessPubKeyType, str)
-	}
-
-	if !vm.hasFlag(txscript.ScriptVerifyStrictEncoding) {
-		return nil
-	}
-
-	if len(pubKey) == 33 && (pubKey[0] == 0x02 || pubKey[0] == 0x03) {
-		// Compressed
-		return nil
-	}
-	if len(pubKey) == 65 && pubKey[0] == 0x04 {
-		// Uncompressed
-		return nil
-	}
-
-	return scriptError(txscript.ErrPubKeyType, "unsupported public key type")
-}
-
-// checkSignatureEncoding returns whether or not the passed signature adheres to
-// the strict encoding requirements if enabled.
-func (vm *Engine) checkSignatureEncoding(sig []byte) error {
-	if !vm.hasFlag(txscript.ScriptVerifyDERSignatures) &&
-		!vm.hasFlag(txscript.ScriptVerifyLowS) &&
-		!vm.hasFlag(txscript.ScriptVerifyStrictEncoding) {
-
-		return nil
-	}
-
-	// The format of a DER encoded signature is as follows:
-	//
-	// 0x30 <total length> 0x02 <length of R> <R> 0x02 <length of S> <S>
-	//   - 0x30 is the ASN.1 identifier for a sequence
-	//   - Total length is 1 byte and specifies length of all remaining data
-	//   - 0x02 is the ASN.1 identifier that specifies an integer follows
-	//   - Length of R is 1 byte and specifies how many bytes R occupies
-	//   - R is the arbitrary length big-endian encoded number which
-	//     represents the R value of the signature.  DER encoding dictates
-	//     that the value must be encoded using the minimum possible number
-	//     of bytes.  This implies the first byte can only be null if the
-	//     highest bit of the next byte is set in order to prevent it from
-	//     being interpreted as a negative number.
-	//   - 0x02 is once again the ASN.1 integer identifier
-	//   - Length of S is 1 byte and specifies how many bytes S occupies
-	//   - S is the arbitrary length big-endian encoded number which
-	//     represents the S value of the signature.  The encoding rules are
-	//     identical as those for R.
-	const (
-		asn1SequenceID = 0x30
-		asn1IntegerID  = 0x02
-
-		// minSigLen is the minimum length of a DER encoded signature and is
-		// when both R and S are 1 byte each.
-		//
-		// 0x30 + <1-byte> + 0x02 + 0x01 + <byte> + 0x2 + 0x01 + <byte>
-		minSigLen = 8
-
-		// maxSigLen is the maximum length of a DER encoded signature and is
-		// when both R and S are 33 bytes each.  It is 33 bytes because a
-		// 256-bit integer requires 32 bytes and an additional leading null byte
-		// might required if the high bit is set in the value.
-		//
-		// 0x30 + <1-byte> + 0x02 + 0x21 + <33 bytes> + 0x2 + 0x21 + <33 bytes>
-		maxSigLen = 72
-
-		// sequenceOffset is the byte offset within the signature of the
-		// expected ASN.1 sequence identifier.
-		sequenceOffset = 0
-
-		// dataLenOffset is the byte offset within the signature of the expected
-		// total length of all remaining data in the signature.
-		dataLenOffset = 1
-
-		// rTypeOffset is the byte offset within the signature of the ASN.1
-		// identifier for R and is expected to indicate an ASN.1 integer.
-		rTypeOffset = 2
-
-		// rLenOffset is the byte offset within the signature of the length of
-		// R.
-		rLenOffset = 3
-
-		// rOffset is the byte offset within the signature of R.
-		rOffset = 4
-	)
-
-	// The signature must adhere to the minimum and maximum allowed length.
-	sigLen := len(sig)
-	if sigLen < minSigLen {
-		str := fmt.Sprintf("malformed signature: too short: %d < %d", sigLen,
-			minSigLen)
-		return scriptError(txscript.ErrSigTooShort, str)
-	}
-	if sigLen > maxSigLen {
-		str := fmt.Sprintf("malformed signature: too long: %d > %d", sigLen,
-			maxSigLen)
-		return scriptError(txscript.ErrSigTooLong, str)
-	}
-
-	// The signature must start with the ASN.1 sequence identifier.
-	if sig[sequenceOffset] != asn1SequenceID {
-		str := fmt.Sprintf("malformed signature: format has wrong type: %#x",
-			sig[sequenceOffset])
-		return scriptError(txscript.ErrSigInvalidSeqID, str)
-	}
-
-	// The signature must indicate the correct amount of data for all elements
-	// related to R and S.
-	if int(sig[dataLenOffset]) != sigLen-2 {
-		str := fmt.Sprintf("malformed signature: bad length: %d != %d",
-			sig[dataLenOffset], sigLen-2)
-		return scriptError(txscript.ErrSigInvalidDataLen, str)
-	}
-
-	// Calculate the offsets of the elements related to S and ensure S is inside
-	// the signature.
-	//
-	// rLen specifies the length of the big-endian encoded number which
-	// represents the R value of the signature.
-	//
-	// sTypeOffset is the offset of the ASN.1 identifier for S and, like its R
-	// counterpart, is expected to indicate an ASN.1 integer.
-	//
-	// sLenOffset and sOffset are the byte offsets within the signature of the
-	// length of S and S itself, respectively.
-	rLen := int(sig[rLenOffset])
-	sTypeOffset := rOffset + rLen
-	sLenOffset := sTypeOffset + 1
-	if sTypeOffset >= sigLen {
-		str := "malformed signature: S type indicator missing"
-		return scriptError(txscript.ErrSigMissingSTypeID, str)
-	}
-	if sLenOffset >= sigLen {
-		str := "malformed signature: S length missing"
-		return scriptError(txscript.ErrSigMissingSLen, str)
-	}
-
-	// The lengths of R and S must match the overall length of the signature.
-	//
-	// sLen specifies the length of the big-endian encoded number which
-	// represents the S value of the signature.
-	sOffset := sLenOffset + 1
-	sLen := int(sig[sLenOffset])
-	if sOffset+sLen != sigLen {
-		str := "malformed signature: invalid S length"
-		return scriptError(txscript.ErrSigInvalidSLen, str)
-	}
-
-	// R elements must be ASN.1 integers.
-	if sig[rTypeOffset] != asn1IntegerID {
-		str := fmt.Sprintf("malformed signature: R integer marker: %#x != %#x",
-			sig[rTypeOffset], asn1IntegerID)
-		return scriptError(txscript.ErrSigInvalidRIntID, str)
-	}
-
-	// Zero-length integers are not allowed for R.
-	if rLen == 0 {
-		str := "malformed signature: R length is zero"
-		return scriptError(txscript.ErrSigZeroRLen, str)
-	}
-
-	// R must not be negative.
-	if sig[rOffset]&0x80 != 0 {
-		str := "malformed signature: R is negative"
-		return scriptError(txscript.ErrSigNegativeR, str)
-	}
-
-	// Null bytes at the start of R are not allowed, unless R would otherwise be
-	// interpreted as a negative number.
-	if rLen > 1 && sig[rOffset] == 0x00 && sig[rOffset+1]&0x80 == 0 {
-		str := "malformed signature: R value has too much padding"
-		return scriptError(txscript.ErrSigTooMuchRPadding, str)
-	}
-
-	// S elements must be ASN.1 integers.
-	if sig[sTypeOffset] != asn1IntegerID {
-		str := fmt.Sprintf("malformed signature: S integer marker: %#x != %#x",
-			sig[sTypeOffset], asn1IntegerID)
-		return scriptError(txscript.ErrSigInvalidSIntID, str)
-	}
-
-	// Zero-length integers are not allowed for S.
-	if sLen == 0 {
-		str := "malformed signature: S length is zero"
-		return scriptError(txscript.ErrSigZeroSLen, str)
-	}
-
-	// S must not be negative.
-	if sig[sOffset]&0x80 != 0 {
-		str := "malformed signature: S is negative"
-		return scriptError(txscript.ErrSigNegativeS, str)
-	}
-
-	// Null bytes at the start of S are not allowed, unless S would otherwise be
-	// interpreted as a negative number.
-	if sLen > 1 && sig[sOffset] == 0x00 && sig[sOffset+1]&0x80 == 0 {
-		str := "malformed signature: S value has too much padding"
-		return scriptError(txscript.ErrSigTooMuchSPadding, str)
-	}
-
-	// Verify the S value is <= half the order of the curve.  This check is done
-	// because when it is higher, the complement modulo the order can be used
-	// instead which is a shorter encoding by 1 byte.  Further, without
-	// enforcing this, it is possible to replace a signature in a valid
-	// transaction with the complement while still being a valid signature that
-	// verifies.  This would result in changing the transaction hash and thus is
-	// a source of malleability.
-	if vm.hasFlag(txscript.ScriptVerifyLowS) {
-		sValue := new(big.Int).SetBytes(sig[sOffset : sOffset+sLen])
-		if sValue.Cmp(halfOrder) > 0 {
-			return scriptError(txscript.ErrSigHighS, "signature is not canonical due "+
-				"to unnecessarily high S value")
-		}
-	}
-
-	return nil
-}
-
 // getStack returns the contents of stack as a byte array bottom up
 func getStack(stack *stack) [][]byte {
 	array := make([][]byte, stack.Depth())
@@ -1146,9 +774,9 @@ func (vm *Engine) SetAltStack(data [][]byte) {
 }
 
 // NewEngine returns a new script engine for the provided public key script,
-// transaction, and input index.  The flags modify the behavior of the script
-// engine according to the description provided by each flag.
-func NewEngine(scriptPubKey []byte, tx *wire.MsgTx, txIdx int, flags txscript.ScriptFlags,
+// transaction, and input index. The engine only supports taproot/tapscript
+// execution.
+func NewEngine(scriptPubKey []byte, tx *wire.MsgTx, txIdx int,
 	sigCache *txscript.SigCache, hashCache *txscript.TxSigHashes, inputAmount int64,
 	prevOutFetcher txscript.PrevOutputFetcher) (*Engine, error) {
 
@@ -1171,55 +799,21 @@ func NewEngine(scriptPubKey []byte, tx *wire.MsgTx, txIdx int, flags txscript.Sc
 			"false stack entry at end of script execution")
 	}
 
-	// The clean stack flag (ScriptVerifyCleanStack) is not allowed without
-	// either the pay-to-script-hash (P2SH) evaluation (ScriptBip16)
-	// flag or the Segregated Witness (ScriptVerifyWitness) flag.
-	//
-	// Recall that evaluating a P2SH script without the flag set results in
-	// non-P2SH evaluation which leaves the P2SH inputs on the stack.
-	// Thus, allowing the clean stack flag without the P2SH flag would make
-	// it possible to have a situation where P2SH would not be a soft fork
-	// when it should be. The same goes for segwit which will pull in
-	// additional scripts for execution from the witness stack.
 	vm := Engine{
-		flags:          flags,
 		sigCache:       sigCache,
 		hashCache:      hashCache,
 		inputAmount:    inputAmount,
 		prevOutFetcher: prevOutFetcher,
 	}
-	if vm.hasFlag(txscript.ScriptVerifyCleanStack) && (!vm.hasFlag(txscript.ScriptBip16) &&
-		!vm.hasFlag(txscript.ScriptVerifyWitness)) {
-		return nil, scriptError(txscript.ErrInvalidFlags,
-			"invalid flags combination")
-	}
 
-	// The signature script must only contain data pushes when the
-	// associated flag is set.
-	if vm.hasFlag(txscript.ScriptVerifySigPushOnly) && !txscript.IsPushOnlyScript(scriptSig) {
+	// The signature script must only contain data pushes.
+	if !txscript.IsPushOnlyScript(scriptSig) {
 		return nil, scriptError(txscript.ErrNotPushOnly,
 			"signature script is not push only")
 	}
 
-	// The signature script must only contain data pushes for PS2H which is
-	// determined based on the form of the public key script.
-	if vm.hasFlag(txscript.ScriptBip16) && txscript.IsPayToScriptHash(scriptPubKey) {
-		// Only accept input scripts that push data for P2SH.
-		// Notice that the push only checks have already been done when
-		// the flag to verify signature scripts are push only is set
-		// above, so avoid checking again.
-		alreadyChecked := vm.hasFlag(txscript.ScriptVerifySigPushOnly)
-		if !alreadyChecked && !txscript.IsPushOnlyScript(scriptSig) {
-			return nil, scriptError(txscript.ErrNotPushOnly,
-				"pay to script hash is not push only")
-		}
-		vm.bip16 = true
-	}
-
 	// The engine stores the scripts using a slice.  This allows multiple
-	// scripts to be executed in sequence.  For example, with a
-	// pay-to-script-hash transaction, there will be ultimately be a third
-	// script to execute.
+	// scripts to be executed in sequence.
 	scripts := [][]byte{scriptSig, scriptPubKey}
 	for _, scr := range scripts {
 		if len(scr) > txscript.MaxScriptSize {
@@ -1228,7 +822,6 @@ func NewEngine(scriptPubKey []byte, tx *wire.MsgTx, txIdx int, flags txscript.Sc
 			return nil, scriptError(txscript.ErrScriptTooBig, str)
 		}
 
-		const scriptVersion = 0
 		if err := checkScriptParses(scriptVersion, scr); err != nil {
 			return nil, err
 		}
@@ -1240,73 +833,34 @@ func NewEngine(scriptPubKey []byte, tx *wire.MsgTx, txIdx int, flags txscript.Sc
 	if len(scriptSig) == 0 {
 		vm.scriptIdx++
 	}
-	if vm.hasFlag(txscript.ScriptVerifyMinimalData) {
-		vm.dstack.verifyMinimalData = true
-		vm.astack.verifyMinimalData = true
-	}
 
-	// Check to see if we should execute in witness verification mode
-	// according to the set flags. We check both the pkScript, and sigScript
-	// here since in the case of nested p2sh, the scriptSig will be a valid
-	// witness program. For nested p2sh, all the bytes after the first data
-	// push should *exactly* match the witness program template.
-	if vm.hasFlag(txscript.ScriptVerifyWitness) {
-		// If witness evaluation is enabled, then P2SH MUST also be
-		// active.
-		if !vm.hasFlag(txscript.ScriptBip16) {
-			errStr := "P2SH must be enabled to do witness verification"
-			return nil, scriptError(txscript.ErrInvalidFlags, errStr)
+	vm.dstack.verifyMinimalData = true
+	vm.astack.verifyMinimalData = true
+
+	// Extract the witness program from the public key script.
+	if txscript.IsWitnessProgram(vm.scripts[1]) {
+		// The scriptSig must be *empty* for all native witness
+		// programs, otherwise we introduce malleability.
+		if len(scriptSig) != 0 {
+			errStr := "native witness program cannot " +
+				"also have a signature script"
+			return nil, scriptError(txscript.ErrWitnessMalleated, errStr)
 		}
 
-		var witProgram []byte
-
-		switch {
-		case txscript.IsWitnessProgram(vm.scripts[1]):
-			// The scriptSig must be *empty* for all native witness
-			// programs, otherwise we introduce malleability.
-			if len(scriptSig) != 0 {
-				errStr := "native witness program cannot " +
-					"also have a signature script"
-				return nil, scriptError(txscript.ErrWitnessMalleated, errStr)
-			}
-
-			witProgram = scriptPubKey
-		case len(tx.TxIn[txIdx].Witness) != 0 && vm.bip16:
-			// The sigScript MUST be *exactly* a single canonical
-			// data push of the witness program, otherwise we
-			// reintroduce malleability.
-			sigPops := vm.scripts[0]
-			if len(sigPops) > 2 &&
-				isCanonicalPush(sigPops[0], sigPops[1:]) &&
-				txscript.IsWitnessProgram(sigPops[1:]) {
-
-				witProgram = sigPops[1:]
-			} else {
-				errStr := "signature script for witness " +
-					"nested p2sh is not canonical"
-				return nil, scriptError(txscript.ErrWitnessMalleatedP2SH, errStr)
-			}
+		var err error
+		vm.witnessVersion, vm.witnessProgram, err = txscript.ExtractWitnessProgramInfo(
+			scriptPubKey,
+		)
+		if err != nil {
+			return nil, err
 		}
-
-		if witProgram != nil {
-			var err error
-			vm.witnessVersion, vm.witnessProgram, err = txscript.ExtractWitnessProgramInfo(
-				witProgram,
-			)
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			// If we didn't find a witness program in either the
-			// pkScript or as a datapush within the sigScript, then
-			// there MUST NOT be any witness data associated with
-			// the input being validated.
-			if vm.witnessProgram == nil && len(tx.TxIn[txIdx].Witness) != 0 {
-				errStr := "non-witness inputs cannot have a witness"
-				return nil, scriptError(txscript.ErrWitnessUnexpected, errStr)
-			}
+	} else {
+		// If we didn't find a witness program, then there MUST NOT
+		// be any witness data associated with the input being validated.
+		if len(tx.TxIn[txIdx].Witness) != 0 {
+			errStr := "non-witness inputs cannot have a witness"
+			return nil, scriptError(txscript.ErrWitnessUnexpected, errStr)
 		}
-
 	}
 
 	// Setup the current tokenizer used to parse through the script one opcode
@@ -1319,15 +873,15 @@ func NewEngine(scriptPubKey []byte, tx *wire.MsgTx, txIdx int, flags txscript.Sc
 	return &vm, nil
 }
 
-// NewEngine returns a new script engine with a script execution callback set.
+// NewDebugEngine returns a new script engine with a script execution callback set.
 // This is useful for debugging script execution.
 func NewDebugEngine(scriptPubKey []byte, tx *wire.MsgTx, txIdx int,
-	flags txscript.ScriptFlags, sigCache *txscript.SigCache, hashCache *txscript.TxSigHashes,
+	sigCache *txscript.SigCache, hashCache *txscript.TxSigHashes,
 	inputAmount int64, prevOutFetcher txscript.PrevOutputFetcher,
 	stepCallback func(*StepInfo) error) (*Engine, error) {
 
 	vm, err := NewEngine(
-		scriptPubKey, tx, txIdx, flags, sigCache, hashCache,
+		scriptPubKey, tx, txIdx, sigCache, hashCache,
 		inputAmount, prevOutFetcher,
 	)
 	if err != nil {
@@ -1336,35 +890,6 @@ func NewDebugEngine(scriptPubKey []byte, tx *wire.MsgTx, txIdx int,
 
 	vm.stepCallback = stepCallback
 	return vm, nil
-}
-
-// isCanonicalPush returns true if the opcode is either not a push instruction
-// or the data associated with the push instruction uses the smallest
-// instruction to do the job.  False otherwise.
-//
-// For example, it is possible to push a value of 1 to the stack as "OP_1",
-// "OP_DATA_1 0x01", "OP_PUSHDATA1 0x01 0x01", and others, however, the first
-// only takes a single byte, while the rest take more.  Only the first is
-// considered canonical.
-func isCanonicalPush(opcode byte, data []byte) bool {
-	dataLen := len(data)
-	if opcode > OP_16 {
-		return true
-	}
-
-	if opcode < OP_PUSHDATA1 && opcode > OP_0 && (dataLen == 1 && data[0] <= 16) {
-		return false
-	}
-	if opcode == OP_PUSHDATA1 && dataLen < OP_PUSHDATA1 {
-		return false
-	}
-	if opcode == OP_PUSHDATA2 && dataLen <= 0xff {
-		return false
-	}
-	if opcode == OP_PUSHDATA4 && dataLen <= 0xffff {
-		return false
-	}
-	return true
 }
 
 // checkScriptParses returns an error if the provided script fails to parse.
@@ -1396,73 +921,4 @@ func extractAnnex(witness [][]byte) ([]byte, error) {
 
 	lastElement := witness[len(witness)-1]
 	return lastElement, nil
-}
-
-// removeOpcodeByData will return the script minus any opcodes that perform a
-// canonical push of data that contains the passed data to remove.  This
-// function assumes it is provided a version 0 script as any future version of
-// script should avoid this functionality since it is unnecessary due to the
-// signature scripts not being part of the witness-free transaction hash.
-//
-// WARNING: This will return the passed script unmodified unless a modification
-// is necessary in which case the modified script is returned.  This implies
-// callers may NOT rely on being able to safely mutate either the passed or
-// returned script without potentially modifying the same data.
-//
-// NOTE: This function is only valid for version 0 scripts.  Since the function
-// does not accept a script version, the results are undefined for other script
-// versions.
-func removeOpcodeByData(script []byte, dataToRemove []byte) ([]byte, bool) {
-	// Avoid work when possible.
-	if len(script) == 0 || len(dataToRemove) == 0 {
-		return script, false
-	}
-
-	// Parse through the script looking for a canonical data push that contains
-	// the data to remove.
-	const scriptVersion = 0
-	var result []byte
-	var prevOffset int32
-	var match bool
-	tokenizer := MakeScriptTokenizer(scriptVersion, script)
-	for tokenizer.Next() {
-		var found bool
-		result, prevOffset, found = removeOpcodeCanonical(
-			&tokenizer, script, dataToRemove, prevOffset, result,
-		)
-		if found {
-			match = true
-		}
-	}
-	if result == nil {
-		result = script
-	}
-	return result, match
-}
-
-func removeOpcodeCanonical(t *ScriptTokenizer, script, dataToRemove []byte,
-	prevOffset int32, result []byte) ([]byte, int32, bool) {
-
-	var found bool
-
-	// In practice, the script will basically never actually contain the
-	// data since this function is only used during signature verification
-	// to remove the signature itself which would require some incredibly
-	// non-standard code to create.
-	//
-	// Thus, as an optimization, avoid allocating a new script unless there
-	// is actually a match that needs to be removed.
-	op, data := t.Opcode(), t.Data()
-	if isCanonicalPush(op, data) && bytes.Equal(data, dataToRemove) {
-		if result == nil {
-			fullPushLen := t.ByteIndex() - prevOffset
-			result = make([]byte, 0, int32(len(script))-fullPushLen)
-			result = append(result, script[0:prevOffset]...)
-		}
-		found = true
-	} else if result != nil {
-		result = append(result, script[prevOffset:t.ByteIndex()]...)
-	}
-
-	return result, t.ByteIndex(), found
 }
