@@ -4,6 +4,8 @@ go 1.25.7
 
 replace github.com/btcsuite/btcd/btcec/v2 => github.com/btcsuite/btcd/btcec/v2 v2.3.3
 
+replace github.com/arkade-os/arkd/pkg/ark-lib => github.com/Kukks/arkd/pkg/ark-lib v0.0.0-20260228214427-316401ef7cfa
+
 replace github.com/ArkLabsHQ/introspector/pkg/arkade => ./pkg/arkade
 
 replace github.com/ArkLabsHQ/introspector/pkg/client => ./pkg/client
@@ -172,3 +174,4 @@ require (
 	modernc.org/token v1.1.0 // indirect
 	sigs.k8s.io/yaml v1.4.0 // indirect
 )
+
