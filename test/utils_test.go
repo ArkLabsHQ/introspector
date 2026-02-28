@@ -595,12 +595,34 @@ func createVtxoScriptWithArkadeScript(bobPubKey, aliceSigner, introspectorPubKey
 	}
 }
 
-// addIntrospectorPacket builds an IntrospectorPacket with the given entries and adds
-// the resulting OP_RETURN output to the PSBT before the last output (P2A anchor).
+// addIntrospectorPacket builds an IntrospectorPacket with the given entries and
+// embeds it into the transaction's OP_RETURN output. If an existing ARK OP_RETURN
+// (e.g. from an asset packet) is present, the introspector data is merged into it.
+// Otherwise a new OP_RETURN is inserted before the last output (P2A anchor).
 func addIntrospectorPacket(t *testing.T, ptx *psbt.Packet, entries []arkade.IntrospectorEntry) {
 	packet := &arkade.IntrospectorPacket{Entries: entries}
 	packet.SortByVin()
 
+	// Look for an existing OP_RETURN with ARK magic (e.g. asset packet).
+	for i, out := range ptx.UnsignedTx.TxOut {
+		if len(out.PkScript) < 5 || out.PkScript[0] != 0x6a {
+			continue
+		}
+		// Extract asset payload bytes from the existing OP_RETURN.
+		_, assetPayload, err := arkade.ParseTLVStream(out.PkScript)
+		if err != nil {
+			continue // not an ARK OP_RETURN, skip
+		}
+
+		// Rebuild the OP_RETURN with both asset + introspector data.
+		combined, err := arkade.BuildOpReturnScript(assetPayload, packet)
+		require.NoError(t, err)
+
+		ptx.UnsignedTx.TxOut[i].PkScript = combined
+		return
+	}
+
+	// No existing ARK OP_RETURN — add a new one before the P2A anchor.
 	opReturnScript, err := arkade.BuildOpReturnScript(nil, packet)
 	require.NoError(t, err)
 
@@ -609,7 +631,6 @@ func addIntrospectorPacket(t *testing.T, ptx *psbt.Packet, entries []arkade.Intr
 		PkScript: opReturnScript,
 	}
 
-	// Insert the OP_RETURN before the last output (P2A anchor)
 	lastIdx := len(ptx.UnsignedTx.TxOut) - 1
 	p2aOutput := ptx.UnsignedTx.TxOut[lastIdx]
 	ptx.UnsignedTx.TxOut[lastIdx] = opReturnOut

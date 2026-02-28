@@ -147,7 +147,8 @@ func (p *IntrospectorPacket) SerializeTLVRecord() ([]byte, error) {
 
 // ParseTLVStream parses an ARK TLV stream from an OP_RETURN scriptPubKey,
 // extracting any Introspector Packet found.
-// Returns the introspector packet (if present) and the remaining TLV data.
+// The stream layout is: ARK + 0x00 [asset marker] + <asset data> + 0x01 <introspector data>.
+// Returns the introspector packet (if present) and the remaining (asset) TLV data.
 func ParseTLVStream(scriptPubKey []byte) (*IntrospectorPacket, []byte, error) {
 	// OP_RETURN (0x6a) + push data + "ARK" magic + TLV records
 	// Minimum: OP_RETURN + push + "ARK" = at least 5 bytes
@@ -183,35 +184,41 @@ func ParseTLVStream(scriptPubKey []byte) (*IntrospectorPacket, []byte, error) {
 		return nil, nil, fmt.Errorf("ARK magic not found, got %x", magic)
 	}
 
-	// Parse TLV records after magic
+	// Data after ARK magic: [0x00 marker] [asset groups…] [0x01 introspector…]
+	// The asset section is opaque (self-delimiting), so we scan for the
+	// IntrospectorPacketType byte and validate with a trial parse.
+	// The introspector record is always the last record in the stream.
 	tlvData := scriptPubKey[dataStart+3:]
 	var introspectorPacket *IntrospectorPacket
-	var otherTLV []byte
+	var assetsPayload []byte
 
-	offset := 0
-	for offset < len(tlvData) {
-		tlvType := tlvData[offset]
-		offset++
-
-		if tlvType == IntrospectorPacketType {
-			// Self-delimiting: parse the packet from remaining data
-			pkt, err := DeserializeIntrospectorPacket(tlvData[offset:])
-			if err != nil {
-				return nil, nil, fmt.Errorf("failed to parse introspector packet: %w", err)
-			}
-			introspectorPacket = pkt
-			// Since it's self-delimiting, we consumed all remaining data
-			break
-		} else {
-			// For other TLV types, we'd need their specific parsing
-			// For now, treat remaining data as other TLV
-			otherTLV = append(otherTLV, tlvType)
-			otherTLV = append(otherTLV, tlvData[offset:]...)
-			break
-		}
+	// Skip the asset marker byte (0x00) for the asset payload calculation.
+	assetStart := 0
+	if len(tlvData) > 0 && tlvData[0] == 0x00 {
+		assetStart = 1
 	}
 
-	return introspectorPacket, otherTLV, nil
+	for i := assetStart; i < len(tlvData); i++ {
+		if tlvData[i] != IntrospectorPacketType {
+			continue
+		}
+		if i+1 > len(tlvData) {
+			continue
+		}
+		pkt, err := DeserializeIntrospectorPacket(tlvData[i+1:])
+		if err != nil {
+			continue // False positive — 0x01 inside asset data
+		}
+		introspectorPacket = pkt
+		assetsPayload = tlvData[assetStart:i]
+		break
+	}
+
+	if introspectorPacket == nil {
+		assetsPayload = tlvData[assetStart:]
+	}
+
+	return introspectorPacket, assetsPayload, nil
 }
 
 // StripIntrospectorPacket returns the scriptPubKey with the Introspector Packet
@@ -240,23 +247,25 @@ func StripIntrospectorPacket(scriptPubKey []byte) ([]byte, error) {
 		return scriptPubKey, nil // No ARK magic
 	}
 
-	// Parse TLV records, rebuilding without type 0x01
+	// Scan for the introspector packet type byte and strip everything from it onward.
 	tlvData := scriptPubKey[dataStart+3:]
 	var filtered []byte
 
-	offset := 0
-	for offset < len(tlvData) {
-		tlvType := tlvData[offset]
-
-		if tlvType == IntrospectorPacketType {
-			// Skip the introspector packet (self-delimiting, consumes rest)
-			break
+	for i := 0; i < len(tlvData); i++ {
+		if tlvData[i] != IntrospectorPacketType {
+			continue
 		}
-
-		// Include this TLV record
-		// For type 0x00 (Assets), it's also self-delimiting
-		filtered = append(filtered, tlvData[offset:]...)
+		pkt, err := DeserializeIntrospectorPacket(tlvData[i+1:])
+		if err != nil {
+			continue
+		}
+		_ = pkt
+		filtered = tlvData[:i]
 		break
+	}
+
+	if filtered == nil {
+		filtered = tlvData // No introspector packet found, keep all
 	}
 
 	// Rebuild scriptPubKey
@@ -402,15 +411,20 @@ func VerifyPacket(packet *IntrospectorPacket, tx *wire.MsgTx,
 }
 
 // BuildOpReturnScript builds a complete OP_RETURN scriptPubKey containing the
-// ARK magic, an optional assets payload, and the Introspector Packet.
+// ARK magic, the asset marker byte (0x00), an optional assets payload, and the
+// Introspector Packet. The asset marker is always included so that the ark
+// server recognises the output as a valid ARK OP_RETURN.
 func BuildOpReturnScript(assetsPayload []byte, packet *IntrospectorPacket) ([]byte, error) {
 	var tlvStream []byte
 	tlvStream = append(tlvStream, []byte(ArkMagic)...)
 
-	// Type 0x00: Assets packet (if present)
+	// Asset marker (0x00) — always present for ark server compatibility.
+	tlvStream = append(tlvStream, 0x00)
 	if len(assetsPayload) > 0 {
-		tlvStream = append(tlvStream, 0x00)
 		tlvStream = append(tlvStream, assetsPayload...)
+	} else {
+		// Empty asset section: varint(0) means 0 asset groups.
+		tlvStream = append(tlvStream, 0x00)
 	}
 
 	// Type 0x01: Introspector packet
