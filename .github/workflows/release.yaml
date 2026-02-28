@@ -9,23 +9,6 @@ permissions:
   packages: write
 
 jobs:
-  buf-push:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - uses: bufbuild/buf-setup-action@v1.50.0
-
-      - name: Check proto linting
-        run: buf lint
-
-      - name: Publish protos
-        uses: bufbuild/buf-push-action@v1
-        with:
-          input: api-spec/protobuf
-          buf_token: ${{ secrets.BUF_TOKEN }}
-
   build-and-upload:
     runs-on: ubuntu-latest
     steps:
@@ -96,6 +79,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set lowercase image name
+        run: echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
       - name: Build and push introspector Docker image
         uses: docker/build-push-action@v6
         with:
@@ -103,8 +89,8 @@ jobs:
           file: ./Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}:${{ github.event.release.tag_name }}
-            ghcr.io/${{ github.repository }}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.event.release.tag_name }}
+            ${{ env.IMAGE_NAME }}:latest
           platforms: linux/amd64,linux/arm64
           build-args: |
             VERSION=${{ github.event.release.tag_name }}
