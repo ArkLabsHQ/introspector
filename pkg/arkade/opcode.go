@@ -273,47 +273,47 @@ const (
 	OP_INSPECTNUMOUTPUTS = 0xd5 // 213
 	OP_TXWEIGHT          = 0xd6 // 214
 
-	OP_ADD64                = 0xd7
-	OP_SUB64                = 0xd8
-	OP_MUL64                = 0xd9
-	OP_DIV64                = 0xda
-	OP_NEG64                = 0xdb
-	OP_LESSTHAN64           = 0xdc
-	OP_LESSTHANOREQUAL64    = 0xdd
-	OP_GREATERTHAN64        = 0xde
-	OP_GREATERTHANOREQUAL64 = 0xdf // 223
-	OP_SCRIPTNUMTOLE64      = 0xe0 // 224
-	OP_LE64TOSCRIPTNUM      = 0xe1 // 225
-	OP_LE32TOLE64           = 0xe2 // 226
-	OP_ECMULSCALARVERIFY    = 0xe3 // 227
-	OP_TWEAKVERIFY          = 0xe4 // 228
-	OP_INSPECTNUMASSETGROUPS       = 0xe5 // 229
-	OP_INSPECTASSETGROUPASSETID    = 0xe6 // 230
-	OP_INSPECTASSETGROUPCTRL       = 0xe7 // 231
-	OP_FINDASSETGROUPBYASSETID     = 0xe8 // 232
+	OP_ADD64                         = 0xd7
+	OP_SUB64                         = 0xd8
+	OP_MUL64                         = 0xd9
+	OP_DIV64                         = 0xda
+	OP_NEG64                         = 0xdb
+	OP_LESSTHAN64                    = 0xdc
+	OP_LESSTHANOREQUAL64             = 0xdd
+	OP_GREATERTHAN64                 = 0xde
+	OP_GREATERTHANOREQUAL64          = 0xdf // 223
+	OP_SCRIPTNUMTOLE64               = 0xe0 // 224
+	OP_LE64TOSCRIPTNUM               = 0xe1 // 225
+	OP_LE32TOLE64                    = 0xe2 // 226
+	OP_ECMULSCALARVERIFY             = 0xe3 // 227
+	OP_TWEAKVERIFY                   = 0xe4 // 228
+	OP_INSPECTNUMASSETGROUPS         = 0xe5 // 229
+	OP_INSPECTASSETGROUPASSETID      = 0xe6 // 230
+	OP_INSPECTASSETGROUPCTRL         = 0xe7 // 231
+	OP_FINDASSETGROUPBYASSETID       = 0xe8 // 232
 	OP_INSPECTASSETGROUPMETADATAHASH = 0xe9 // 233
-	OP_INSPECTASSETGROUPNUM        = 0xea // 234
-	OP_INSPECTASSETGROUP           = 0xeb // 235
-	OP_INSPECTASSETGROUPSUM        = 0xec // 236
-	OP_INSPECTOUTASSETCOUNT        = 0xed // 237
-	OP_INSPECTOUTASSETAT           = 0xee // 238
-	OP_INSPECTOUTASSETLOOKUP       = 0xef // 239
-	OP_INSPECTINASSETCOUNT         = 0xf0 // 240
-	OP_INSPECTINASSETAT            = 0xf1 // 241
-	OP_INSPECTINASSETLOOKUP        = 0xf2 // 242
-	OP_UNKNOWN243           = 0xf3 // 243
-	OP_UNKNOWN244           = 0xf4 // 244
-	OP_UNKNOWN245           = 0xf5 // 245
-	OP_UNKNOWN246           = 0xf6 // 246
-	OP_UNKNOWN247           = 0xf7 // 247
-	OP_UNKNOWN248           = 0xf8 // 248
-	OP_UNKNOWN249           = 0xf9 // 249
-	OP_SMALLINTEGER         = 0xfa // 250 - bitcoin core internal
-	OP_PUBKEYS              = 0xfb // 251 - bitcoin core internal
-	OP_UNKNOWN252           = 0xfc // 252
-	OP_PUBKEYHASH           = 0xfd // 253 - bitcoin core internal
-	OP_PUBKEY               = 0xfe // 254 - bitcoin core internal
-	OP_INVALIDOPCODE        = 0xff // 255 - bitcoin core internal
+	OP_INSPECTASSETGROUPNUM          = 0xea // 234
+	OP_INSPECTASSETGROUP             = 0xeb // 235
+	OP_INSPECTASSETGROUPSUM          = 0xec // 236
+	OP_INSPECTOUTASSETCOUNT          = 0xed // 237
+	OP_INSPECTOUTASSETAT             = 0xee // 238
+	OP_INSPECTOUTASSETLOOKUP         = 0xef // 239
+	OP_INSPECTINASSETCOUNT           = 0xf0 // 240
+	OP_INSPECTINASSETAT              = 0xf1 // 241
+	OP_INSPECTINASSETLOOKUP          = 0xf2 // 242
+	OP_TXID                          = 0xf3 // 243
+	OP_UNKNOWN244                    = 0xf4 // 244
+	OP_UNKNOWN245                    = 0xf5 // 245
+	OP_UNKNOWN246                    = 0xf6 // 246
+	OP_UNKNOWN247                    = 0xf7 // 247
+	OP_UNKNOWN248                    = 0xf8 // 248
+	OP_UNKNOWN249                    = 0xf9 // 249
+	OP_SMALLINTEGER                  = 0xfa // 250 - bitcoin core internal
+	OP_PUBKEYS                       = 0xfb // 251 - bitcoin core internal
+	OP_UNKNOWN252                    = 0xfc // 252
+	OP_PUBKEYHASH                    = 0xfd // 253 - bitcoin core internal
+	OP_PUBKEY                        = 0xfe // 254 - bitcoin core internal
+	OP_INVALIDOPCODE                 = 0xff // 255 - bitcoin core internal
 )
 
 // Conditional execution constants.
@@ -574,41 +574,41 @@ var opcodeArray = [256]opcode{
 	OP_INSPECTNUMOUTPUTS: {OP_INSPECTNUMOUTPUTS, "OP_INSPECTNUMOUTPUTS", 1, opcodeInspectNumOutputs},
 	OP_TXWEIGHT:          {OP_TXWEIGHT, "OP_TXWEIGHT", 1, opcodeTxWeight},
 
-	OP_ADD64:                {OP_ADD64, "OP_ADD64", 1, opcodeAdd64},
-	OP_SUB64:                {OP_SUB64, "OP_SUB64", 1, opcodeSub64},
-	OP_MUL64:                {OP_MUL64, "OP_MUL64", 1, opcodeMul64},
-	OP_DIV64:                {OP_DIV64, "OP_DIV64", 1, opcodeDiv64},
-	OP_NEG64:                {OP_NEG64, "OP_NEG64", 1, opcodeNeg64},
-	OP_LESSTHAN64:           {OP_LESSTHAN64, "OP_LESSTHAN64", 1, opcodeLessThan64},
-	OP_LESSTHANOREQUAL64:    {OP_LESSTHANOREQUAL64, "OP_LESSTHANOREQUAL64", 1, opcodeLessThanOrEqual64},
-	OP_GREATERTHAN64:        {OP_GREATERTHAN64, "OP_GREATERTHAN64", 1, opcodeGreaterThan64},
-	OP_GREATERTHANOREQUAL64: {OP_GREATERTHANOREQUAL64, "OP_GREATERTHANOREQUAL64", 1, opcodeGreaterThanOrEqual64},
-	OP_SCRIPTNUMTOLE64:      {OP_SCRIPTNUMTOLE64, "OP_SCRIPTNUMTOLE64", 1, opcodeScriptNumToLE64},
-	OP_LE64TOSCRIPTNUM:      {OP_LE64TOSCRIPTNUM, "OP_LE64TOSCRIPTNUM", 1, opcodeLE64ToScriptNum},
-	OP_LE32TOLE64:           {OP_LE32TOLE64, "OP_LE32TOLE64", 1, opcodeLE32ToLE64},
-	OP_ECMULSCALARVERIFY:    {OP_ECMULSCALARVERIFY, "OP_ECMULSCALARVERIFY", 1, opcodeECMulScalarVerify},
-	OP_TWEAKVERIFY:          {OP_TWEAKVERIFY, "OP_TWEAKVERIFY", 1, opcodeTweakVerify},
-	OP_INSPECTNUMASSETGROUPS:       {OP_INSPECTNUMASSETGROUPS, "OP_INSPECTNUMASSETGROUPS", 1, opcodeInspectNumAssetGroups},
-	OP_INSPECTASSETGROUPASSETID:    {OP_INSPECTASSETGROUPASSETID, "OP_INSPECTASSETGROUPASSETID", 1, opcodeInspectAssetGroupAssetId},
-	OP_INSPECTASSETGROUPCTRL:       {OP_INSPECTASSETGROUPCTRL, "OP_INSPECTASSETGROUPCTRL", 1, opcodeInspectAssetGroupCtrl},
-	OP_FINDASSETGROUPBYASSETID:     {OP_FINDASSETGROUPBYASSETID, "OP_FINDASSETGROUPBYASSETID", 1, opcodeFindAssetGroupByAssetId},
+	OP_ADD64:                         {OP_ADD64, "OP_ADD64", 1, opcodeAdd64},
+	OP_SUB64:                         {OP_SUB64, "OP_SUB64", 1, opcodeSub64},
+	OP_MUL64:                         {OP_MUL64, "OP_MUL64", 1, opcodeMul64},
+	OP_DIV64:                         {OP_DIV64, "OP_DIV64", 1, opcodeDiv64},
+	OP_NEG64:                         {OP_NEG64, "OP_NEG64", 1, opcodeNeg64},
+	OP_LESSTHAN64:                    {OP_LESSTHAN64, "OP_LESSTHAN64", 1, opcodeLessThan64},
+	OP_LESSTHANOREQUAL64:             {OP_LESSTHANOREQUAL64, "OP_LESSTHANOREQUAL64", 1, opcodeLessThanOrEqual64},
+	OP_GREATERTHAN64:                 {OP_GREATERTHAN64, "OP_GREATERTHAN64", 1, opcodeGreaterThan64},
+	OP_GREATERTHANOREQUAL64:          {OP_GREATERTHANOREQUAL64, "OP_GREATERTHANOREQUAL64", 1, opcodeGreaterThanOrEqual64},
+	OP_SCRIPTNUMTOLE64:               {OP_SCRIPTNUMTOLE64, "OP_SCRIPTNUMTOLE64", 1, opcodeScriptNumToLE64},
+	OP_LE64TOSCRIPTNUM:               {OP_LE64TOSCRIPTNUM, "OP_LE64TOSCRIPTNUM", 1, opcodeLE64ToScriptNum},
+	OP_LE32TOLE64:                    {OP_LE32TOLE64, "OP_LE32TOLE64", 1, opcodeLE32ToLE64},
+	OP_ECMULSCALARVERIFY:             {OP_ECMULSCALARVERIFY, "OP_ECMULSCALARVERIFY", 1, opcodeECMulScalarVerify},
+	OP_TWEAKVERIFY:                   {OP_TWEAKVERIFY, "OP_TWEAKVERIFY", 1, opcodeTweakVerify},
+	OP_INSPECTNUMASSETGROUPS:         {OP_INSPECTNUMASSETGROUPS, "OP_INSPECTNUMASSETGROUPS", 1, opcodeInspectNumAssetGroups},
+	OP_INSPECTASSETGROUPASSETID:      {OP_INSPECTASSETGROUPASSETID, "OP_INSPECTASSETGROUPASSETID", 1, opcodeInspectAssetGroupAssetId},
+	OP_INSPECTASSETGROUPCTRL:         {OP_INSPECTASSETGROUPCTRL, "OP_INSPECTASSETGROUPCTRL", 1, opcodeInspectAssetGroupCtrl},
+	OP_FINDASSETGROUPBYASSETID:       {OP_FINDASSETGROUPBYASSETID, "OP_FINDASSETGROUPBYASSETID", 1, opcodeFindAssetGroupByAssetId},
 	OP_INSPECTASSETGROUPMETADATAHASH: {OP_INSPECTASSETGROUPMETADATAHASH, "OP_INSPECTASSETGROUPMETADATAHASH", 1, opcodeInspectAssetGroupMetadataHash},
-	OP_INSPECTASSETGROUPNUM:        {OP_INSPECTASSETGROUPNUM, "OP_INSPECTASSETGROUPNUM", 1, opcodeInspectAssetGroupNum},
-	OP_INSPECTASSETGROUP:           {OP_INSPECTASSETGROUP, "OP_INSPECTASSETGROUP", 1, opcodeInspectAssetGroup},
-	OP_INSPECTASSETGROUPSUM:        {OP_INSPECTASSETGROUPSUM, "OP_INSPECTASSETGROUPSUM", 1, opcodeInspectAssetGroupSum},
-	OP_INSPECTOUTASSETCOUNT:        {OP_INSPECTOUTASSETCOUNT, "OP_INSPECTOUTASSETCOUNT", 1, opcodeInspectOutAssetCount},
-	OP_INSPECTOUTASSETAT:           {OP_INSPECTOUTASSETAT, "OP_INSPECTOUTASSETAT", 1, opcodeInspectOutAssetAt},
-	OP_INSPECTOUTASSETLOOKUP:       {OP_INSPECTOUTASSETLOOKUP, "OP_INSPECTOUTASSETLOOKUP", 1, opcodeInspectOutAssetLookup},
-	OP_INSPECTINASSETCOUNT:         {OP_INSPECTINASSETCOUNT, "OP_INSPECTINASSETCOUNT", 1, opcodeInspectInAssetCount},
-	OP_INSPECTINASSETAT:            {OP_INSPECTINASSETAT, "OP_INSPECTINASSETAT", 1, opcodeInspectInAssetAt},
-	OP_INSPECTINASSETLOOKUP:        {OP_INSPECTINASSETLOOKUP, "OP_INSPECTINASSETLOOKUP", 1, opcodeInspectInAssetLookup},
-	OP_UNKNOWN243:           {OP_UNKNOWN243, "OP_UNKNOWN243", 1, opcodeInvalid},
-	OP_UNKNOWN244:           {OP_UNKNOWN244, "OP_UNKNOWN244", 1, opcodeInvalid},
-	OP_UNKNOWN245:           {OP_UNKNOWN245, "OP_UNKNOWN245", 1, opcodeInvalid},
-	OP_UNKNOWN246:           {OP_UNKNOWN246, "OP_UNKNOWN246", 1, opcodeInvalid},
-	OP_UNKNOWN247:           {OP_UNKNOWN247, "OP_UNKNOWN247", 1, opcodeInvalid},
-	OP_UNKNOWN248:           {OP_UNKNOWN248, "OP_UNKNOWN248", 1, opcodeInvalid},
-	OP_UNKNOWN249:           {OP_UNKNOWN249, "OP_UNKNOWN249", 1, opcodeInvalid},
+	OP_INSPECTASSETGROUPNUM:          {OP_INSPECTASSETGROUPNUM, "OP_INSPECTASSETGROUPNUM", 1, opcodeInspectAssetGroupNum},
+	OP_INSPECTASSETGROUP:             {OP_INSPECTASSETGROUP, "OP_INSPECTASSETGROUP", 1, opcodeInspectAssetGroup},
+	OP_INSPECTASSETGROUPSUM:          {OP_INSPECTASSETGROUPSUM, "OP_INSPECTASSETGROUPSUM", 1, opcodeInspectAssetGroupSum},
+	OP_INSPECTOUTASSETCOUNT:          {OP_INSPECTOUTASSETCOUNT, "OP_INSPECTOUTASSETCOUNT", 1, opcodeInspectOutAssetCount},
+	OP_INSPECTOUTASSETAT:             {OP_INSPECTOUTASSETAT, "OP_INSPECTOUTASSETAT", 1, opcodeInspectOutAssetAt},
+	OP_INSPECTOUTASSETLOOKUP:         {OP_INSPECTOUTASSETLOOKUP, "OP_INSPECTOUTASSETLOOKUP", 1, opcodeInspectOutAssetLookup},
+	OP_INSPECTINASSETCOUNT:           {OP_INSPECTINASSETCOUNT, "OP_INSPECTINASSETCOUNT", 1, opcodeInspectInAssetCount},
+	OP_INSPECTINASSETAT:              {OP_INSPECTINASSETAT, "OP_INSPECTINASSETAT", 1, opcodeInspectInAssetAt},
+	OP_INSPECTINASSETLOOKUP:          {OP_INSPECTINASSETLOOKUP, "OP_INSPECTINASSETLOOKUP", 1, opcodeInspectInAssetLookup},
+	OP_TXID:                          {OP_TXID, "OP_TXID", 1, opcodeTxId},
+	OP_UNKNOWN244:                    {OP_UNKNOWN244, "OP_UNKNOWN244", 1, opcodeInvalid},
+	OP_UNKNOWN245:                    {OP_UNKNOWN245, "OP_UNKNOWN245", 1, opcodeInvalid},
+	OP_UNKNOWN246:                    {OP_UNKNOWN246, "OP_UNKNOWN246", 1, opcodeInvalid},
+	OP_UNKNOWN247:                    {OP_UNKNOWN247, "OP_UNKNOWN247", 1, opcodeInvalid},
+	OP_UNKNOWN248:                    {OP_UNKNOWN248, "OP_UNKNOWN248", 1, opcodeInvalid},
+	OP_UNKNOWN249:                    {OP_UNKNOWN249, "OP_UNKNOWN249", 1, opcodeInvalid},
 
 	// Bitcoin Core internal use opcode.  Defined here for completeness.
 	OP_SMALLINTEGER: {OP_SMALLINTEGER, "OP_SMALLINTEGER", 1, opcodeInvalid},
@@ -3116,5 +3116,13 @@ func opcodeSha256Finalize(op *opcode, _ []byte, vm *Engine) error {
 	}
 
 	vm.dstack.PushByteArray(h.Sum(nil))
+	return nil
+}
+
+// opcodeTxId pushes the hash of the current transaction onto the stack.
+// Stack transformation: [...] -> [... txid]
+func opcodeTxId(op *opcode, data []byte, vm *Engine) error {
+	txHash := vm.tx.TxHash()
+	vm.dstack.PushByteArray(txHash[:])
 	return nil
 }
