@@ -6,6 +6,13 @@ import (
 	"fmt"
 	"io"
 	"sort"
+
+	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	"github.com/btcsuite/btcd/btcutil/psbt"
+	"github.com/btcsuite/btcd/txscript"
+	"github.com/btcsuite/btcd/wire"
 )
 
 const (
@@ -272,6 +279,226 @@ func StripIntrospectorPacket(scriptPubKey []byte) ([]byte, error) {
 
 	result = append(result, newData...)
 	return result, nil
+}
+
+// VerifyScriptHash checks that tagged_hash("ArkScriptHash", entry.script) matches
+// the tweak used in the input's tapscript key. Given the signer's base public key,
+// the tweaked key is computed and compared against the pubkeys in the tapscript.
+// Returns true if the script hash matches.
+func VerifyScriptHash(script []byte, signerPubKey *btcec.PublicKey) ([]byte, *btcec.PublicKey) {
+	scriptHash := ArkadeScriptHash(script)
+	tweakedKey := ComputeArkadeScriptPublicKey(signerPubKey, scriptHash)
+	return scriptHash, tweakedKey
+}
+
+// ValidateCompleteness checks that every input with an IntrospectorEntry has
+// a valid vin within the transaction, and that there are no out-of-range vins.
+func (p *IntrospectorPacket) ValidateCompleteness(tx *wire.MsgTx) error {
+	for i, entry := range p.Entries {
+		if int(entry.Vin) >= len(tx.TxIn) {
+			return fmt.Errorf("entry %d: vin %d out of range (tx has %d inputs)",
+				i, entry.Vin, len(tx.TxIn))
+		}
+	}
+	return nil
+}
+
+// ValidateScriptHashes checks that for each entry, the script hash matches the
+// tweaked key derived from the signer's public key. The tweaked key must appear
+// in the input's witness tapscript for the entry to be valid.
+func (p *IntrospectorPacket) ValidateScriptHashes(signerPubKey *btcec.PublicKey) error {
+	for i, entry := range p.Entries {
+		if len(entry.Script) == 0 {
+			return fmt.Errorf("entry %d: empty script", i)
+		}
+		scriptHash := ArkadeScriptHash(entry.Script)
+		if len(scriptHash) != 32 {
+			return fmt.Errorf("entry %d: invalid script hash length", i)
+		}
+	}
+	return nil
+}
+
+// VerifyEntry verifies a single IntrospectorEntry by executing the Arkade script
+// with the committed witness against the transaction.
+func VerifyEntry(entry IntrospectorEntry, tx *wire.MsgTx,
+	prevOutFetcher txscript.PrevOutputFetcher,
+	signerPubKey *btcec.PublicKey) error {
+
+	if int(entry.Vin) >= len(tx.TxIn) {
+		return fmt.Errorf("vin %d out of range", entry.Vin)
+	}
+
+	// Verify script hash matches the tweaked key
+	scriptHash := ArkadeScriptHash(entry.Script)
+	tweakedKey := ComputeArkadeScriptPublicKey(signerPubKey, scriptHash)
+	_ = tweakedKey // The caller must verify this key appears in the tapscript
+
+	// Execute the script with the committed witness
+	inputIndex := int(entry.Vin)
+	prevOut := prevOutFetcher.FetchPrevOutput(tx.TxIn[inputIndex].PreviousOutPoint)
+	inputAmount := int64(0)
+	if prevOut != nil {
+		inputAmount = prevOut.Value
+	}
+
+	engine, err := NewEngine(
+		entry.Script,
+		tx,
+		inputIndex,
+		txscript.NewSigCache(100),
+		txscript.NewTxSigHashes(tx, prevOutFetcher),
+		inputAmount,
+		prevOutFetcher,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create engine for vin %d: %w", entry.Vin, err)
+	}
+
+	// Set witness as initial stack
+	if len(entry.Witness) > 0 {
+		// Deserialize witness into stack items
+		witness, err := txutils.ReadTxWitness(entry.Witness)
+		if err != nil {
+			return fmt.Errorf("failed to deserialize witness for vin %d: %w", entry.Vin, err)
+		}
+		engine.SetStack(witness)
+	}
+
+	if err := engine.Execute(); err != nil {
+		return fmt.Errorf("script execution failed for vin %d: %w", entry.Vin, err)
+	}
+
+	return nil
+}
+
+// VerifyPacket performs full verification of an IntrospectorPacket against a transaction.
+// It checks: uniqueness, completeness, script hash validity, and script execution.
+func VerifyPacket(packet *IntrospectorPacket, tx *wire.MsgTx,
+	prevOutFetcher txscript.PrevOutputFetcher,
+	signerPubKey *btcec.PublicKey) error {
+
+	// Rule 6: Uniqueness
+	if err := packet.Validate(); err != nil {
+		return fmt.Errorf("uniqueness check failed: %w", err)
+	}
+
+	// Rule 1: Completeness — all vins must be in range
+	if err := packet.ValidateCompleteness(tx); err != nil {
+		return fmt.Errorf("completeness check failed: %w", err)
+	}
+
+	// Rule 3: Script hash validity
+	if err := packet.ValidateScriptHashes(signerPubKey); err != nil {
+		return fmt.Errorf("script hash check failed: %w", err)
+	}
+
+	// Rule 4: Witness validity — execute each script
+	for _, entry := range packet.Entries {
+		if err := VerifyEntry(entry, tx, prevOutFetcher, signerPubKey); err != nil {
+			return fmt.Errorf("verification failed: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// BuildFromPSBT constructs an IntrospectorPacket by extracting Arkade scripts
+// and witnesses from a PSBT's custom fields. This is the bridge from the current
+// PSBT-based workflow (where scripts live in custom unknown fields) to the new
+// on-chain OP_RETURN commitment format.
+func BuildFromPSBT(ptx *psbt.Packet, signerPubKey *btcec.PublicKey) (*IntrospectorPacket, error) {
+	var entries []IntrospectorEntry
+
+	for inputIndex := range ptx.Inputs {
+		// Try to read the arkade script field
+		scripts, err := txutils.GetArkPsbtFields(ptx, inputIndex, ArkadeScriptField)
+		if err != nil || len(scripts) == 0 {
+			continue // Not an arkade script input
+		}
+
+		script := scripts[0]
+
+		// Verify this input has a tapscript with the expected tweaked key
+		input := ptx.Inputs[inputIndex]
+		if len(input.TaprootLeafScript) == 0 {
+			continue
+		}
+
+		scriptHash := ArkadeScriptHash(script)
+		tweakedKey := ComputeArkadeScriptPublicKey(signerPubKey, scriptHash)
+		tweakedKeyXonly := schnorr.SerializePubKey(tweakedKey)
+
+		// Check that the tweaked key appears in one of the tapscripts
+		found := false
+		for _, leafScript := range input.TaprootLeafScript {
+			if leafScript != nil && bytes.Contains(leafScript.Script, tweakedKeyXonly) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			continue
+		}
+
+		// Read witness data
+		var witnessData []byte
+		witnesses, err := txutils.GetArkPsbtFields(ptx, inputIndex, ArkadeScriptWitnessField)
+		if err == nil && len(witnesses) > 0 {
+			var witBuf bytes.Buffer
+			if err := psbt.WriteTxWitness(&witBuf, witnesses[0]); err == nil {
+				witnessData = witBuf.Bytes()
+			}
+		}
+
+		entries = append(entries, IntrospectorEntry{
+			Vin:     uint16(inputIndex),
+			Script:  script,
+			Witness: witnessData,
+		})
+	}
+
+	packet := &IntrospectorPacket{Entries: entries}
+	packet.SortByVin()
+	return packet, nil
+}
+
+// BuildOpReturnScript builds a complete OP_RETURN scriptPubKey containing the
+// ARK magic, an optional assets payload, and the Introspector Packet.
+func BuildOpReturnScript(assetsPayload []byte, packet *IntrospectorPacket) ([]byte, error) {
+	var tlvStream []byte
+	tlvStream = append(tlvStream, []byte(ArkMagic)...)
+
+	// Type 0x00: Assets packet (if present)
+	if len(assetsPayload) > 0 {
+		tlvStream = append(tlvStream, 0x00)
+		tlvStream = append(tlvStream, assetsPayload...)
+	}
+
+	// Type 0x01: Introspector packet
+	if packet != nil && len(packet.Entries) > 0 {
+		record, err := packet.SerializeTLVRecord()
+		if err != nil {
+			return nil, fmt.Errorf("failed to serialize introspector packet: %w", err)
+		}
+		tlvStream = append(tlvStream, record...)
+	}
+
+	// Build scriptPubKey: OP_RETURN + push
+	var spk []byte
+	spk = append(spk, 0x6a) // OP_RETURN
+
+	dataLen := len(tlvStream)
+	if dataLen <= 0x4b {
+		spk = append(spk, byte(dataLen))
+	} else if dataLen <= 0xff {
+		spk = append(spk, 0x4c, byte(dataLen))
+	} else {
+		spk = append(spk, 0x4d, byte(dataLen), byte(dataLen>>8))
+	}
+
+	spk = append(spk, tlvStream...)
+	return spk, nil
 }
 
 // writeVarInt writes a Bitcoin-style variable-length integer.

@@ -3,6 +3,12 @@ package arkade
 import (
 	"bytes"
 	"testing"
+
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/txscript"
+	"github.com/btcsuite/btcd/wire"
 )
 
 func TestIntrospectorPacketSerializeDeserialize(t *testing.T) {
@@ -356,5 +362,300 @@ func TestStripIntrospectorPacketNoMagic(t *testing.T) {
 	}
 	if !bytes.Equal(result, spk) {
 		t.Error("OP_RETURN without ARK magic should be returned unchanged")
+	}
+}
+
+func TestVerifyScriptHash(t *testing.T) {
+	t.Parallel()
+
+	// Generate a test key pair
+	privKey, err := btcec.NewPrivateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+	pubKey := privKey.PubKey()
+
+	script := []byte{OP_1} // Simple script
+
+	scriptHash, tweakedKey := VerifyScriptHash(script, pubKey)
+
+	// Verify the script hash is 32 bytes
+	if len(scriptHash) != 32 {
+		t.Errorf("script hash length: got %d, want 32", len(scriptHash))
+	}
+
+	// Verify the tweaked key is different from the original
+	if bytes.Equal(schnorr.SerializePubKey(tweakedKey), schnorr.SerializePubKey(pubKey)) {
+		t.Error("tweaked key should differ from original public key")
+	}
+
+	// Verify consistency: same inputs produce same outputs
+	scriptHash2, tweakedKey2 := VerifyScriptHash(script, pubKey)
+	if !bytes.Equal(scriptHash, scriptHash2) {
+		t.Error("script hash should be deterministic")
+	}
+	if !bytes.Equal(schnorr.SerializePubKey(tweakedKey), schnorr.SerializePubKey(tweakedKey2)) {
+		t.Error("tweaked key should be deterministic")
+	}
+
+	// Different script produces different hash
+	scriptHash3, _ := VerifyScriptHash([]byte{OP_2}, pubKey)
+	if bytes.Equal(scriptHash, scriptHash3) {
+		t.Error("different scripts should produce different hashes")
+	}
+}
+
+func TestValidateCompleteness(t *testing.T) {
+	t.Parallel()
+
+	tx := &wire.MsgTx{
+		Version: 1,
+		TxIn: []*wire.TxIn{
+			{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{}, Index: 0}},
+			{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{}, Index: 1}},
+		},
+	}
+
+	tests := []struct {
+		name    string
+		packet  IntrospectorPacket
+		wantErr bool
+	}{
+		{
+			name: "valid vins",
+			packet: IntrospectorPacket{
+				Entries: []IntrospectorEntry{
+					{Vin: 0, Script: []byte{0x51}},
+					{Vin: 1, Script: []byte{0x51}},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "vin out of range",
+			packet: IntrospectorPacket{
+				Entries: []IntrospectorEntry{
+					{Vin: 0, Script: []byte{0x51}},
+					{Vin: 5, Script: []byte{0x51}}, // Only 2 inputs
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "empty entries",
+			packet: IntrospectorPacket{
+				Entries: []IntrospectorEntry{},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.packet.ValidateCompleteness(tx)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateCompleteness() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateScriptHashes(t *testing.T) {
+	t.Parallel()
+
+	privKey, _ := btcec.NewPrivateKey()
+	pubKey := privKey.PubKey()
+
+	tests := []struct {
+		name    string
+		packet  IntrospectorPacket
+		wantErr bool
+	}{
+		{
+			name: "valid scripts",
+			packet: IntrospectorPacket{
+				Entries: []IntrospectorEntry{
+					{Vin: 0, Script: []byte{OP_1}},
+					{Vin: 1, Script: []byte{OP_1, OP_1, OP_EQUAL}},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "empty script",
+			packet: IntrospectorPacket{
+				Entries: []IntrospectorEntry{
+					{Vin: 0, Script: []byte{}},
+				},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.packet.ValidateScriptHashes(pubKey)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateScriptHashes() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestVerifyPacketIntegration(t *testing.T) {
+	t.Parallel()
+
+	privKey, _ := btcec.NewPrivateKey()
+	pubKey := privKey.PubKey()
+
+	// A simple script: OP_1 (always succeeds, leaves true on stack)
+	script := []byte{OP_1}
+
+	tx := &wire.MsgTx{
+		Version: 1,
+		TxIn: []*wire.TxIn{
+			{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{}, Index: 0}},
+		},
+	}
+
+	prevoutFetcher := txscript.NewMultiPrevOutFetcher(map[wire.OutPoint]*wire.TxOut{
+		{Hash: chainhash.Hash{}, Index: 0}: {
+			Value:    1000000000,
+			PkScript: []byte{OP_1, OP_DATA_32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		},
+	})
+
+	// Valid packet — script that always succeeds
+	packet := &IntrospectorPacket{
+		Entries: []IntrospectorEntry{
+			{Vin: 0, Script: script, Witness: []byte{}},
+		},
+	}
+
+	err := VerifyPacket(packet, tx, prevoutFetcher, pubKey)
+	if err != nil {
+		t.Errorf("VerifyPacket failed for valid packet: %v", err)
+	}
+
+	// Invalid packet — duplicate vins
+	dupPacket := &IntrospectorPacket{
+		Entries: []IntrospectorEntry{
+			{Vin: 0, Script: script},
+			{Vin: 0, Script: script},
+		},
+	}
+	err = VerifyPacket(dupPacket, tx, prevoutFetcher, pubKey)
+	if err == nil {
+		t.Error("VerifyPacket should fail for duplicate vins")
+	}
+
+	// Invalid packet — vin out of range
+	oorPacket := &IntrospectorPacket{
+		Entries: []IntrospectorEntry{
+			{Vin: 99, Script: script},
+		},
+	}
+	err = VerifyPacket(oorPacket, tx, prevoutFetcher, pubKey)
+	if err == nil {
+		t.Error("VerifyPacket should fail for out-of-range vin")
+	}
+}
+
+func TestBuildOpReturnScript(t *testing.T) {
+	t.Parallel()
+
+	packet := &IntrospectorPacket{
+		Entries: []IntrospectorEntry{
+			{Vin: 0, Script: []byte{0x51}, Witness: []byte{0x01}},
+		},
+	}
+
+	// Build with both assets and introspector packet
+	assetsPayload := []byte{0xaa, 0xbb}
+	spk, err := BuildOpReturnScript(assetsPayload, packet)
+	if err != nil {
+		t.Fatalf("BuildOpReturnScript failed: %v", err)
+	}
+
+	// Verify OP_RETURN
+	if spk[0] != 0x6a {
+		t.Errorf("expected OP_RETURN (0x6a), got 0x%02x", spk[0])
+	}
+
+	// Verify ARK magic is present
+	if !bytes.Contains(spk, []byte(ArkMagic)) {
+		t.Error("ARK magic not found in scriptPubKey")
+	}
+
+	// Verify type 0x00 (assets) is present
+	magicIdx := bytes.Index(spk, []byte(ArkMagic))
+	afterMagic := spk[magicIdx+3:]
+	if afterMagic[0] != 0x00 {
+		t.Errorf("expected assets type 0x00, got 0x%02x", afterMagic[0])
+	}
+
+	// Verify type 0x01 (introspector) is present
+	if !bytes.Contains(afterMagic, []byte{IntrospectorPacketType}) {
+		t.Error("Introspector Packet type byte not found")
+	}
+
+	// Build with only introspector packet (no assets)
+	spk2, err := BuildOpReturnScript(nil, packet)
+	if err != nil {
+		t.Fatalf("BuildOpReturnScript (no assets) failed: %v", err)
+	}
+	if !bytes.Contains(spk2, []byte{IntrospectorPacketType}) {
+		t.Error("Introspector Packet type byte not found (no assets case)")
+	}
+
+	// Verify roundtrip: parse what was built
+	parsed, _, err := ParseTLVStream(spk2)
+	if err != nil {
+		t.Fatalf("ParseTLVStream failed on built script: %v", err)
+	}
+	if parsed == nil {
+		t.Fatal("expected introspector packet from roundtrip, got nil")
+	}
+	if len(parsed.Entries) != 1 || parsed.Entries[0].Vin != 0 {
+		t.Error("roundtrip produced unexpected packet content")
+	}
+}
+
+func TestBuildOpReturnScriptAndStrip(t *testing.T) {
+	t.Parallel()
+
+	packet := &IntrospectorPacket{
+		Entries: []IntrospectorEntry{
+			{Vin: 0, Script: []byte{0x51}, Witness: []byte{0x01}},
+			{Vin: 1, Script: []byte{0x52, 0x53}, Witness: []byte{0x02}},
+		},
+	}
+
+	// Build OP_RETURN with introspector packet
+	spk, err := BuildOpReturnScript(nil, packet)
+	if err != nil {
+		t.Fatalf("BuildOpReturnScript failed: %v", err)
+	}
+
+	// Strip the introspector packet (for sighash computation)
+	stripped, err := StripIntrospectorPacket(spk)
+	if err != nil {
+		t.Fatalf("StripIntrospectorPacket failed: %v", err)
+	}
+
+	// Verify the stripped version doesn't contain the packet
+	magicIdx := bytes.Index(stripped, []byte(ArkMagic))
+	if magicIdx < 0 {
+		t.Fatal("stripped script missing ARK magic")
+	}
+	afterMagic := stripped[magicIdx+3:]
+	if bytes.Contains(afterMagic, []byte{IntrospectorPacketType}) {
+		t.Error("stripped script still contains Introspector Packet")
+	}
+
+	// The stripped version should be shorter
+	if len(stripped) >= len(spk) {
+		t.Errorf("stripped (%d bytes) should be shorter than original (%d bytes)",
+			len(stripped), len(spk))
 	}
 }
