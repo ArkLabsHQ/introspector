@@ -302,7 +302,7 @@ const (
 	OP_INSPECTINASSETAT            = 0xf1 // 241
 	OP_INSPECTINASSETLOOKUP        = 0xf2 // 242
 	OP_UNKNOWN243           = 0xf3 // 243
-	OP_UNKNOWN244           = 0xf4 // 244
+	OP_MERKLEPATHVERIFY     = 0xf4 // 244
 	OP_UNKNOWN245           = 0xf5 // 245
 	OP_UNKNOWN246           = 0xf6 // 246
 	OP_UNKNOWN247           = 0xf7 // 247
@@ -603,7 +603,7 @@ var opcodeArray = [256]opcode{
 	OP_INSPECTINASSETAT:            {OP_INSPECTINASSETAT, "OP_INSPECTINASSETAT", 1, opcodeInspectInAssetAt},
 	OP_INSPECTINASSETLOOKUP:        {OP_INSPECTINASSETLOOKUP, "OP_INSPECTINASSETLOOKUP", 1, opcodeInspectInAssetLookup},
 	OP_UNKNOWN243:           {OP_UNKNOWN243, "OP_UNKNOWN243", 1, opcodeInvalid},
-	OP_UNKNOWN244:           {OP_UNKNOWN244, "OP_UNKNOWN244", 1, opcodeInvalid},
+	OP_MERKLEPATHVERIFY:     {OP_MERKLEPATHVERIFY, "OP_MERKLEPATHVERIFY", 1, opcodeMerklePathVerify},
 	OP_UNKNOWN245:           {OP_UNKNOWN245, "OP_UNKNOWN245", 1, opcodeInvalid},
 	OP_UNKNOWN246:           {OP_UNKNOWN246, "OP_UNKNOWN246", 1, opcodeInvalid},
 	OP_UNKNOWN247:           {OP_UNKNOWN247, "OP_UNKNOWN247", 1, opcodeInvalid},
@@ -3117,4 +3117,95 @@ func opcodeSha256Finalize(op *opcode, _ []byte, vm *Engine) error {
 
 	vm.dstack.PushByteArray(h.Sum(nil))
 	return nil
+}
+
+// opcodeMerklePathVerify performs a generalized Merkle path verification
+// using BIP-341 tagged hashes.
+//
+// Stack inputs (top to bottom): expected_root, leaf_data, proof, branch_tag, leaf_tag
+// Stack transformation: [... leaf_tag branch_tag proof leaf_data expected_root] -> [...]
+// Fails if the computed root doesn't match expected_root.
+func opcodeMerklePathVerify(op *opcode, data []byte, vm *Engine) error {
+	// Pop expected_root (must be 32 bytes)
+	expectedRoot, err := vm.dstack.PopByteArray()
+	if err != nil {
+		return err
+	}
+	if len(expectedRoot) != 32 {
+		return scriptError(txscript.ErrInvalidStackOperation,
+			"expected_root must be 32 bytes")
+	}
+
+	// Pop leaf_data
+	leafData, err := vm.dstack.PopByteArray()
+	if err != nil {
+		return err
+	}
+
+	// Pop proof (must be multiple of 32 bytes)
+	proof, err := vm.dstack.PopByteArray()
+	if err != nil {
+		return err
+	}
+	if len(proof)%32 != 0 {
+		return scriptError(txscript.ErrInvalidStackOperation,
+			"proof length must be a multiple of 32")
+	}
+
+	// Pop branch_tag (must not be empty)
+	branchTag, err := vm.dstack.PopByteArray()
+	if err != nil {
+		return err
+	}
+	if len(branchTag) == 0 {
+		return scriptError(txscript.ErrInvalidStackOperation,
+			"branch_tag must not be empty")
+	}
+
+	// Pop leaf_tag (must not be empty)
+	leafTag, err := vm.dstack.PopByteArray()
+	if err != nil {
+		return err
+	}
+	if len(leafTag) == 0 {
+		return scriptError(txscript.ErrInvalidStackOperation,
+			"leaf_tag must not be empty")
+	}
+
+	// Compute leaf hash: tagged_hash(leaf_tag, leaf_data)
+	current := taggedHash(leafTag, leafData)
+
+	// Walk the proof path
+	for i := 0; i < len(proof); i += 32 {
+		sibling := proof[i : i+32]
+		combined := make([]byte, 64)
+		if bytes.Compare(current, sibling) < 0 {
+			// current < sibling: hash(current || sibling)
+			copy(combined[:32], current)
+			copy(combined[32:], sibling)
+		} else {
+			// current >= sibling: hash(sibling || current)
+			copy(combined[:32], sibling)
+			copy(combined[32:], current)
+		}
+		current = taggedHash(branchTag, combined)
+	}
+
+	// Verify
+	if !bytes.Equal(current, expectedRoot) {
+		return scriptError(txscript.ErrEqualVerify,
+			"merkle path verification failed")
+	}
+
+	return nil
+}
+
+// taggedHash computes a BIP-341 tagged hash: SHA256(SHA256(tag) || SHA256(tag) || msg)
+func taggedHash(tag, msg []byte) []byte {
+	tagHash := sha256.Sum256(tag)
+	h := sha256.New()
+	h.Write(tagHash[:])
+	h.Write(tagHash[:])
+	h.Write(msg)
+	return h.Sum(nil)
 }

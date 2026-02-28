@@ -72,6 +72,7 @@ func TestOpcodeDisasm(t *testing.T) {
 		0xdf: "OP_GREATERTHANOREQUAL64", 0xe0: "OP_SCRIPTNUMTOLE64",
 		0xe1: "OP_LE64TOSCRIPTNUM", 0xe2: "OP_LE32TOLE64",
 		0xe3: "OP_ECMULSCALARVERIFY", 0xe4: "OP_TWEAKVERIFY",
+		0xf4: "OP_MERKLEPATHVERIFY",
 	}
 	for opcodeVal, expectedStr := range expectedStrings {
 		var data []byte
@@ -125,7 +126,7 @@ func TestOpcodeDisasm(t *testing.T) {
 			(opcodeVal == 0xc8) || // Unknown between input inspection ops
 			(opcodeVal == 0xce) || // Unknown between input and output ops
 			(opcodeVal == 0xd0) || // Unknown between output ops
-			(opcodeVal >= 0xf3 && opcodeVal <= 0xf9) || // Unknown range after new ops
+			(opcodeVal >= 0xf3 && opcodeVal <= 0xf9 && opcodeVal != 0xf4) || // Unknown range after new ops
 			opcodeVal == 0xfc:
 			expectedStr = "OP_UNKNOWN" + strconv.Itoa(opcodeVal)
 		}
@@ -201,7 +202,7 @@ func TestOpcodeDisasm(t *testing.T) {
 			(opcodeVal == 0xc8) || // Unknown between input inspection ops
 			(opcodeVal == 0xce) || // Unknown between input and output ops
 			(opcodeVal == 0xd0) || // Unknown between output ops
-			(opcodeVal >= 0xf3 && opcodeVal <= 0xf9) || // Unknown range after new ops
+			(opcodeVal >= 0xf3 && opcodeVal <= 0xf9 && opcodeVal != 0xf4) || // Unknown range after new ops
 			opcodeVal == 0xfc:
 			expectedStr = "OP_UNKNOWN" + strconv.Itoa(opcodeVal)
 		}
