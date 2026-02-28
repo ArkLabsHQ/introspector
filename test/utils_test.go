@@ -622,10 +622,10 @@ func addIntrospectorPacket(t *testing.T, ptx *psbt.Packet, entries []arkade.Intr
 		return
 	}
 
-	// No existing ARK OP_RETURN — append a new one after the payment outputs.
-	// We must not insert before the last output because intent proofs don't
-	// have a P2A anchor, and shifting payment outputs would break arkade
-	// scripts that reference them by index.
+	// No existing ARK OP_RETURN — insert a new one.
+	// For offchain ark txs the last output is a P2A anchor that must remain
+	// at the end (the server rebuilds with the anchor appended). For intent
+	// proofs there is no anchor, so we just append.
 	opReturnScript, err := arkade.BuildOpReturnScript(nil, packet)
 	require.NoError(t, err)
 
@@ -634,7 +634,17 @@ func addIntrospectorPacket(t *testing.T, ptx *psbt.Packet, entries []arkade.Intr
 		PkScript: opReturnScript,
 	}
 
-	ptx.UnsignedTx.AddTxOut(opReturnOut)
+	lastIdx := len(ptx.UnsignedTx.TxOut) - 1
+	lastOut := ptx.UnsignedTx.TxOut[lastIdx]
+	if bytes.Equal(lastOut.PkScript, txutils.ANCHOR_PKSCRIPT) {
+		// Insert before the P2A anchor so the server rebuild matches.
+		ptx.UnsignedTx.TxOut[lastIdx] = opReturnOut
+		ptx.UnsignedTx.AddTxOut(lastOut)
+	} else {
+		// No anchor (e.g. intent proofs) — append at the end so payment
+		// output indices are not shifted.
+		ptx.UnsignedTx.AddTxOut(opReturnOut)
+	}
 	ptx.Outputs = append(ptx.Outputs, psbt.POutput{})
 }
 
