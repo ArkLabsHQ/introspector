@@ -11,8 +11,8 @@ github.com/FactomProject/basen v0.0.0-20150613233007-fe3947df716e h1:ahyvB3q25Yn
 github.com/FactomProject/basen v0.0.0-20150613233007-fe3947df716e/go.mod h1:kGUqhHd//musdITWjFvNTHn90WG9bMLBEPQZ17Cmlpw=
 github.com/FactomProject/btcutilecc v0.0.0-20130527213604-d3a63a5752ec h1:1Qb69mGp/UtRPn422BH4/Y4Q3SLUrD9KHuDkm8iodFc=
 github.com/FactomProject/btcutilecc v0.0.0-20130527213604-d3a63a5752ec/go.mod h1:CD8UlnlLDiqb36L110uqiP2iSflVjx9g/3U9hCI4q2U=
-github.com/Kukks/arkd/pkg/ark-lib v0.0.0-20260228214427-316401ef7cfa h1:KbnEL2ZGVDq5xHaYjli+5bLc0AvbzTEBBk3S82exvrc=
-github.com/Kukks/arkd/pkg/ark-lib v0.0.0-20260228214427-316401ef7cfa/go.mod h1:k/5HLBp1TM0c5FXmbxn5a+Z+H889M1eUrnj32JLTZBY=
+github.com/Kukks/arkd/pkg/ark-lib v0.0.0-20260228221137-ff5c939ead39 h1:TSyVDcZCncvXOLSlTrf/9ZS8GmmfdHQpCYO/nWiidN0=
+github.com/Kukks/arkd/pkg/ark-lib v0.0.0-20260228221137-ff5c939ead39/go.mod h1:k/5HLBp1TM0c5FXmbxn5a+Z+H889M1eUrnj32JLTZBY=
 github.com/Microsoft/go-winio v0.6.1 h1:9/kr64B9VUZrLm5YYwbGtUJnMgqWVOdUAXu6Migciow=
 github.com/Microsoft/go-winio v0.6.1/go.mod h1:LRdKpFKfdobln8UmuiYcKPot9D2v6svN5+sAH+4kjUM=
 github.com/Nvveen/Gotty v0.0.0-20120604004816-cd527374f1e5 h1:TngWCqHvy9oXAN6lEVMRuU21PR1EtLVZJmdB18Gu3Rw=
@@ -24,12 +24,6 @@ github.com/aead/siphash v1.0.1/go.mod h1:Nywa3cDsYNNK3gaciGTWPwHt0wlpNV15vwmswBA
 github.com/antihax/optional v1.0.0/go.mod h1:uupD/76wgC+ih3iEmQUL+0Ugr19nfwCT1kdvxnR2qWY=
 github.com/antlr4-go/antlr/v4 v4.13.0 h1:lxCg3LAv+EUK6t1i0y1V6/SLeUi0eKEKdhQAlS8TVTI=
 github.com/antlr4-go/antlr/v4 v4.13.0/go.mod h1:pfChB/xh/Unjila75QW7+VU4TSnWnnk9UTnmpPaOR2g=
-github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260216152434-74a173c67a37 h1:dBSLrywZbu9KxP+VZerJjnV/Ok0j5mjdj1q/fd5uJak=
-github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260216152434-74a173c67a37/go.mod h1:k/5HLBp1TM0c5FXmbxn5a+Z+H889M1eUrnj32JLTZBY=
-github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260220163635-76f077b0e63b h1:MFjmOw2lTxu4HJGDRnrIfCZ9szHc77ex6EPmt+Ahuyg=
-github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260220163635-76f077b0e63b/go.mod h1:k/5HLBp1TM0c5FXmbxn5a+Z+H889M1eUrnj32JLTZBY=
-github.com/arkade-os/arkd/pkg/errors v0.0.0-20260216152434-74a173c67a37 h1:cDXZLco5slUoojBLTY/ZOPDQs1AcLyA877IjM/NseKU=
-github.com/arkade-os/arkd/pkg/errors v0.0.0-20260216152434-74a173c67a37/go.mod h1:dA/wF5R+y+JyZACR0xAr3l4FirybLY+gsl05Xv0LlUc=
 github.com/arkade-os/arkd/pkg/errors v0.0.0-20260220163635-76f077b0e63b h1:JUuedUj5tN2TozZf7wqYhj/2q+zwYN2iwhASi2YkK4Q=
 github.com/arkade-os/arkd/pkg/errors v0.0.0-20260220163635-76f077b0e63b/go.mod h1:dA/wF5R+y+JyZACR0xAr3l4FirybLY+gsl05Xv0LlUc=
 github.com/arkade-os/arkd/pkg/kvdb v0.7.1-0.20260216152434-74a173c67a37 h1:r51Aq0/mg7QurBGJTDVilWC7kUBWNE8N+giRLpui4iM=
