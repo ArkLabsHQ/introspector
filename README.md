@@ -6,7 +6,7 @@
 
 _Introspector is a signing service for the [Arkade](https://docs.arkadeos.com/) protocol, executing [Arkade Script](https://docs.arkadeos.com/experimental/arkade-script)._
 
-This is achieved by signing any Ark transaction (offchain or intent proof) expecting the signature of a [tweaked public key](pkg/arkade/tweak.go). The tweaked key is `introspector_key + hash(arkade_script)`, where the script hash is a [tagged hash](pkg/arkade/tweak.go#L15) (`"ArkScriptHash"`). The Arkade script is revealed via custom [PSBT fields](pkg/arkade/psbt_field.go) (`arkadescript`). If the script requires witness arguments, the extra witness is also passed via PSBT fields (`arkadescriptwitness`).
+This is achieved by signing any Ark transaction (offchain or intent proof) expecting the signature of a [tweaked public key](pkg/arkade/tweak.go). The tweaked key is `introspector_key + hash(arkade_script)`, where the script hash is a [tagged hash](pkg/arkade/tweak.go#L15) (`"ArkScriptHash"`). The Arkade script is revealed via an [Introspector Packet](pkg/arkade/introspector_packet.go) committed in a transaction OP_RETURN output. The packet is a TLV (Type-Length-Value) stream with magic bytes `ARK` (`0x41524b`), containing per-input entries with the script bytecode and optional witness arguments.
 
 ## Example: Pay-to-Two-Outputs
 
@@ -53,9 +53,9 @@ vtxoScript := script.TapscriptsVtxoScript{
 vtxoTapKey, _, _ := vtxoScript.TapTree()
 ```
 
-### 3. Build the PSBT and attach the Arkade script
+### 3. Build the PSBT and attach the Introspector Packet
 
-Build the offchain transaction with outputs matching the script, then attach the Arkade script via the custom PSBT field:
+Build the offchain transaction with outputs matching the script, then commit the Arkade script in an OP_RETURN Introspector Packet:
 
 ```go
 tx, checkpoints, _ := offchain.BuildTxs(
@@ -67,8 +67,15 @@ tx, checkpoints, _ := offchain.BuildTxs(
     checkpointScript,
 )
 
-// attach the arkade script to input 0
-txutils.SetArkPsbtField(tx, 0, arkade.ArkadeScriptField, arkadeScript)
+// build the introspector packet with script for input 0
+packet := &arkade.IntrospectorPacket{
+    Entries: []arkade.IntrospectorEntry{
+        {Vin: 0, Script: arkadeScript},
+    },
+}
+opReturnScript, _ := arkade.BuildOpReturnScript(nil, packet)
+tx.UnsignedTx.AddTxOut(&wire.TxOut{Value: 0, PkScript: opReturnScript})
+tx.Outputs = append(tx.Outputs, psbt.POutput{})
 ```
 
 ### 4. Submit to the introspector

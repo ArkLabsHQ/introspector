@@ -595,6 +595,28 @@ func createVtxoScriptWithArkadeScript(bobPubKey, aliceSigner, introspectorPubKey
 	}
 }
 
+// addIntrospectorPacket builds an IntrospectorPacket with the given entries and adds
+// the resulting OP_RETURN output to the PSBT before the last output (P2A anchor).
+func addIntrospectorPacket(t *testing.T, ptx *psbt.Packet, entries []arkade.IntrospectorEntry) {
+	packet := &arkade.IntrospectorPacket{Entries: entries}
+	packet.SortByVin()
+
+	opReturnScript, err := arkade.BuildOpReturnScript(nil, packet)
+	require.NoError(t, err)
+
+	opReturnOut := &wire.TxOut{
+		Value:    0,
+		PkScript: opReturnScript,
+	}
+
+	// Insert the OP_RETURN before the last output (P2A anchor)
+	lastIdx := len(ptx.UnsignedTx.TxOut) - 1
+	p2aOutput := ptx.UnsignedTx.TxOut[lastIdx]
+	ptx.UnsignedTx.TxOut[lastIdx] = opReturnOut
+	ptx.UnsignedTx.AddTxOut(p2aOutput)
+	ptx.Outputs = append(ptx.Outputs, psbt.POutput{})
+}
+
 // createVtxoScriptWithArkadeAndCSV creates a vtxo script with arkade closure + CSV closure
 func createVtxoScriptWithArkadeAndCSV(bobPubKey, aliceSigner, introspectorPubKey *btcec.PublicKey, arkadeScriptHash []byte) script.TapscriptsVtxoScript {
 	return script.TapscriptsVtxoScript{

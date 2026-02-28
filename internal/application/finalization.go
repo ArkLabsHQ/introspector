@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/ArkLabsHQ/introspector/pkg/arkade"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -121,7 +122,19 @@ func getSignedInputs(ptx psbt.Packet, signerPublicKey *btcec.PublicKey) (map[wir
 		return nil, fmt.Errorf("malformed psbt")
 	}
 
-	for inputIndex, input := range ptx.Inputs {
+	// Parse IntrospectorPacket from the transaction's OP_RETURN output
+	packet, err := arkade.FindIntrospectorPacket(ptx.UnsignedTx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse introspector packet: %w", err)
+	}
+
+	if packet == nil || len(packet.Entries) == 0 {
+		return nil, fmt.Errorf("no introspector packet found in transaction")
+	}
+
+	for _, entry := range packet.Entries {
+		inputIndex := int(entry.Vin)
+
 		if inputIndex == 0 {
 			// in intent proof, input index 0 is the message input
 			// it is not a valid vtxo output : no forfeit will be associated to it
@@ -129,11 +142,16 @@ func getSignedInputs(ptx psbt.Packet, signerPublicKey *btcec.PublicKey) (map[wir
 			continue
 		}
 
+		if inputIndex >= len(ptx.Inputs) {
+			continue
+		}
+
+		input := ptx.Inputs[inputIndex]
 		if len(input.TaprootScriptSpendSig) == 0 {
 			continue // not signed: skip
 		}
 
-		script, err := readArkadeScript(&ptx, inputIndex, signerPublicKey)
+		script, err := readArkadeScript(&ptx, inputIndex, signerPublicKey, entry)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read arkade script: %w", err)
 		}

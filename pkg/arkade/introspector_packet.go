@@ -9,8 +9,6 @@ import (
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcec/v2/schnorr"
-	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 )
@@ -403,66 +401,6 @@ func VerifyPacket(packet *IntrospectorPacket, tx *wire.MsgTx,
 	return nil
 }
 
-// BuildFromPSBT constructs an IntrospectorPacket by extracting Arkade scripts
-// and witnesses from a PSBT's custom fields. This is the bridge from the current
-// PSBT-based workflow (where scripts live in custom unknown fields) to the new
-// on-chain OP_RETURN commitment format.
-func BuildFromPSBT(ptx *psbt.Packet, signerPubKey *btcec.PublicKey) (*IntrospectorPacket, error) {
-	var entries []IntrospectorEntry
-
-	for inputIndex := range ptx.Inputs {
-		// Try to read the arkade script field
-		scripts, err := txutils.GetArkPsbtFields(ptx, inputIndex, ArkadeScriptField)
-		if err != nil || len(scripts) == 0 {
-			continue // Not an arkade script input
-		}
-
-		script := scripts[0]
-
-		// Verify this input has a tapscript with the expected tweaked key
-		input := ptx.Inputs[inputIndex]
-		if len(input.TaprootLeafScript) == 0 {
-			continue
-		}
-
-		scriptHash := ArkadeScriptHash(script)
-		tweakedKey := ComputeArkadeScriptPublicKey(signerPubKey, scriptHash)
-		tweakedKeyXonly := schnorr.SerializePubKey(tweakedKey)
-
-		// Check that the tweaked key appears in one of the tapscripts
-		found := false
-		for _, leafScript := range input.TaprootLeafScript {
-			if leafScript != nil && bytes.Contains(leafScript.Script, tweakedKeyXonly) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			continue
-		}
-
-		// Read witness data
-		var witnessData []byte
-		witnesses, err := txutils.GetArkPsbtFields(ptx, inputIndex, ArkadeScriptWitnessField)
-		if err == nil && len(witnesses) > 0 {
-			var witBuf bytes.Buffer
-			if err := psbt.WriteTxWitness(&witBuf, witnesses[0]); err == nil {
-				witnessData = witBuf.Bytes()
-			}
-		}
-
-		entries = append(entries, IntrospectorEntry{
-			Vin:     uint16(inputIndex),
-			Script:  script,
-			Witness: witnessData,
-		})
-	}
-
-	packet := &IntrospectorPacket{Entries: entries}
-	packet.SortByVin()
-	return packet, nil
-}
-
 // BuildOpReturnScript builds a complete OP_RETURN scriptPubKey containing the
 // ARK magic, an optional assets payload, and the Introspector Packet.
 func BuildOpReturnScript(assetsPayload []byte, packet *IntrospectorPacket) ([]byte, error) {
@@ -499,6 +437,36 @@ func BuildOpReturnScript(assetsPayload []byte, packet *IntrospectorPacket) ([]by
 
 	spk = append(spk, tlvStream...)
 	return spk, nil
+}
+
+// FindIntrospectorPacket scans a transaction's outputs for an OP_RETURN
+// containing an ARK TLV stream with an Introspector Packet (Type 0x01).
+// Returns the parsed packet, or nil if no packet is found.
+func FindIntrospectorPacket(tx *wire.MsgTx) (*IntrospectorPacket, error) {
+	for _, out := range tx.TxOut {
+		if len(out.PkScript) < 5 || out.PkScript[0] != 0x6a {
+			continue
+		}
+		pkt, _, err := ParseTLVStream(out.PkScript)
+		if err != nil {
+			continue // Not a valid ARK TLV stream, skip
+		}
+		if pkt != nil {
+			return pkt, nil
+		}
+	}
+	return nil, nil
+}
+
+// FindEntryByVin looks up an IntrospectorEntry by its vin index.
+// Returns the entry and true if found, or a zero entry and false if not.
+func (p *IntrospectorPacket) FindEntryByVin(vin uint16) (IntrospectorEntry, bool) {
+	for _, entry := range p.Entries {
+		if entry.Vin == vin {
+			return entry, true
+		}
+	}
+	return IntrospectorEntry{}, false
 }
 
 // writeVarInt writes a Bitcoin-style variable-length integer.

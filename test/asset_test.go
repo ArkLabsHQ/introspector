@@ -149,9 +149,10 @@ func TestOffchainTxWithAsset(t *testing.T) {
 
 	addAssetPacketToTx(t, validTx, assetPacket)
 
-	// Add the arkade script field on the input (index 0)
-	err = txutils.SetArkPsbtField(validTx, 0, arkade.ArkadeScriptField, arkadeScript)
-	require.NoError(t, err)
+	// Add the introspector packet with the arkade script for input 0
+	addIntrospectorPacket(t, validTx, []arkade.IntrospectorEntry{
+		{Vin: 0, Script: arkadeScript},
+	})
 
 	encodedValidTx, err := validTx.B64Encode()
 	require.NoError(t, err)
@@ -352,9 +353,10 @@ func TestSettlementWithAsset(t *testing.T) {
 	issuancePacket := createIssuanceAssetPacket(t, 0, assetAmount)
 	addAssetPacketToTx(t, mintTx, issuancePacket)
 
-	// Set the mint arkade script on input 0
-	err = txutils.SetArkPsbtField(mintTx, 0, arkade.ArkadeScriptField, mintArkadeScript)
-	require.NoError(t, err)
+	// Add the introspector packet with the mint arkade script for input 0
+	addIntrospectorPacket(t, mintTx, []arkade.IntrospectorEntry{
+		{Vin: 0, Script: mintArkadeScript},
+	})
 
 	encodedMintTx, err := mintTx.B64Encode()
 	require.NoError(t, err)
@@ -507,8 +509,9 @@ func TestSettlementWithAsset(t *testing.T) {
 	intentProof.Inputs[1].Unknowns = append(intentProof.Inputs[1].Unknowns, taptreeField)
 
 	intentPtx := &intentProof.Packet
-	err = txutils.SetArkPsbtField(intentPtx, 1, arkade.ArkadeScriptField, settleArkadeScript)
-	require.NoError(t, err)
+	addIntrospectorPacket(t, intentPtx, []arkade.IntrospectorEntry{
+		{Vin: 1, Script: settleArkadeScript},
+	})
 
 	encodedIntentProof, err := intentPtx.B64Encode()
 	require.NoError(t, err)

@@ -192,8 +192,9 @@ func TestOffchain(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	err = txutils.SetArkPsbtField(validTx, 0, arkade.ArkadeScriptField, arkadeScript)
-	require.NoError(t, err)
+	addIntrospectorPacket(t, validTx, []arkade.IntrospectorEntry{
+		{Vin: 0, Script: arkadeScript},
+	})
 
 	invalidTx, invalidCheckpoints, err := offchain.BuildTxs(
 		[]offchain.VtxoInput{
@@ -217,8 +218,9 @@ func TestOffchain(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	err = txutils.SetArkPsbtField(invalidTx, 0, arkade.ArkadeScriptField, arkadeScript)
-	require.NoError(t, err)
+	addIntrospectorPacket(t, invalidTx, []arkade.IntrospectorEntry{
+		{Vin: 0, Script: arkadeScript},
+	})
 
 	encodedInvalidTx, err := invalidTx.B64Encode()
 	require.NoError(t, err)
@@ -448,8 +450,9 @@ func TestSettlement(t *testing.T) {
 	intent.Inputs[1].Unknowns = append(intent.Inputs[1].Unknowns, taptreeField)
 
 	intentPtx := &intent.Packet
-	err = txutils.SetArkPsbtField(intentPtx, 1, arkade.ArkadeScriptField, arkadeScript)
-	require.NoError(t, err)
+	addIntrospectorPacket(t, intentPtx, []arkade.IntrospectorEntry{
+		{Vin: 1, Script: arkadeScript},
+	})
 
 	encodedIntentProof, err := intentPtx.B64Encode()
 	require.NoError(t, err)
@@ -714,8 +717,9 @@ func TestBoarding(t *testing.T) {
 	intent.Inputs[1].Unknowns = append(intent.Inputs[1].Unknowns, taptreeField)
 
 	intentPtx := &intent.Packet
-	err = txutils.SetArkPsbtField(intentPtx, 1, arkade.ArkadeScriptField, arkadeScript)
-	require.NoError(t, err)
+	addIntrospectorPacket(t, intentPtx, []arkade.IntrospectorEntry{
+		{Vin: 1, Script: arkadeScript},
+	})
 
 	encodedIntentProof, err := intentPtx.B64Encode()
 	require.NoError(t, err)
