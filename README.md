@@ -258,6 +258,7 @@ The following opcodes are supported by the Arkade script engine. They extend Bit
 | OP_INSPECTNUMINPUTS | 212 | 0xd4 | Nothing | numInputs | Pushes the number of inputs in the transaction (scriptNum) onto the stack. |
 | OP_INSPECTNUMOUTPUTS | 213 | 0xd5 | Nothing | numOutputs | Pushes the number of outputs in the transaction (scriptNum) onto the stack. |
 | OP_TXWEIGHT | 214 | 0xd6 | Nothing | weight | Pushes the transaction weight (4 bytes, little-endian) onto the stack. Weight is calculated as `SerializeSizeStripped() * 4`. |
+| OP_TXID | 243 | 0xf3 | Nothing | txid | Pushes the current transaction hash (32 bytes) onto the stack. |
 
 ### Data Manipulation
 
