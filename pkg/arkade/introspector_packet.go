@@ -147,8 +147,11 @@ func (p *IntrospectorPacket) SerializeTLVRecord() ([]byte, error) {
 
 // ParseTLVStream parses an ARK TLV stream from an OP_RETURN scriptPubKey,
 // extracting any Introspector Packet found.
-// The stream layout is: ARK + 0x00 [asset marker] + <asset data> + 0x01 <introspector data>.
-// Returns the introspector packet (if present) and the remaining (asset) TLV data.
+// The TLV stream after the ARK magic contains self-delimiting type+value
+// records. Records may appear in any order. The asset record uses type 0x00
+// and the introspector record uses type 0x01.
+// Returns the introspector packet (if present) and the raw asset payload
+// (the bytes following the 0x00 marker, without the marker itself).
 func ParseTLVStream(scriptPubKey []byte) (*IntrospectorPacket, []byte, error) {
 	// OP_RETURN (0x6a) + push data + "ARK" magic + TLV records
 	// Minimum: OP_RETURN + push + "ARK" = at least 5 bytes
@@ -184,38 +187,59 @@ func ParseTLVStream(scriptPubKey []byte) (*IntrospectorPacket, []byte, error) {
 		return nil, nil, fmt.Errorf("ARK magic not found, got %x", magic)
 	}
 
-	// Data after ARK magic: [0x00 marker] [asset groups…] [0x01 introspector…]
-	// The asset section is opaque (self-delimiting), so we scan for the
-	// IntrospectorPacketType byte and validate with a trial parse.
-	// The introspector record is always the last record in the stream.
+	// Scan the TLV data for the Introspector record (type 0x01) and the
+	// asset record (type 0x00). Both are self-delimiting and may appear in
+	// any order. We use trial-parse to distinguish real type bytes from
+	// identical values embedded inside other records.
 	tlvData := scriptPubKey[dataStart+3:]
 	var introspectorPacket *IntrospectorPacket
 	var assetsPayload []byte
 
-	// Skip the asset marker byte (0x00) for the asset payload calculation.
-	assetStart := 0
-	if len(tlvData) > 0 && tlvData[0] == 0x00 {
-		assetStart = 1
-	}
-
-	for i := assetStart; i < len(tlvData); i++ {
+	// First pass: find the introspector record (0x01) via trial-parse.
+	// Track both start and end so the second pass can skip over it.
+	introspectorStart := -1
+	introspectorEnd := -1
+	for i := 0; i < len(tlvData); i++ {
 		if tlvData[i] != IntrospectorPacketType {
 			continue
 		}
-		if i+1 > len(tlvData) {
+		if i+1 >= len(tlvData) {
 			continue
 		}
 		pkt, err := DeserializeIntrospectorPacket(tlvData[i+1:])
 		if err != nil {
-			continue // False positive — 0x01 inside asset data
+			continue // False positive — 0x01 inside other data
 		}
 		introspectorPacket = pkt
-		assetsPayload = tlvData[assetStart:i]
+		introspectorStart = i
+		// Compute the record's byte length by re-serializing.
+		serialized, _ := pkt.Serialize()
+		introspectorEnd = i + 1 + len(serialized) // type byte + payload
 		break
 	}
 
-	if introspectorPacket == nil {
-		assetsPayload = tlvData[assetStart:]
+	// Second pass: find the asset record (0x00) by scanning for the marker.
+	// Skip any 0x00 bytes that fall inside the introspector record.
+	for i := 0; i < len(tlvData); i++ {
+		// Skip bytes that belong to the introspector record.
+		if introspectorStart >= 0 && i >= introspectorStart && i < introspectorEnd {
+			continue
+		}
+		if tlvData[i] != 0x00 {
+			continue
+		}
+		// The asset payload starts after the marker byte.
+		payloadStart := i + 1
+		// Determine where the asset payload ends: at the introspector
+		// record boundary if it follows, or at end of stream.
+		payloadEnd := len(tlvData)
+		if introspectorStart > payloadStart {
+			payloadEnd = introspectorStart
+		}
+		if payloadStart <= payloadEnd {
+			assetsPayload = tlvData[payloadStart:payloadEnd]
+			break
+		}
 	}
 
 	return introspectorPacket, assetsPayload, nil
