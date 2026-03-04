@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/ArkLabsHQ/introspector/pkg/arkade"
-	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
+	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	scriptlib "github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -107,13 +107,14 @@ func (s arkadeScript) execute(spendingTx *wire.MsgTx, prevoutFetcher txscript.Pr
 		return fmt.Errorf("failed to create engine: %w", err)
 	}
 
-	// Parse asset packet from transaction if present
-	assetPacket, err := asset.NewPacketFromTx(spendingTx)
+	// Parse asset packet from transaction extension if present
+	ext, err := extension.NewExtensionFromTx(spendingTx)
 	if err == nil {
-		// Asset packet found, set it on the engine for introspection opcodes
-		engine.SetAssetPacket(assetPacket)
+		if ap := ext.GetAssetPacket(); ap != nil {
+			engine.SetAssetPacket(ap)
+		}
 	}
-	// If error, packet is not present - this is okay, just don't set it
+	// If error, extension is not present - this is okay, just don't set it
 
 	if len(s.witness) > 0 {
 		engine.SetStack(s.witness)

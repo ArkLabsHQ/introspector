@@ -11,6 +11,7 @@ import (
 	introspectorclient "github.com/ArkLabsHQ/introspector/pkg/client"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
+	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
@@ -483,7 +484,8 @@ func TestSettlementWithAsset(t *testing.T) {
 	// Add TRANSFER asset packet (not issuance!) referencing the minted asset
 	mintTxHash := mintResultPtx.UnsignedTx.TxHash()
 	transferPacket := createTransferAssetPacket(t, mintTxHash, 0, 1, 0, uint64(assetAmount))
-	transferPacketOut, err := transferPacket.TxOut()
+	transferExt := extension.Extension{transferPacket}
+	transferPacketOut, err := transferExt.TxOut()
 	require.NoError(t, err)
 	intentProof.UnsignedTx.AddTxOut(transferPacketOut)
 	intentProof.Outputs = append(intentProof.Outputs, psbt.POutput{})
@@ -571,7 +573,8 @@ func TestSettlementWithAsset(t *testing.T) {
 
 // addAssetPacketToTx adds the asset packet to the transaction as an OP_RETURN output (before the last output, which is the P2A)
 func addAssetPacketToTx(t *testing.T, tx *psbt.Packet, assetPacket asset.Packet) {
-	assetPacketOut, err := assetPacket.TxOut()
+	ext := extension.Extension{assetPacket}
+	assetPacketOut, err := ext.TxOut()
 	require.NoError(t, err)
 	p2aOutputIndex := len(tx.UnsignedTx.TxOut) - 1
 	p2aOutput := tx.UnsignedTx.TxOut[p2aOutputIndex]

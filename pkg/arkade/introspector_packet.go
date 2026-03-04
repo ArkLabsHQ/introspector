@@ -433,20 +433,13 @@ func BuildOpReturnScript(assetsPayload []byte, packet *IntrospectorPacket) ([]by
 	var tlvStream bytes.Buffer
 	tlvStream.Write([]byte(ArkMagic))
 
-	// Type 0x00: Asset record — always present for ark server compatibility.
-	tlvStream.WriteByte(0x00)
+	// Type 0x00: Asset record — include only if asset data is present.
 	if len(assetsPayload) > 0 {
+		tlvStream.WriteByte(0x00)
 		if err := writeUvarint(&tlvStream, uint64(len(assetsPayload))); err != nil {
 			return nil, fmt.Errorf("failed to write asset payload length: %w", err)
 		}
 		tlvStream.Write(assetsPayload)
-	} else {
-		// Empty asset section: varint(0) means 0 asset groups.
-		emptyPayload := []byte{0x00}
-		if err := writeUvarint(&tlvStream, uint64(len(emptyPayload))); err != nil {
-			return nil, fmt.Errorf("failed to write empty asset payload length: %w", err)
-		}
-		tlvStream.Write(emptyPayload)
 	}
 
 	// Type 0x01: Introspector packet
