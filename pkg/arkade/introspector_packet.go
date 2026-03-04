@@ -136,43 +136,38 @@ func (p *IntrospectorPacket) SortByVin() {
 }
 
 // SerializeTLVRecord serializes the packet as a complete TLV record
-// (type byte + payload).
+// (type byte + uvarint length + payload).
 func (p *IntrospectorPacket) SerializeTLVRecord() ([]byte, error) {
 	payload, err := p.Serialize()
 	if err != nil {
 		return nil, err
 	}
-	return append([]byte{IntrospectorPacketType}, payload...), nil
+	var buf bytes.Buffer
+	buf.WriteByte(IntrospectorPacketType)
+	if err := writeUvarint(&buf, uint64(len(payload))); err != nil {
+		return nil, fmt.Errorf("failed to write TLV length: %w", err)
+	}
+	buf.Write(payload)
+	return buf.Bytes(), nil
 }
 
-// ParseTLVStream parses an ARK TLV stream from an OP_RETURN scriptPubKey,
-// extracting any Introspector Packet found.
-// The TLV stream after the ARK magic contains self-delimiting type+value
-// records. Records may appear in any order. The asset record uses type 0x00
-// and the introspector record uses type 0x01.
-// Returns the introspector packet (if present) and the raw asset payload
-// (the bytes following the 0x00 marker, without the marker itself).
 func ParseTLVStream(scriptPubKey []byte) (*IntrospectorPacket, []byte, error) {
-	// OP_RETURN (0x6a) + push data + "ARK" magic + TLV records
-	// Minimum: OP_RETURN + push + "ARK" = at least 5 bytes
 	if len(scriptPubKey) < 5 {
 		return nil, nil, fmt.Errorf("scriptPubKey too short")
 	}
-	if scriptPubKey[0] != 0x6a { // OP_RETURN
+	if scriptPubKey[0] != 0x6a {
 		return nil, nil, fmt.Errorf("not an OP_RETURN output")
 	}
 
-	// Find ARK magic in the data after OP_RETURN
-	// The push opcode follows OP_RETURN, then "ARK" magic
 	pushStart := 1
 	var dataStart int
 	pushByte := scriptPubKey[pushStart]
 
-	if pushByte <= 0x4b { // Direct push (1-75 bytes)
+	if pushByte <= 0x4b {
 		dataStart = pushStart + 1
-	} else if pushByte == 0x4c { // OP_PUSHDATA1
+	} else if pushByte == 0x4c {
 		dataStart = pushStart + 2
-	} else if pushByte == 0x4d { // OP_PUSHDATA2
+	} else if pushByte == 0x4d {
 		dataStart = pushStart + 3
 	} else {
 		return nil, nil, fmt.Errorf("unexpected push opcode: 0x%02x", pushByte)
@@ -187,72 +182,63 @@ func ParseTLVStream(scriptPubKey []byte) (*IntrospectorPacket, []byte, error) {
 		return nil, nil, fmt.Errorf("ARK magic not found, got %x", magic)
 	}
 
-	// Scan the TLV data for the Introspector record (type 0x01) and the
-	// asset record (type 0x00). Both are self-delimiting and may appear in
-	// any order. We use trial-parse to distinguish real type bytes from
-	// identical values embedded inside other records.
 	tlvData := scriptPubKey[dataStart+3:]
+	r := bytes.NewReader(tlvData)
+
 	var introspectorPacket *IntrospectorPacket
 	var assetsPayload []byte
+	seenTypes := make(map[byte]bool)
+	recordCount := 0
 
-	// First pass: find the introspector record (0x01) via trial-parse.
-	// Track both start and end so the second pass can skip over it.
-	introspectorStart := -1
-	introspectorEnd := -1
-	for i := 0; i < len(tlvData); i++ {
-		if tlvData[i] != IntrospectorPacketType {
-			continue
-		}
-		if i+1 >= len(tlvData) {
-			continue
-		}
-		pkt, err := DeserializeIntrospectorPacket(tlvData[i+1:])
+	for r.Len() > 0 {
+		typeByte, err := r.ReadByte()
 		if err != nil {
-			continue // False positive — 0x01 inside other data
+			return nil, nil, fmt.Errorf("failed to read TLV type: %w", err)
 		}
-		introspectorPacket = pkt
-		introspectorStart = i
-		// Compute the record's byte length by re-serializing.
-		serialized, _ := pkt.Serialize()
-		introspectorEnd = i + 1 + len(serialized) // type byte + payload
-		break
+
+		if seenTypes[typeByte] {
+			return nil, nil, fmt.Errorf("duplicate TLV type 0x%02x", typeByte)
+		}
+		seenTypes[typeByte] = true
+
+		length, err := readUvarint(r)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to read TLV length for type 0x%02x: %w", typeByte, err)
+		}
+
+		if uint64(r.Len()) < length {
+			return nil, nil, fmt.Errorf("TLV type 0x%02x: payload length %d exceeds remaining data %d", typeByte, length, r.Len())
+		}
+		payload := make([]byte, length)
+		if _, err := io.ReadFull(r, payload); err != nil {
+			return nil, nil, fmt.Errorf("failed to read TLV payload for type 0x%02x: %w", typeByte, err)
+		}
+
+		switch typeByte {
+		case 0x00:
+			assetsPayload = payload
+		case IntrospectorPacketType:
+			pkt, err := DeserializeIntrospectorPacket(payload)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to deserialize introspector packet: %w", err)
+			}
+			introspectorPacket = pkt
+		}
+		recordCount++
 	}
 
-	// Second pass: find the asset record (0x00) by scanning for the marker.
-	// Skip any 0x00 bytes that fall inside the introspector record.
-	for i := 0; i < len(tlvData); i++ {
-		// Skip bytes that belong to the introspector record.
-		if introspectorStart >= 0 && i >= introspectorStart && i < introspectorEnd {
-			continue
-		}
-		if tlvData[i] != 0x00 {
-			continue
-		}
-		// The asset payload starts after the marker byte.
-		payloadStart := i + 1
-		// Determine where the asset payload ends: at the introspector
-		// record boundary if it follows, or at end of stream.
-		payloadEnd := len(tlvData)
-		if introspectorStart > payloadStart {
-			payloadEnd = introspectorStart
-		}
-		if payloadStart <= payloadEnd {
-			assetsPayload = tlvData[payloadStart:payloadEnd]
-			break
-		}
+	if recordCount == 0 {
+		return nil, nil, fmt.Errorf("no TLV records found")
 	}
 
 	return introspectorPacket, assetsPayload, nil
 }
 
-// StripIntrospectorPacket returns the scriptPubKey with the Introspector Packet
-// TLV record (Type 0x01) removed. Used for sighash computation.
 func StripIntrospectorPacket(scriptPubKey []byte) ([]byte, error) {
 	if len(scriptPubKey) < 5 || scriptPubKey[0] != 0x6a {
-		return scriptPubKey, nil // Not an OP_RETURN, return as-is
+		return scriptPubKey, nil
 	}
 
-	// Find data area
 	pushStart := 1
 	var dataStart int
 	pushByte := scriptPubKey[pushStart]
@@ -268,34 +254,43 @@ func StripIntrospectorPacket(scriptPubKey []byte) ([]byte, error) {
 	}
 
 	if dataStart+3 > len(scriptPubKey) || string(scriptPubKey[dataStart:dataStart+3]) != ArkMagic {
-		return scriptPubKey, nil // No ARK magic
+		return scriptPubKey, nil
 	}
 
-	// Scan for the introspector packet type byte and strip everything from it onward.
 	tlvData := scriptPubKey[dataStart+3:]
-	var filtered []byte
+	r := bytes.NewReader(tlvData)
+	var filtered bytes.Buffer
 
-	for i := 0; i < len(tlvData); i++ {
-		if tlvData[i] != IntrospectorPacketType {
-			continue
-		}
-		pkt, err := DeserializeIntrospectorPacket(tlvData[i+1:])
+	for r.Len() > 0 {
+		typeByte, err := r.ReadByte()
 		if err != nil {
-			continue
+			break
 		}
-		_ = pkt
-		filtered = tlvData[:i]
-		break
-	}
+		length, err := readUvarint(r)
+		if err != nil {
+			break
+		}
+		if uint64(r.Len()) < length {
+			break
+		}
+		payload := make([]byte, length)
+		if _, err := io.ReadFull(r, payload); err != nil {
+			break
+		}
 
-	if filtered == nil {
-		filtered = tlvData // No introspector packet found, keep all
+		if typeByte == IntrospectorPacketType {
+			continue // Skip the introspector record
+		}
+
+		// Re-emit this record
+		filtered.WriteByte(typeByte)
+		writeUvarint(&filtered, uint64(len(payload)))
+		filtered.Write(payload)
 	}
 
 	// Rebuild scriptPubKey
-	newData := append([]byte(ArkMagic), filtered...)
+	newData := append([]byte(ArkMagic), filtered.Bytes()...)
 
-	// Build new scriptPubKey with OP_RETURN + push
 	var result []byte
 	result = append(result, 0x6a) // OP_RETURN
 
@@ -434,21 +429,24 @@ func VerifyPacket(packet *IntrospectorPacket, tx *wire.MsgTx,
 	return nil
 }
 
-// BuildOpReturnScript builds a complete OP_RETURN scriptPubKey containing the
-// ARK magic, the asset marker byte (0x00), an optional assets payload, and the
-// Introspector Packet. The asset marker is always included so that the ark
-// server recognises the output as a valid ARK OP_RETURN.
 func BuildOpReturnScript(assetsPayload []byte, packet *IntrospectorPacket) ([]byte, error) {
-	var tlvStream []byte
-	tlvStream = append(tlvStream, []byte(ArkMagic)...)
+	var tlvStream bytes.Buffer
+	tlvStream.Write([]byte(ArkMagic))
 
-	// Asset marker (0x00) — always present for ark server compatibility.
-	tlvStream = append(tlvStream, 0x00)
+	// Type 0x00: Asset record — always present for ark server compatibility.
+	tlvStream.WriteByte(0x00)
 	if len(assetsPayload) > 0 {
-		tlvStream = append(tlvStream, assetsPayload...)
+		if err := writeUvarint(&tlvStream, uint64(len(assetsPayload))); err != nil {
+			return nil, fmt.Errorf("failed to write asset payload length: %w", err)
+		}
+		tlvStream.Write(assetsPayload)
 	} else {
 		// Empty asset section: varint(0) means 0 asset groups.
-		tlvStream = append(tlvStream, 0x00)
+		emptyPayload := []byte{0x00}
+		if err := writeUvarint(&tlvStream, uint64(len(emptyPayload))); err != nil {
+			return nil, fmt.Errorf("failed to write empty asset payload length: %w", err)
+		}
+		tlvStream.Write(emptyPayload)
 	}
 
 	// Type 0x01: Introspector packet
@@ -457,14 +455,15 @@ func BuildOpReturnScript(assetsPayload []byte, packet *IntrospectorPacket) ([]by
 		if err != nil {
 			return nil, fmt.Errorf("failed to serialize introspector packet: %w", err)
 		}
-		tlvStream = append(tlvStream, record...)
+		tlvStream.Write(record)
 	}
 
 	// Build scriptPubKey: OP_RETURN + push
+	data := tlvStream.Bytes()
 	var spk []byte
 	spk = append(spk, 0x6a) // OP_RETURN
 
-	dataLen := len(tlvStream)
+	dataLen := len(data)
 	if dataLen <= 0x4b {
 		spk = append(spk, byte(dataLen))
 	} else if dataLen <= 0xff {
@@ -473,7 +472,7 @@ func BuildOpReturnScript(assetsPayload []byte, packet *IntrospectorPacket) ([]by
 		spk = append(spk, 0x4d, byte(dataLen), byte(dataLen>>8))
 	}
 
-	spk = append(spk, tlvStream...)
+	spk = append(spk, data...)
 	return spk, nil
 }
 
@@ -567,4 +566,18 @@ func readVarInt(r *bytes.Reader) (uint64, error) {
 		}
 		return binary.LittleEndian.Uint64(buf), nil
 	}
+}
+
+// writeUvarint writes a LEB128 unsigned variable-length integer to the buffer.
+// Used for TLV envelope length prefixes (matching arkd's extension encoding).
+func writeUvarint(buf *bytes.Buffer, v uint64) error {
+	var scratch [binary.MaxVarintLen64]byte
+	n := binary.PutUvarint(scratch[:], v)
+	_, err := buf.Write(scratch[:n])
+	return err
+}
+
+// readUvarint reads a LEB128 unsigned variable-length integer from a byte reader.
+func readUvarint(r io.ByteReader) (uint64, error) {
+	return binary.ReadUvarint(r)
 }

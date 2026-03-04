@@ -2,6 +2,7 @@ package arkade
 
 import (
 	"bytes"
+	"encoding/binary"
 	"testing"
 
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -176,8 +177,22 @@ func TestSerializeTLVRecord(t *testing.T) {
 		t.Errorf("TLV type byte: got 0x%02x, want 0x%02x", record[0], IntrospectorPacketType)
 	}
 
-	// Deserialize the payload (skip the type byte)
-	got, err := DeserializeIntrospectorPacket(record[1:])
+	// Read uvarint length after type byte
+	r := bytes.NewReader(record[1:])
+	length, err := binary.ReadUvarint(r)
+	if err != nil {
+		t.Fatalf("failed to read uvarint length: %v", err)
+	}
+
+	// Remaining bytes should equal the declared length
+	remaining := make([]byte, r.Len())
+	r.Read(remaining)
+	if uint64(len(remaining)) != length {
+		t.Fatalf("length mismatch: uvarint says %d, got %d bytes", length, len(remaining))
+	}
+
+	// Deserialize the payload
+	got, err := DeserializeIntrospectorPacket(remaining)
 	if err != nil {
 		t.Fatalf("DeserializeIntrospectorPacket failed: %v", err)
 	}
@@ -207,10 +222,30 @@ func TestVarInt(t *testing.T) {
 	}
 }
 
+func TestUvarint(t *testing.T) {
+	t.Parallel()
+
+	tests := []uint64{0, 1, 127, 128, 255, 256, 16383, 16384, 0xffffffff}
+
+	for _, val := range tests {
+		var buf bytes.Buffer
+		if err := writeUvarint(&buf, val); err != nil {
+			t.Fatalf("writeUvarint(%d) failed: %v", val, err)
+		}
+		r := bytes.NewReader(buf.Bytes())
+		got, err := readUvarint(r)
+		if err != nil {
+			t.Fatalf("readUvarint for %d failed: %v", val, err)
+		}
+		if got != val {
+			t.Errorf("uvarint roundtrip: got %d, want %d", got, val)
+		}
+	}
+}
+
 func TestStripIntrospectorPacket(t *testing.T) {
 	t.Parallel()
 
-	// Build a simple OP_RETURN with ARK magic + type 0x01 packet
 	p := &IntrospectorPacket{
 		Entries: []IntrospectorEntry{
 			{Vin: 0, Script: []byte{0x51}, Witness: []byte{0x01}},
@@ -218,17 +253,21 @@ func TestStripIntrospectorPacket(t *testing.T) {
 	}
 	payload, _ := p.Serialize()
 
-	// Build TLV: type 0x01 + payload
-	var tlvStream []byte
-	tlvStream = append(tlvStream, []byte(ArkMagic)...)
-	tlvStream = append(tlvStream, IntrospectorPacketType)
-	tlvStream = append(tlvStream, payload...)
+	// Build TLV: "ARK" + type 0x01 + uvarint(len(payload)) + payload
+	var tlvStream bytes.Buffer
+	tlvStream.Write([]byte(ArkMagic))
+	tlvStream.WriteByte(IntrospectorPacketType)
+	var lenBuf [binary.MaxVarintLen64]byte
+	n := binary.PutUvarint(lenBuf[:], uint64(len(payload)))
+	tlvStream.Write(lenBuf[:n])
+	tlvStream.Write(payload)
+	tlvBytes := tlvStream.Bytes()
 
 	// Build scriptPubKey: OP_RETURN + push + data
 	var spk []byte
 	spk = append(spk, 0x6a) // OP_RETURN
-	spk = append(spk, byte(len(tlvStream)))
-	spk = append(spk, tlvStream...)
+	spk = append(spk, byte(len(tlvBytes)))
+	spk = append(spk, tlvBytes...)
 
 	stripped, err := StripIntrospectorPacket(spk)
 	if err != nil {
@@ -236,9 +275,8 @@ func TestStripIntrospectorPacket(t *testing.T) {
 	}
 
 	// The stripped version should only contain OP_RETURN + "ARK" without the packet
-	// Verify it doesn't contain the IntrospectorPacketType
-	if bytes.Contains(stripped[4:], []byte{IntrospectorPacketType}) {
-		t.Error("stripped scriptPubKey still contains Introspector Packet type byte")
+	if len(stripped) >= len(spk) {
+		t.Error("stripped scriptPubKey should be shorter than original")
 	}
 }
 
@@ -276,17 +314,21 @@ func TestParseTLVStream(t *testing.T) {
 		t.Fatalf("Serialize failed: %v", err)
 	}
 
-	// Build: "ARK" + type 0x01 + payload
-	var data []byte
-	data = append(data, []byte(ArkMagic)...)
-	data = append(data, IntrospectorPacketType)
-	data = append(data, payload...)
+	// Build: "ARK" + type 0x01 + uvarint(len(payload)) + payload
+	var data bytes.Buffer
+	data.Write([]byte(ArkMagic))
+	data.WriteByte(IntrospectorPacketType)
+	var lenBuf [binary.MaxVarintLen64]byte
+	n := binary.PutUvarint(lenBuf[:], uint64(len(payload)))
+	data.Write(lenBuf[:n])
+	data.Write(payload)
+	dataBytes := data.Bytes()
 
 	// Build scriptPubKey: OP_RETURN + push + data
 	var spk []byte
 	spk = append(spk, 0x6a) // OP_RETURN
-	spk = append(spk, byte(len(data)))
-	spk = append(spk, data...)
+	spk = append(spk, byte(len(dataBytes)))
+	spk = append(spk, dataBytes...)
 
 	got, otherTLV, err := ParseTLVStream(spk)
 	if err != nil {
@@ -324,6 +366,55 @@ func TestParseTLVStreamErrors(t *testing.T) {
 		{
 			name: "wrong magic",
 			spk:  []byte{0x6a, 0x03, 'F', 'O', 'O'},
+		},
+		{
+			name: "duplicate type",
+			spk: func() []byte {
+				// ARK + type 0x00 + uvarint(1) + 0x00 + type 0x00 + uvarint(1) + 0x00
+				var buf bytes.Buffer
+				buf.Write([]byte(ArkMagic))
+				buf.WriteByte(0x00)
+				buf.WriteByte(0x01) // uvarint(1)
+				buf.WriteByte(0x00) // data
+				buf.WriteByte(0x00) // duplicate type 0x00
+				buf.WriteByte(0x01) // uvarint(1)
+				buf.WriteByte(0x00) // data
+				data := buf.Bytes()
+				var spk []byte
+				spk = append(spk, 0x6a, byte(len(data)))
+				spk = append(spk, data...)
+				return spk
+			}(),
+		},
+		{
+			name: "truncated after type byte",
+			spk: func() []byte {
+				var buf bytes.Buffer
+				buf.Write([]byte(ArkMagic))
+				buf.WriteByte(0x00) // type byte with no length
+				data := buf.Bytes()
+				var spk []byte
+				spk = append(spk, 0x6a, byte(len(data)))
+				spk = append(spk, data...)
+				return spk
+			}(),
+		},
+		{
+			name: "payload exceeds remaining data",
+			spk: func() []byte {
+				var buf bytes.Buffer
+				buf.Write([]byte(ArkMagic))
+				buf.WriteByte(0x00)
+				var lenBuf [binary.MaxVarintLen64]byte
+				n := binary.PutUvarint(lenBuf[:], 255) // claims 255 bytes
+				buf.Write(lenBuf[:n])
+				buf.WriteByte(0x00) // only 1 byte of data
+				data := buf.Bytes()
+				var spk []byte
+				spk = append(spk, 0x6a, byte(len(data)))
+				spk = append(spk, data...)
+				return spk
+			}(),
 		},
 	}
 
@@ -582,21 +673,19 @@ func TestBuildOpReturnScript(t *testing.T) {
 		t.Errorf("expected OP_RETURN (0x6a), got 0x%02x", spk[0])
 	}
 
-	// Verify ARK magic is present
-	if !bytes.Contains(spk, []byte(ArkMagic)) {
-		t.Error("ARK magic not found in scriptPubKey")
+	// Verify roundtrip: parse what was built
+	parsed, parsedAssets, err := ParseTLVStream(spk)
+	if err != nil {
+		t.Fatalf("ParseTLVStream failed: %v", err)
 	}
-
-	// Verify type 0x00 (assets) is present
-	magicIdx := bytes.Index(spk, []byte(ArkMagic))
-	afterMagic := spk[magicIdx+3:]
-	if afterMagic[0] != 0x00 {
-		t.Errorf("expected assets type 0x00, got 0x%02x", afterMagic[0])
+	if parsed == nil {
+		t.Fatal("expected introspector packet, got nil")
 	}
-
-	// Verify type 0x01 (introspector) is present
-	if !bytes.Contains(afterMagic, []byte{IntrospectorPacketType}) {
-		t.Error("Introspector Packet type byte not found")
+	if len(parsed.Entries) != 1 || parsed.Entries[0].Vin != 0 {
+		t.Error("roundtrip produced unexpected packet content")
+	}
+	if !bytes.Equal(parsedAssets, assetsPayload) {
+		t.Errorf("asset payload mismatch: got %x, want %x", parsedAssets, assetsPayload)
 	}
 
 	// Build with only introspector packet (no assets)
@@ -604,20 +693,17 @@ func TestBuildOpReturnScript(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildOpReturnScript (no assets) failed: %v", err)
 	}
-	if !bytes.Contains(spk2, []byte{IntrospectorPacketType}) {
-		t.Error("Introspector Packet type byte not found (no assets case)")
-	}
 
-	// Verify roundtrip: parse what was built
-	parsed, _, err := ParseTLVStream(spk2)
+	// Verify roundtrip
+	parsed2, _, err := ParseTLVStream(spk2)
 	if err != nil {
-		t.Fatalf("ParseTLVStream failed on built script: %v", err)
+		t.Fatalf("ParseTLVStream failed on no-assets script: %v", err)
 	}
-	if parsed == nil {
+	if parsed2 == nil {
 		t.Fatal("expected introspector packet from roundtrip, got nil")
 	}
-	if len(parsed.Entries) != 1 || parsed.Entries[0].Vin != 0 {
-		t.Error("roundtrip produced unexpected packet content")
+	if len(parsed2.Entries) != 1 || parsed2.Entries[0].Vin != 0 {
+		t.Error("roundtrip produced unexpected packet content (no assets case)")
 	}
 }
 
@@ -643,19 +729,18 @@ func TestBuildOpReturnScriptAndStrip(t *testing.T) {
 		t.Fatalf("StripIntrospectorPacket failed: %v", err)
 	}
 
-	// Verify the stripped version doesn't contain the packet
-	magicIdx := bytes.Index(stripped, []byte(ArkMagic))
-	if magicIdx < 0 {
-		t.Fatal("stripped script missing ARK magic")
-	}
-	afterMagic := stripped[magicIdx+3:]
-	if bytes.Contains(afterMagic, []byte{IntrospectorPacketType}) {
-		t.Error("stripped script still contains Introspector Packet")
-	}
-
 	// The stripped version should be shorter
 	if len(stripped) >= len(spk) {
 		t.Errorf("stripped (%d bytes) should be shorter than original (%d bytes)",
 			len(stripped), len(spk))
+	}
+
+	// Parse the stripped result — it should have an asset record but no introspector packet
+	parsedStripped, _, err := ParseTLVStream(stripped)
+	if err != nil {
+		t.Fatalf("ParseTLVStream on stripped script failed: %v", err)
+	}
+	if parsedStripped != nil {
+		t.Error("stripped script should not contain Introspector Packet")
 	}
 }
