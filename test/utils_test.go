@@ -608,13 +608,35 @@ func addIntrospectorPacket(t *testing.T, ptx *psbt.Packet, entries []arkade.Intr
 		if len(out.PkScript) < 5 || out.PkScript[0] != 0x6a {
 			continue
 		}
-		// Extract asset payload bytes from the existing OP_RETURN.
-		_, assetPayload, err := arkade.ParseTLVStream(out.PkScript)
-		if err != nil {
-			continue // not an ARK OP_RETURN, skip
+
+		// Determine the data start (after push opcode).
+		pushByte := out.PkScript[1]
+		var dataStart int
+		switch {
+		case pushByte <= 0x4b:
+			dataStart = 2
+		case pushByte == 0x4c:
+			dataStart = 3
+		case pushByte == 0x4d:
+			dataStart = 4
+		default:
+			continue
 		}
 
-		// Rebuild the OP_RETURN with both asset + introspector data.
+		if dataStart+3 > len(out.PkScript) {
+			continue
+		}
+		if string(out.PkScript[dataStart:dataStart+3]) != arkade.ArkMagic {
+			continue // not an ARK OP_RETURN
+		}
+
+		// Extract asset payload from old-format OP_RETURN.
+		// Old format: ARK(3) | 0x00(1) | raw_asset_data...
+		// The arkd dependency still produces old-format asset packets
+		// without uvarint length prefixes.
+		assetPayload := out.PkScript[dataStart+4:] // skip "ARK" + type byte 0x00
+
+		// Rebuild the OP_RETURN with both asset + introspector data in new format.
 		combined, err := arkade.BuildOpReturnScript(assetPayload, packet)
 		require.NoError(t, err)
 
