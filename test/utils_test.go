@@ -595,6 +595,59 @@ func createVtxoScriptWithArkadeScript(bobPubKey, aliceSigner, introspectorPubKey
 	}
 }
 
+// addIntrospectorPacket builds an IntrospectorPacket with the given entries and
+// embeds it into the transaction's OP_RETURN output. If an existing ARK OP_RETURN
+// (e.g. from an asset packet) is present, the introspector data is merged into it.
+// Otherwise a new OP_RETURN is inserted before the last output (P2A anchor).
+func addIntrospectorPacket(t *testing.T, ptx *psbt.Packet, entries []arkade.IntrospectorEntry) {
+	packet := &arkade.IntrospectorPacket{Entries: entries}
+	packet.SortByVin()
+
+	// Look for an existing OP_RETURN with ARK magic (e.g. asset packet).
+	for i, out := range ptx.UnsignedTx.TxOut {
+		if len(out.PkScript) < 5 || out.PkScript[0] != 0x6a {
+			continue
+		}
+		// Extract asset payload bytes from the existing OP_RETURN.
+		_, assetPayload, err := arkade.ParseTLVStream(out.PkScript)
+		if err != nil {
+			continue // not an ARK OP_RETURN, skip
+		}
+
+		// Rebuild the OP_RETURN with both asset + introspector data.
+		combined, err := arkade.BuildOpReturnScript(assetPayload, packet)
+		require.NoError(t, err)
+
+		ptx.UnsignedTx.TxOut[i].PkScript = combined
+		return
+	}
+
+	// No existing ARK OP_RETURN — insert a new one.
+	// For offchain ark txs the last output is a P2A anchor that must remain
+	// at the end (the server rebuilds with the anchor appended). For intent
+	// proofs there is no anchor, so we just append.
+	opReturnScript, err := arkade.BuildOpReturnScript(nil, packet)
+	require.NoError(t, err)
+
+	opReturnOut := &wire.TxOut{
+		Value:    0,
+		PkScript: opReturnScript,
+	}
+
+	lastIdx := len(ptx.UnsignedTx.TxOut) - 1
+	lastOut := ptx.UnsignedTx.TxOut[lastIdx]
+	if bytes.Equal(lastOut.PkScript, txutils.ANCHOR_PKSCRIPT) {
+		// Insert before the P2A anchor so the server rebuild matches.
+		ptx.UnsignedTx.TxOut[lastIdx] = opReturnOut
+		ptx.UnsignedTx.AddTxOut(lastOut)
+	} else {
+		// No anchor (e.g. intent proofs) — append at the end so payment
+		// output indices are not shifted.
+		ptx.UnsignedTx.AddTxOut(opReturnOut)
+	}
+	ptx.Outputs = append(ptx.Outputs, psbt.POutput{})
+}
+
 // createVtxoScriptWithArkadeAndCSV creates a vtxo script with arkade closure + CSV closure
 func createVtxoScriptWithArkadeAndCSV(bobPubKey, aliceSigner, introspectorPubKey *btcec.PublicKey, arkadeScriptHash []byte) script.TapscriptsVtxoScript {
 	return script.TapscriptsVtxoScript{

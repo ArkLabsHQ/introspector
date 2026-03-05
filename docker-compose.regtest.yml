@@ -76,7 +76,9 @@ services:
       - type: tmpfs
         target: /app/data
   arkd:
-    image: ghcr.io/arkade-os/arkd:v0.9.0-rc.1
+    build:
+      context: https://github.com/arkade-os/arkd.git#v0.9.0-rc.4
+      dockerfile: Dockerfile
     container_name: arkd
     restart: unless-stopped
     depends_on:

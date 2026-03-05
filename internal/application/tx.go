@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/ArkLabsHQ/introspector/pkg/arkade"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	log "github.com/sirupsen/logrus"
 )
@@ -29,12 +30,23 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		return nil, fmt.Errorf("failed to create prevout fetcher: %w", err)
 	}
 
+	// Parse IntrospectorPacket from the transaction's OP_RETURN output
+	packet, err := arkade.FindIntrospectorPacket(arkPtx.UnsignedTx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse introspector packet: %w", err)
+	}
+
+	if packet == nil || len(packet.Entries) == 0 {
+		return nil, fmt.Errorf("no introspector packet found in transaction")
+	}
+
 	signerPublicKey := s.signer.secretKey.PubKey()
 
-	for inputIndex := range arkPtx.Inputs {
-		script, err := readArkadeScript(arkPtx, inputIndex, signerPublicKey)
+	for _, entry := range packet.Entries {
+		inputIndex := int(entry.Vin)
+		script, err := readArkadeScript(arkPtx, inputIndex, signerPublicKey, entry)
 		if err != nil {
-			// skip if the input is not an arkade script
+			// skip if the input is not a valid arkade script
 			continue
 		}
 

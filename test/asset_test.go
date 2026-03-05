@@ -11,6 +11,7 @@ import (
 	introspectorclient "github.com/ArkLabsHQ/introspector/pkg/client"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
+	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
@@ -149,9 +150,10 @@ func TestOffchainTxWithAsset(t *testing.T) {
 
 	addAssetPacketToTx(t, validTx, assetPacket)
 
-	// Add the arkade script field on the input (index 0)
-	err = txutils.SetArkPsbtField(validTx, 0, arkade.ArkadeScriptField, arkadeScript)
-	require.NoError(t, err)
+	// Add the introspector packet with the arkade script for input 0
+	addIntrospectorPacket(t, validTx, []arkade.IntrospectorEntry{
+		{Vin: 0, Script: arkadeScript},
+	})
 
 	encodedValidTx, err := validTx.B64Encode()
 	require.NoError(t, err)
@@ -352,9 +354,10 @@ func TestSettlementWithAsset(t *testing.T) {
 	issuancePacket := createIssuanceAssetPacket(t, 0, assetAmount)
 	addAssetPacketToTx(t, mintTx, issuancePacket)
 
-	// Set the mint arkade script on input 0
-	err = txutils.SetArkPsbtField(mintTx, 0, arkade.ArkadeScriptField, mintArkadeScript)
-	require.NoError(t, err)
+	// Add the introspector packet with the mint arkade script for input 0
+	addIntrospectorPacket(t, mintTx, []arkade.IntrospectorEntry{
+		{Vin: 0, Script: mintArkadeScript},
+	})
 
 	encodedMintTx, err := mintTx.B64Encode()
 	require.NoError(t, err)
@@ -481,7 +484,8 @@ func TestSettlementWithAsset(t *testing.T) {
 	// Add TRANSFER asset packet (not issuance!) referencing the minted asset
 	mintTxHash := mintResultPtx.UnsignedTx.TxHash()
 	transferPacket := createTransferAssetPacket(t, mintTxHash, 0, 1, 0, uint64(assetAmount))
-	transferPacketOut, err := transferPacket.TxOut()
+	transferExt := extension.Extension{transferPacket}
+	transferPacketOut, err := transferExt.TxOut()
 	require.NoError(t, err)
 	intentProof.UnsignedTx.AddTxOut(transferPacketOut)
 	intentProof.Outputs = append(intentProof.Outputs, psbt.POutput{})
@@ -507,8 +511,9 @@ func TestSettlementWithAsset(t *testing.T) {
 	intentProof.Inputs[1].Unknowns = append(intentProof.Inputs[1].Unknowns, taptreeField)
 
 	intentPtx := &intentProof.Packet
-	err = txutils.SetArkPsbtField(intentPtx, 1, arkade.ArkadeScriptField, settleArkadeScript)
-	require.NoError(t, err)
+	addIntrospectorPacket(t, intentPtx, []arkade.IntrospectorEntry{
+		{Vin: 1, Script: settleArkadeScript},
+	})
 
 	encodedIntentProof, err := intentPtx.B64Encode()
 	require.NoError(t, err)
@@ -568,7 +573,8 @@ func TestSettlementWithAsset(t *testing.T) {
 
 // addAssetPacketToTx adds the asset packet to the transaction as an OP_RETURN output (before the last output, which is the P2A)
 func addAssetPacketToTx(t *testing.T, tx *psbt.Packet, assetPacket asset.Packet) {
-	assetPacketOut, err := assetPacket.TxOut()
+	ext := extension.Extension{assetPacket}
+	assetPacketOut, err := ext.TxOut()
 	require.NoError(t, err)
 	p2aOutputIndex := len(tx.UnsignedTx.TxOut) - 1
 	p2aOutput := tx.UnsignedTx.TxOut[p2aOutputIndex]

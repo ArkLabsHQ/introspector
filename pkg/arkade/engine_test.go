@@ -49,6 +49,23 @@ func TestNewOpcodes(t *testing.T) {
 		},
 	})
 
+	// Pre-compute the expected tx hash for OP_TXID tests
+	txForHash := &wire.MsgTx{
+		Version: 1,
+		TxIn: []*wire.TxIn{
+			{
+				PreviousOutPoint: wire.OutPoint{
+					Hash:  chainhash.Hash{},
+					Index: 0,
+				},
+			},
+		},
+	}
+	expectedTxHash := txForHash.TxHash()
+
+	// A wrong hash to test negative case
+	wrongHash := chainhash.Hash{0x01}
+
 	tests := []fixture{
 		{
 			name:   "OP_MOD",
@@ -641,13 +658,13 @@ func TestNewOpcodes(t *testing.T) {
 			script: txscript.NewScriptBuilder().
 				AddData([]byte{0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 6 in LE64
 				AddData([]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 2 in LE64
-				AddOp(OP_DIV64).       // stack: [remainder, quotient, flag]
-				AddOp(OP_1).           // success flag
-				AddOp(OP_EQUALVERIFY). // stack: [remainder, quotient]
+				AddOp(OP_DIV64).                                                 // stack: [remainder, quotient, flag]
+				AddOp(OP_1).                                                     // success flag
+				AddOp(OP_EQUALVERIFY).                                           // stack: [remainder, quotient]
 				AddData([]byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 3 in LE64 (quotient)
-				AddOp(OP_EQUALVERIFY). // stack: [remainder]
-				AddOp(OP_DROP).        // drop remainder, stack: []
-				AddOp(OP_TRUE),        // leave truthy value for clean stack
+				AddOp(OP_EQUALVERIFY).                                           // stack: [remainder]
+				AddOp(OP_DROP).                                                  // drop remainder, stack: []
+				AddOp(OP_TRUE),                                                  // leave truthy value for clean stack
 			cases: []testCase{
 				{
 					valid: true,
@@ -701,11 +718,11 @@ func TestNewOpcodes(t *testing.T) {
 			name: "OP_NEG64_OVERFLOW",
 			script: txscript.NewScriptBuilder().
 				AddData([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80}). // Min negative int64
-				AddOp(OP_NEG64).       // stack: [a, 0]
-				AddData([]byte{0x00}). // overflow flag
-				AddOp(OP_EQUALVERIFY). // stack: [a]
-				AddOp(OP_DROP).        // drop restored operand
-				AddOp(OP_TRUE),        // leave truthy value for clean stack
+				AddOp(OP_NEG64).                                                 // stack: [a, 0]
+				AddData([]byte{0x00}).                                           // overflow flag
+				AddOp(OP_EQUALVERIFY).                                           // stack: [a]
+				AddOp(OP_DROP).                                                  // drop restored operand
+				AddOp(OP_TRUE),                                                  // leave truthy value for clean stack
 			cases: []testCase{
 				{
 					valid: true,
@@ -1331,6 +1348,86 @@ func TestNewOpcodes(t *testing.T) {
 			},
 		},
 		{
+			name: "OP_TXID",
+			script: txscript.NewScriptBuilder().
+				AddOp(OP_TXID).
+				AddData(expectedTxHash[:]).
+				AddOp(OP_EQUAL),
+			cases: []testCase{
+				{
+					valid: true,
+					tx: &wire.MsgTx{
+						Version: 1,
+						TxIn: []*wire.TxIn{
+							{
+								PreviousOutPoint: wire.OutPoint{
+									Hash:  chainhash.Hash{},
+									Index: 0,
+								},
+							},
+						},
+					},
+					txIdx:       0,
+					inputAmount: 0,
+					stack:       nil,
+				},
+			},
+		},
+		{
+			name: "OP_TXID_LENGTH",
+			script: txscript.NewScriptBuilder().
+				AddOp(OP_TXID).
+				AddOp(OP_SIZE).
+				AddOp(OP_NIP).
+				AddData([]byte{0x20}). // 32 bytes
+				AddOp(OP_EQUAL),
+			cases: []testCase{
+				{
+					valid: true,
+					tx: &wire.MsgTx{
+						Version: 1,
+						TxIn: []*wire.TxIn{
+							{
+								PreviousOutPoint: wire.OutPoint{
+									Hash:  chainhash.Hash{},
+									Index: 0,
+								},
+							},
+						},
+					},
+					txIdx:       0,
+					inputAmount: 0,
+					stack:       nil,
+				},
+			},
+		},
+		{
+			name: "OP_TXID_WRONG_HASH",
+			script: txscript.NewScriptBuilder().
+				AddOp(OP_TXID).
+				AddData(wrongHash[:]).
+				AddOp(OP_EQUAL),
+			cases: []testCase{
+				{
+					valid: false,
+					tx: &wire.MsgTx{
+						Version: 1,
+						TxIn: []*wire.TxIn{
+							{
+								PreviousOutPoint: wire.OutPoint{
+									Hash:  chainhash.Hash{},
+									Index: 0,
+								},
+							},
+						},
+					},
+					txIdx:       0,
+					inputAmount: 0,
+					stack:       nil,
+				},
+			},
+		},
+		{
 			name: "SHA256_STREAMING",
 			script: txscript.NewScriptBuilder().
 				AddData([]byte("Hello")).   // stack = [Hello]
@@ -1829,4 +1926,3 @@ func TestMerkleBranchVerify(t *testing.T) {
 		})
 	}
 }
-

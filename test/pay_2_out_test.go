@@ -15,7 +15,6 @@ import (
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
-	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
 	inmemorystoreconfig "github.com/arkade-os/go-sdk/store/inmemory"
 	"github.com/arkade-os/go-sdk/types"
@@ -256,8 +255,9 @@ func TestPayToTwoOutputs(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	err = txutils.SetArkPsbtField(invalidAddrTx, 0, arkade.ArkadeScriptField, arkadeScript)
-	require.NoError(t, err)
+	addIntrospectorPacket(t, invalidAddrTx, []arkade.IntrospectorEntry{
+		{Vin: 0, Script: arkadeScript},
+	})
 
 	encodedInvalidAddrTx, err := invalidAddrTx.B64Encode()
 	require.NoError(t, err)
@@ -289,8 +289,9 @@ func TestPayToTwoOutputs(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	err = txutils.SetArkPsbtField(invalidAmtTx, 0, arkade.ArkadeScriptField, arkadeScript)
-	require.NoError(t, err)
+	addIntrospectorPacket(t, invalidAmtTx, []arkade.IntrospectorEntry{
+		{Vin: 0, Script: arkadeScript},
+	})
 
 	encodedInvalidAmtTx, err := invalidAmtTx.B64Encode()
 	require.NoError(t, err)
@@ -322,8 +323,9 @@ func TestPayToTwoOutputs(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	err = txutils.SetArkPsbtField(validTx, 0, arkade.ArkadeScriptField, arkadeScript)
-	require.NoError(t, err)
+	addIntrospectorPacket(t, validTx, []arkade.IntrospectorEntry{
+		{Vin: 0, Script: arkadeScript},
+	})
 
 	encodedValidTx, err := validTx.B64Encode()
 	require.NoError(t, err)
