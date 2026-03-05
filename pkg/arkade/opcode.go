@@ -222,7 +222,7 @@ const (
 	OP_CHECKLOCKTIMEVERIFY = 0xb1 // 177 - AKA OP_NOP2
 	OP_NOP3                = 0xb2 // 178
 	OP_CHECKSEQUENCEVERIFY = 0xb2 // 178 - AKA OP_NOP3
-	OP_NOP4                = 0xb3 // 179
+	OP_MERKLEBRANCHVERIFY  = 0xb3 // 179
 	OP_NOP5                = 0xb4 // 180
 	OP_NOP6                = 0xb5 // 181
 	OP_NOP7                = 0xb6 // 182
@@ -522,7 +522,7 @@ var opcodeArray = [256]opcode{
 
 	// Reserved opcodes.
 	OP_NOP1:  {OP_NOP1, "OP_NOP1", 1, opcodeNop},
-	OP_NOP4:  {OP_NOP4, "OP_NOP4", 1, opcodeNop},
+	OP_MERKLEBRANCHVERIFY:  {OP_MERKLEBRANCHVERIFY, "OP_MERKLEBRANCHVERIFY", 1, opcodeMerkleBranchVerify},
 	OP_NOP5:  {OP_NOP5, "OP_NOP5", 1, opcodeNop},
 	OP_NOP6:  {OP_NOP6, "OP_NOP6", 1, opcodeNop},
 	OP_NOP7:  {OP_NOP7, "OP_NOP7", 1, opcodeNop},
@@ -747,7 +747,7 @@ func opcodeN(op *opcode, data []byte, vm *Engine) error {
 // the flag to discourage use of NOPs is set for select opcodes.
 func opcodeNop(op *opcode, data []byte, vm *Engine) error {
 	switch op.value {
-	case OP_NOP1, OP_NOP4, OP_NOP5,
+	case OP_NOP1, OP_NOP5,
 		OP_NOP6, OP_NOP7, OP_NOP8, OP_NOP9, OP_NOP10:
 
 		str := fmt.Sprintf("%v reserved for soft-fork "+
@@ -3116,6 +3116,85 @@ func opcodeSha256Finalize(op *opcode, _ []byte, vm *Engine) error {
 	}
 
 	vm.dstack.PushByteArray(h.Sum(nil))
+	return nil
+}
+
+// opcodeMerkleBranchVerify computes a Merkle root from a leaf and proof
+// path using BIP-341 tagged hashes with lexicographic sibling ordering.
+//
+// Stack inputs (top to bottom): leaf_data, proof, branch_tag, leaf_tag
+// Stack output: computed_root (32 bytes)
+//
+// If leaf_tag is empty, leaf_data must be exactly 32 bytes and is used
+// as a raw hash (enables proof chaining). If leaf_tag is non-empty,
+// the leaf hash is computed as tagged_hash(leaf_tag, leaf_data).
+//
+// At each proof step, siblings are sorted lexicographically before
+// hashing: tagged_hash(branch_tag, min || max).
+func opcodeMerkleBranchVerify(op *opcode, data []byte, vm *Engine) error {
+	// Pop leaf_data
+	leafData, err := vm.dstack.PopByteArray()
+	if err != nil {
+		return err
+	}
+
+	// Pop proof (must be multiple of 32 bytes)
+	proof, err := vm.dstack.PopByteArray()
+	if err != nil {
+		return err
+	}
+	if len(proof)%32 != 0 {
+		return scriptError(txscript.ErrInvalidStackOperation,
+			"proof length must be a multiple of 32")
+	}
+
+	// Pop branch_tag (must not be empty)
+	branchTag, err := vm.dstack.PopByteArray()
+	if err != nil {
+		return err
+	}
+	if len(branchTag) == 0 {
+		return scriptError(txscript.ErrInvalidStackOperation,
+			"branch_tag must not be empty")
+	}
+
+	// Pop leaf_tag (empty = raw hash mode)
+	leafTag, err := vm.dstack.PopByteArray()
+	if err != nil {
+		return err
+	}
+
+	// Compute leaf hash
+	var current []byte
+	if len(leafTag) == 0 {
+		// Raw hash mode: leaf_data must be exactly 32 bytes
+		if len(leafData) != 32 {
+			return scriptError(txscript.ErrInvalidStackOperation,
+				"raw hash mode requires leaf_data to be 32 bytes")
+		}
+		current = leafData
+	} else {
+		h := chainhash.TaggedHash(leafTag, leafData)
+		current = h[:]
+	}
+
+	// Walk the proof path with lexicographic ordering
+	for i := 0; i < len(proof); i += 32 {
+		sibling := proof[i : i+32]
+		combined := make([]byte, 64)
+		if bytes.Compare(current, sibling) < 0 {
+			copy(combined[:32], current)
+			copy(combined[32:], sibling)
+		} else {
+			copy(combined[:32], sibling)
+			copy(combined[32:], current)
+		}
+		h := chainhash.TaggedHash(branchTag, combined)
+		current = h[:]
+	}
+
+	// Push computed root
+	vm.dstack.PushByteArray(current)
 	return nil
 }
 

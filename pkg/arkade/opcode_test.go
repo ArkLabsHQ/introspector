@@ -57,6 +57,7 @@ func TestOpcodeDisasm(t *testing.T) {
 		0xfa: "OP_SMALLINTEGER", 0xfb: "OP_PUBKEYS",
 		0xfd: "OP_PUBKEYHASH", 0xfe: "OP_PUBKEY",
 		0xff: "OP_INVALIDOPCODE", 0xba: "OP_CHECKSIGADD",
+		0xb3: "OP_MERKLEBRANCHVERIFY",
 		// Add new defined opcodes
 		0xc4: "OP_SHA256INITIALIZE", 0xc5: "OP_SHA256UPDATE",
 		0xc6: "OP_SHA256FINALIZE", 0xc7: "OP_INSPECTINPUTOUTPOINT",
@@ -112,6 +113,9 @@ func TestOpcodeDisasm(t *testing.T) {
 			case 0xb2:
 				// OP_NOP3 is an alias of OP_CHECKSEQUENCEVERIFY
 				expectedStr = "OP_CHECKSEQUENCEVERIFY"
+			case 0xb3:
+				// OP_NOP4 is now OP_MERKLEBRANCHVERIFY
+				expectedStr = "OP_MERKLEBRANCHVERIFY"
 			default:
 				val := byte(opcodeVal - (0xb0 - 1))
 				expectedStr = "OP_NOP" + strconv.Itoa(int(val))
@@ -188,6 +192,9 @@ func TestOpcodeDisasm(t *testing.T) {
 			case 0xb2:
 				// OP_NOP3 is an alias of OP_CHECKSEQUENCEVERIFY
 				expectedStr = "OP_CHECKSEQUENCEVERIFY"
+			case 0xb3:
+				// OP_NOP4 is now OP_MERKLEBRANCHVERIFY
+				expectedStr = "OP_MERKLEBRANCHVERIFY"
 			default:
 				val := byte(opcodeVal - (0xb0 - 1))
 				expectedStr = "OP_NOP" + strconv.Itoa(int(val))
