@@ -1,0 +1,16 @@
+[Unit]
+Description=Start gvproxy docker container on boot
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker run --restart=unless-stopped -d --name gvproxy \
+  --privileged --security-opt seccomp=unconfined \
+  -e GVPROXY_FORWARD_PORTS="443 7073 9090" \
+  -p 443:443 -p 7073:7073 -p 9090:9090 \
+  gvproxy:latest
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

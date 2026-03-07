@@ -1,0 +1,20 @@
+#  Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+#  SPDX-License-Identifier: MIT-0
+[Unit]
+Description=Nitro Enclaves vsock IMDS Proxy
+After=network-online.target
+DefaultDependencies=no
+
+[Service]
+Type=simple
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vsock-proxy-imds
+ExecStart=/bin/bash -ce "exec /usr/bin/vsock-proxy 8002 169.254.169.254 80 \
+                --config /etc/nitro_enclaves/vsock-proxy.yaml \
+                -w 5"
+Restart=always
+TimeoutSec=0
+
+[Install]
+WantedBy=multi-user.target
