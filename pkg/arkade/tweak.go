@@ -7,7 +7,8 @@ import (
 )
 
 var (
-	TagArkScriptHash = []byte("ArkScriptHash")
+	TagArkScriptHash  = []byte("ArkScriptHash")
+	TagArkWitnessHash = []byte("ArkWitnessHash")
 )
 
 // ArkadeScriptHash computes the hash of an ark script.

@@ -110,6 +110,7 @@ type Engine struct {
 	hashCache      *txscript.TxSigHashes
 	prevOutFetcher txscript.PrevOutputFetcher
 	assetPacket    asset.Packet
+	introspectorPacket *IntrospectorPacket
 
 	// The following fields handle keeping track of the current execution state
 	// of the engine.
@@ -182,6 +183,12 @@ type StepInfo struct {
 // SetAssetPacket sets the asset packet on the engine for script introspection.
 func (vm *Engine) SetAssetPacket(packet asset.Packet) {
 	vm.assetPacket = packet
+}
+
+// SetIntrospectorPacket sets the introspector packet on the engine for
+// cross-input Arkade script/witness introspection.
+func (vm *Engine) SetIntrospectorPacket(packet *IntrospectorPacket) {
+	vm.introspectorPacket = packet
 }
 
 // isBranchExecuting returns whether or not the current conditional branch is
