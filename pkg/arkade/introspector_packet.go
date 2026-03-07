@@ -347,8 +347,8 @@ func (p *IntrospectorPacket) ValidateScriptHashes(signerPubKey *btcec.PublicKey)
 
 // VerifyEntry verifies a single IntrospectorEntry by executing the Arkade script
 // with the committed witness against the transaction.
-func VerifyEntry(entry IntrospectorEntry, tx *wire.MsgTx,
-	prevOutFetcher txscript.PrevOutputFetcher,
+func VerifyEntry(entry IntrospectorEntry, packet *IntrospectorPacket,
+	tx *wire.MsgTx, prevOutFetcher txscript.PrevOutputFetcher,
 	signerPubKey *btcec.PublicKey) error {
 
 	if int(entry.Vin) >= len(tx.TxIn) {
@@ -379,6 +379,10 @@ func VerifyEntry(entry IntrospectorEntry, tx *wire.MsgTx,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create engine for vin %d: %w", entry.Vin, err)
+	}
+
+	if packet != nil {
+		engine.SetIntrospectorPacket(packet)
 	}
 
 	// Set witness as initial stack
@@ -421,7 +425,7 @@ func VerifyPacket(packet *IntrospectorPacket, tx *wire.MsgTx,
 
 	// Rule 4: Witness validity — execute each script
 	for _, entry := range packet.Entries {
-		if err := VerifyEntry(entry, tx, prevOutFetcher, signerPubKey); err != nil {
+		if err := VerifyEntry(entry, packet, tx, prevOutFetcher, signerPubKey); err != nil {
 			return fmt.Errorf("verification failed: %w", err)
 		}
 	}
