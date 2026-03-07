@@ -1926,3 +1926,232 @@ func TestMerkleBranchVerify(t *testing.T) {
 		})
 	}
 }
+
+func TestIntrospectorPacketOpcodes(t *testing.T) {
+	t.Parallel()
+
+	prevoutFetcher := txscript.NewMultiPrevOutFetcher(map[wire.OutPoint]*wire.TxOut{
+		{Hash: chainhash.Hash{}, Index: 0}: {Value: 1000, PkScript: []byte{
+			OP_1, OP_DATA_32,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		}},
+		{Hash: chainhash.Hash{}, Index: 1}: {Value: 2000, PkScript: []byte{
+			OP_1, OP_DATA_32,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		}},
+	})
+
+	twoInputTx := &wire.MsgTx{
+		Version: 1,
+		TxIn: []*wire.TxIn{
+			{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{}, Index: 0}},
+			{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{}, Index: 1}},
+		},
+	}
+
+	scriptA := []byte{OP_TRUE}
+	scriptB := []byte{OP_1, OP_1, OP_ADD}
+	witnessA := []byte{0xaa, 0xbb}
+
+	packet := &IntrospectorPacket{
+		Entries: []IntrospectorEntry{
+			{Vin: 0, Script: scriptA, Witness: witnessA},
+			{Vin: 1, Script: scriptB, Witness: nil},
+		},
+	}
+
+	expectedScriptHashA := ArkadeScriptHash(scriptA)
+	expectedScriptHashB := ArkadeScriptHash(scriptB)
+	expectedWitnessHashA := chainhash.TaggedHash(TagArkWitnessHash, witnessA)
+	zeroHash := make([]byte, 32)
+
+	runEngine := func(t *testing.T, script []byte, tx *wire.MsgTx, pkt *IntrospectorPacket, stack [][]byte) error {
+		t.Helper()
+		engine, err := NewEngine(
+			script, tx, 0,
+			txscript.NewSigCache(100),
+			txscript.NewTxSigHashes(tx, prevoutFetcher),
+			1000, prevoutFetcher,
+		)
+		if err != nil {
+			t.Fatalf("NewEngine: %v", err)
+		}
+		if pkt != nil {
+			engine.SetIntrospectorPacket(pkt)
+		}
+		if len(stack) > 0 {
+			engine.SetStack(stack)
+		}
+		return engine.Execute()
+	}
+
+	type tc struct {
+		name    string
+		valid   bool
+		script  []byte
+		tx      *wire.MsgTx
+		pkt     *IntrospectorPacket
+		stack   [][]byte
+		errText string
+	}
+
+	scriptHashCheck := func(t *testing.T, index byte, expected []byte) []byte {
+		t.Helper()
+		s, err := txscript.NewScriptBuilder().
+			AddOp(index).
+			AddOp(OP_INSPECTINPUTARKADESCRIPTHASH).
+			AddData(expected).
+			AddOp(OP_EQUAL).
+			Script()
+		if err != nil {
+			t.Fatalf("script build: %v", err)
+		}
+		return s
+	}
+
+	witnessHashCheck := func(t *testing.T, index byte, expected []byte) []byte {
+		t.Helper()
+		s, err := txscript.NewScriptBuilder().
+			AddOp(index).
+			AddOp(OP_INSPECTINPUTARKADEWITNESSHASH).
+			AddData(expected).
+			AddOp(OP_EQUAL).
+			Script()
+		if err != nil {
+			t.Fatalf("script build: %v", err)
+		}
+		return s
+	}
+
+	buildScript := func(t *testing.T, ops ...byte) []byte {
+		t.Helper()
+		b := txscript.NewScriptBuilder()
+		for _, op := range ops {
+			b.AddOp(op)
+		}
+		s, err := b.Script()
+		if err != nil {
+			t.Fatalf("script build: %v", err)
+		}
+		return s
+	}
+
+	tests := []tc{
+		{
+			name:   "script_hash_own_input",
+			valid:  true,
+			script: scriptHashCheck(t, OP_0, expectedScriptHashA),
+			tx:     twoInputTx,
+			pkt:    packet,
+		},
+		{
+			name:   "script_hash_sibling_input",
+			valid:  true,
+			script: scriptHashCheck(t, OP_1, expectedScriptHashB),
+			tx:     twoInputTx,
+			pkt:    packet,
+		},
+		{
+			name: "script_hash_equality_across_inputs",
+			valid: true,
+			script: func() []byte {
+				s, _ := txscript.NewScriptBuilder().
+					AddOp(OP_0).AddOp(OP_INSPECTINPUTARKADESCRIPTHASH).
+					AddOp(OP_0).AddOp(OP_INSPECTINPUTARKADESCRIPTHASH).
+					AddOp(OP_EQUAL).
+					Script()
+				return s
+			}(),
+			tx:  twoInputTx,
+			pkt: packet,
+		},
+		{
+			name:    "script_hash_no_packet",
+			valid:   false,
+			script:  buildScript(t, OP_0, OP_INSPECTINPUTARKADESCRIPTHASH),
+			tx:      twoInputTx,
+			pkt:     nil,
+			errText: "no introspector packet",
+		},
+		{
+			name:    "script_hash_out_of_range",
+			valid:   false,
+			script:  buildScript(t, OP_2, OP_INSPECTINPUTARKADESCRIPTHASH),
+			tx:      twoInputTx,
+			pkt:     packet,
+			errText: "input index out of range",
+		},
+		{
+			name:  "script_hash_missing_entry",
+			valid: false,
+			script: func() []byte {
+				s, _ := txscript.NewScriptBuilder().
+					AddOp(OP_0).
+					AddOp(OP_INSPECTINPUTARKADESCRIPTHASH).
+					Script()
+				return s
+			}(),
+			tx: twoInputTx,
+			pkt: &IntrospectorPacket{
+				Entries: []IntrospectorEntry{
+					{Vin: 1, Script: scriptB},
+				},
+			},
+			errText: "no introspector entry for vin 0",
+		},
+		{
+			name:   "witness_hash_non_empty",
+			valid:  true,
+			script: witnessHashCheck(t, OP_0, expectedWitnessHashA[:]),
+			tx:     twoInputTx,
+			pkt:    packet,
+		},
+		{
+			name:   "witness_hash_empty_returns_zeros",
+			valid:  true,
+			script: witnessHashCheck(t, OP_1, zeroHash),
+			tx:     twoInputTx,
+			pkt:    packet,
+		},
+		{
+			name:    "witness_hash_no_packet",
+			valid:   false,
+			script:  buildScript(t, OP_0, OP_INSPECTINPUTARKADEWITNESSHASH),
+			tx:      twoInputTx,
+			pkt:     nil,
+			errText: "no introspector packet",
+		},
+		{
+			name:    "witness_hash_out_of_range",
+			valid:   false,
+			script:  buildScript(t, OP_2, OP_INSPECTINPUTARKADEWITNESSHASH),
+			tx:      twoInputTx,
+			pkt:     packet,
+			errText: "input index out of range",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := runEngine(t, tt.script, tt.tx, tt.pkt, tt.stack)
+			if tt.valid && err != nil {
+				t.Errorf("expected success, got: %v", err)
+			}
+			if !tt.valid {
+				if err == nil {
+					t.Error("expected failure, got success")
+				} else if tt.errText != "" && !strings.Contains(err.Error(), tt.errText) {
+					t.Errorf("expected error containing %q, got: %v", tt.errText, err)
+				}
+			}
+		})
+	}
+}
