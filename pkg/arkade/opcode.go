@@ -3207,9 +3207,56 @@ func opcodeTxId(op *opcode, data []byte, vm *Engine) error {
 }
 
 func opcodeInspectInputArkadeScriptHash(op *opcode, data []byte, vm *Engine) error {
-	return scriptError(txscript.ErrInvalidIndex, "not yet implemented")
+	index, err := vm.dstack.PopInt()
+	if err != nil {
+		return err
+	}
+
+	if index < 0 || int(index) >= len(vm.tx.TxIn) {
+		return scriptError(txscript.ErrInvalidIndex, "input index out of range")
+	}
+
+	if vm.introspectorPacket == nil {
+		return scriptError(txscript.ErrInvalidStackOperation, "no introspector packet")
+	}
+
+	entry, found := vm.introspectorPacket.FindEntryByVin(uint16(index))
+	if !found {
+		return scriptError(txscript.ErrInvalidStackOperation,
+			fmt.Sprintf("no introspector entry for vin %d", index))
+	}
+
+	scriptHash := ArkadeScriptHash(entry.Script)
+	vm.dstack.PushByteArray(scriptHash)
+	return nil
 }
 
 func opcodeInspectInputArkadeWitnessHash(op *opcode, data []byte, vm *Engine) error {
-	return scriptError(txscript.ErrInvalidIndex, "not yet implemented")
+	index, err := vm.dstack.PopInt()
+	if err != nil {
+		return err
+	}
+
+	if index < 0 || int(index) >= len(vm.tx.TxIn) {
+		return scriptError(txscript.ErrInvalidIndex, "input index out of range")
+	}
+
+	if vm.introspectorPacket == nil {
+		return scriptError(txscript.ErrInvalidStackOperation, "no introspector packet")
+	}
+
+	entry, found := vm.introspectorPacket.FindEntryByVin(uint16(index))
+	if !found {
+		return scriptError(txscript.ErrInvalidStackOperation,
+			fmt.Sprintf("no introspector entry for vin %d", index))
+	}
+
+	if len(entry.Witness) == 0 {
+		vm.dstack.PushByteArray(make([]byte, 32))
+		return nil
+	}
+
+	hash := chainhash.TaggedHash(TagArkWitnessHash, entry.Witness)
+	vm.dstack.PushByteArray(hash[:])
+	return nil
 }
