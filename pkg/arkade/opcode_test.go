@@ -74,6 +74,8 @@ func TestOpcodeDisasm(t *testing.T) {
 		0xe1: "OP_LE64TOSCRIPTNUM", 0xe2: "OP_LE32TOLE64",
 		0xe3: "OP_ECMULSCALARVERIFY", 0xe4: "OP_TWEAKVERIFY",
 		0xf3: "OP_TXID",
+		0xc8: "OP_INSPECTINPUTARKADESCRIPTHASH",
+		0xce: "OP_INSPECTINPUTARKADEWITNESSHASH",
 	}
 	for opcodeVal, expectedStr := range expectedStrings {
 		var data []byte
@@ -113,7 +115,7 @@ func TestOpcodeDisasm(t *testing.T) {
 			case 0xb2:
 				// OP_NOP3 is an alias of OP_CHECKSEQUENCEVERIFY
 				expectedStr = "OP_CHECKSEQUENCEVERIFY"
-			case 0xb3:
+			case 0xb3, 0xc8, 0xce:
 				// OP_NOP4 is now OP_MERKLEBRANCHVERIFY
 				expectedStr = "OP_MERKLEBRANCHVERIFY"
 			default:
@@ -127,9 +129,7 @@ func TestOpcodeDisasm(t *testing.T) {
 
 		// OP_UNKNOWN#.
 		case (opcodeVal >= 0xbb && opcodeVal <= 0xc3) || // Unknown range before SHA256 ops
-			(opcodeVal == 0xc8) || // Unknown between input inspection ops
-			(opcodeVal == 0xce) || // Unknown between input and output ops
-			(opcodeVal == 0xd0) || // Unknown between output ops
+(opcodeVal == 0xd0) || // Unknown between output ops
 			(opcodeVal >= 0xf4 && opcodeVal <= 0xf9) || // Unknown range after new ops
 			opcodeVal == 0xfc:
 			expectedStr = "OP_UNKNOWN" + strconv.Itoa(opcodeVal)
@@ -192,7 +192,7 @@ func TestOpcodeDisasm(t *testing.T) {
 			case 0xb2:
 				// OP_NOP3 is an alias of OP_CHECKSEQUENCEVERIFY
 				expectedStr = "OP_CHECKSEQUENCEVERIFY"
-			case 0xb3:
+			case 0xb3, 0xc8, 0xce:
 				// OP_NOP4 is now OP_MERKLEBRANCHVERIFY
 				expectedStr = "OP_MERKLEBRANCHVERIFY"
 			default:
@@ -206,9 +206,7 @@ func TestOpcodeDisasm(t *testing.T) {
 
 		// OP_UNKNOWN#.
 		case (opcodeVal >= 0xbb && opcodeVal <= 0xc3) || // Unknown range before SHA256 ops
-			(opcodeVal == 0xc8) || // Unknown between input inspection ops
-			(opcodeVal == 0xce) || // Unknown between input and output ops
-			(opcodeVal == 0xd0) || // Unknown between output ops
+(opcodeVal == 0xd0) || // Unknown between output ops
 			(opcodeVal >= 0xf4 && opcodeVal <= 0xf9) || // Unknown range after new ops
 			opcodeVal == 0xfc:
 			expectedStr = "OP_UNKNOWN" + strconv.Itoa(opcodeVal)
