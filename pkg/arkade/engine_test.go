@@ -7,6 +7,8 @@ package arkade
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"strings"
 	"testing"
@@ -14,6 +16,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
+	"golang.org/x/crypto/ripemd160"
 )
 
 func TestNewOpcodes(t *testing.T) {
@@ -2154,4 +2157,305 @@ func TestIntrospectorPacketOpcodes(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCovenantHTLC exercises Arkade scripts that enforce HTLC-like spending
+// conditions using introspection opcodes instead of signatures.
+//
+// Covenant claim script:
+//
+//	Witness stack (bottom→top): <output_index> <preimage>
+//	OP_HASH160 <preimage_hash> OP_EQUALVERIFY
+//	OP_INSPECTOUTPUTSCRIPTPUBKEY OP_1 OP_EQUALVERIFY <wp> OP_EQUALVERIFY
+//	OP_INSPECTOUTPUTVALUE <amount_le> OP_EQUAL
+//
+// Covenant refund script:
+//
+//	Witness stack (bottom→top): <output_index>
+//	<locktime> OP_CHECKLOCKTIMEVERIFY OP_DROP
+//	OP_INSPECTOUTPUTSCRIPTPUBKEY OP_1 OP_EQUALVERIFY <wp> OP_EQUALVERIFY
+//	OP_INSPECTOUTPUTVALUE <amount_le> OP_EQUAL
+func TestCovenantHTLC(t *testing.T) {
+	t.Parallel()
+
+	// --- Preimage & HASH160 ---
+	preimage := bytes.Repeat([]byte{0x42}, 32)
+	sha := sha256.Sum256(preimage)
+	preimageHash := calcHash(sha[:], ripemd160.New())
+
+	wrongPreimage := bytes.Repeat([]byte{0x43}, 32)
+
+	// --- Receiver taproot output ---
+	receiverWP := bytes.Repeat([]byte{0xaa}, 32)
+	receiverPkScript := append([]byte{OP_1, OP_DATA_32}, receiverWP...)
+
+	wrongWP := bytes.Repeat([]byte{0xbb}, 32)
+	wrongPkScript := append([]byte{OP_1, OP_DATA_32}, wrongWP...)
+
+	// --- Sender taproot output (for refund) ---
+	senderWP := bytes.Repeat([]byte{0xcc}, 32)
+	senderPkScript := append([]byte{OP_1, OP_DATA_32}, senderWP...)
+
+	// --- Amounts ---
+	const claimAmount int64 = 50000
+	claimAmountLE := make([]byte, 8)
+	binary.LittleEndian.PutUint64(claimAmountLE, uint64(claimAmount))
+
+	const wrongAmount int64 = 49999
+	wrongAmountLE := make([]byte, 8)
+	binary.LittleEndian.PutUint64(wrongAmountLE, uint64(wrongAmount))
+	_ = wrongAmountLE // used indirectly via wrongAmount in TxOut
+
+	// --- Build covenant claim script ---
+	// Witness stack (bottom→top): <output_index> <preimage>
+	// OP_HASH160 <hash> OP_EQUALVERIFY   — verify preimage
+	// OP_DUP                              — duplicate output_index for reuse
+	// OP_INSPECTOUTPUTSCRIPTPUBKEY ...    — verify destination
+	// OP_INSPECTOUTPUTVALUE ...           — verify amount
+	covenantClaimScript, err := txscript.NewScriptBuilder().
+		AddOp(OP_HASH160).
+		AddData(preimageHash).
+		AddOp(OP_EQUALVERIFY).
+		AddOp(OP_DUP).
+		AddOp(OP_INSPECTOUTPUTSCRIPTPUBKEY).
+		AddOp(OP_1).
+		AddOp(OP_EQUALVERIFY).
+		AddData(receiverWP).
+		AddOp(OP_EQUALVERIFY).
+		AddOp(OP_INSPECTOUTPUTVALUE).
+		AddData(claimAmountLE).
+		AddOp(OP_EQUAL).
+		Script()
+	if err != nil {
+		t.Fatalf("failed to build covenant claim script: %v", err)
+	}
+
+	// --- Build covenant refund script ---
+	// Witness stack (bottom→top): <output_index>
+	// <locktime> OP_CHECKLOCKTIMEVERIFY OP_DROP
+	// OP_DUP
+	// OP_INSPECTOUTPUTSCRIPTPUBKEY ...    — verify destination
+	// OP_INSPECTOUTPUTVALUE ...           — verify amount
+	const refundLocktime int64 = 500000
+	covenantRefundScript, err := txscript.NewScriptBuilder().
+		AddInt64(refundLocktime).
+		AddOp(OP_CHECKLOCKTIMEVERIFY).
+		AddOp(OP_DROP).
+		AddOp(OP_DUP).
+		AddOp(OP_INSPECTOUTPUTSCRIPTPUBKEY).
+		AddOp(OP_1).
+		AddOp(OP_EQUALVERIFY).
+		AddData(senderWP).
+		AddOp(OP_EQUALVERIFY).
+		AddOp(OP_INSPECTOUTPUTVALUE).
+		AddData(claimAmountLE).
+		AddOp(OP_EQUAL).
+		Script()
+	if err != nil {
+		t.Fatalf("failed to build covenant refund script: %v", err)
+	}
+
+	// --- Shared prevout fetcher ---
+	prevoutFetcher := txscript.NewMultiPrevOutFetcher(map[wire.OutPoint]*wire.TxOut{
+		{Hash: chainhash.Hash{}, Index: 0}: {Value: 100000, PkScript: []byte{
+			OP_1, OP_DATA_32,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		}},
+	})
+
+	makeTx := func(outputs []*wire.TxOut, locktime uint32, sequence uint32) *wire.MsgTx {
+		return &wire.MsgTx{
+			Version:  1,
+			LockTime: locktime,
+			TxIn: []*wire.TxIn{{
+				PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{}, Index: 0},
+				Sequence:         sequence,
+			}},
+			TxOut: outputs,
+		}
+	}
+
+	runEngine := func(t *testing.T, script []byte, tx *wire.MsgTx, stack [][]byte) error {
+		t.Helper()
+		engine, err := NewEngine(
+			script, tx, 0,
+			txscript.NewSigCache(100),
+			txscript.NewTxSigHashes(tx, prevoutFetcher),
+			100000, prevoutFetcher,
+		)
+		if err != nil {
+			t.Fatalf("NewEngine: %v", err)
+		}
+		if len(stack) > 0 {
+			engine.SetStack(stack)
+		}
+		return engine.Execute()
+	}
+
+	// ===== COVENANT CLAIM TESTS =====
+
+	t.Run("claim_valid", func(t *testing.T) {
+		t.Parallel()
+		tx := makeTx([]*wire.TxOut{
+			{Value: claimAmount, PkScript: receiverPkScript},
+		}, 0, wire.MaxTxInSequenceNum)
+		// output_index=0 is encoded as empty []byte{} (minimal encoding for OP_0)
+		err := runEngine(t, covenantClaimScript, tx, [][]byte{{}, preimage})
+		if err != nil {
+			t.Errorf("expected success, got: %v", err)
+		}
+	})
+
+	t.Run("claim_wrong_preimage", func(t *testing.T) {
+		t.Parallel()
+		tx := makeTx([]*wire.TxOut{
+			{Value: claimAmount, PkScript: receiverPkScript},
+		}, 0, wire.MaxTxInSequenceNum)
+		err := runEngine(t, covenantClaimScript, tx, [][]byte{{}, wrongPreimage})
+		if err == nil {
+			t.Error("expected failure for wrong preimage")
+		}
+	})
+
+	t.Run("claim_wrong_address", func(t *testing.T) {
+		t.Parallel()
+		tx := makeTx([]*wire.TxOut{
+			{Value: claimAmount, PkScript: wrongPkScript},
+		}, 0, wire.MaxTxInSequenceNum)
+		err := runEngine(t, covenantClaimScript, tx, [][]byte{{}, preimage})
+		if err == nil {
+			t.Error("expected failure for wrong address")
+		}
+	})
+
+	t.Run("claim_wrong_amount", func(t *testing.T) {
+		t.Parallel()
+		tx := makeTx([]*wire.TxOut{
+			{Value: wrongAmount, PkScript: receiverPkScript},
+		}, 0, wire.MaxTxInSequenceNum)
+		err := runEngine(t, covenantClaimScript, tx, [][]byte{{}, preimage})
+		if err == nil {
+			t.Error("expected failure for wrong amount")
+		}
+	})
+
+	t.Run("claim_flexible_output_index", func(t *testing.T) {
+		t.Parallel()
+		tx := makeTx([]*wire.TxOut{
+			{Value: 10000, PkScript: wrongPkScript},          // index 0: unrelated
+			{Value: claimAmount, PkScript: receiverPkScript}, // index 1: claim target
+		}, 0, wire.MaxTxInSequenceNum)
+		err := runEngine(t, covenantClaimScript, tx, [][]byte{{0x01}, preimage})
+		if err != nil {
+			t.Errorf("expected success with output at index 1, got: %v", err)
+		}
+	})
+
+	t.Run("claim_output_index_out_of_range", func(t *testing.T) {
+		t.Parallel()
+		tx := makeTx([]*wire.TxOut{
+			{Value: claimAmount, PkScript: receiverPkScript},
+		}, 0, wire.MaxTxInSequenceNum)
+		err := runEngine(t, covenantClaimScript, tx, [][]byte{{0x05}, preimage})
+		if err == nil {
+			t.Error("expected failure for output index out of range")
+		}
+	})
+
+	t.Run("claim_empty_preimage", func(t *testing.T) {
+		t.Parallel()
+		tx := makeTx([]*wire.TxOut{
+			{Value: claimAmount, PkScript: receiverPkScript},
+		}, 0, wire.MaxTxInSequenceNum)
+		err := runEngine(t, covenantClaimScript, tx, [][]byte{{}, {}})
+		if err == nil {
+			t.Error("expected failure for empty preimage")
+		}
+	})
+
+	t.Run("claim_segwit_v0_rejected", func(t *testing.T) {
+		t.Parallel()
+		// SegWit v0 output (OP_0 + 32-byte program) should fail the OP_1 check
+		v0PkScript := append([]byte{OP_0, OP_DATA_32}, receiverWP...)
+		tx := makeTx([]*wire.TxOut{
+			{Value: claimAmount, PkScript: v0PkScript},
+		}, 0, wire.MaxTxInSequenceNum)
+		err := runEngine(t, covenantClaimScript, tx, [][]byte{{}, preimage})
+		if err == nil {
+			t.Error("expected failure for segwit v0 output")
+		}
+	})
+
+	// ===== COVENANT REFUND TESTS =====
+
+	t.Run("refund_valid", func(t *testing.T) {
+		t.Parallel()
+		tx := makeTx([]*wire.TxOut{
+			{Value: claimAmount, PkScript: senderPkScript},
+		}, uint32(refundLocktime), wire.MaxTxInSequenceNum-1)
+		err := runEngine(t, covenantRefundScript, tx, [][]byte{{}})
+		if err != nil {
+			t.Errorf("expected success, got: %v", err)
+		}
+	})
+
+	t.Run("refund_before_timelock", func(t *testing.T) {
+		t.Parallel()
+		tx := makeTx([]*wire.TxOut{
+			{Value: claimAmount, PkScript: senderPkScript},
+		}, uint32(refundLocktime-1), wire.MaxTxInSequenceNum-1)
+		err := runEngine(t, covenantRefundScript, tx, [][]byte{{}})
+		if err == nil {
+			t.Error("expected failure before timelock")
+		}
+	})
+
+	t.Run("refund_sequence_max_disables_cltv", func(t *testing.T) {
+		t.Parallel()
+		// MaxTxInSequenceNum disables CLTV
+		tx := makeTx([]*wire.TxOut{
+			{Value: claimAmount, PkScript: senderPkScript},
+		}, uint32(refundLocktime), wire.MaxTxInSequenceNum)
+		err := runEngine(t, covenantRefundScript, tx, [][]byte{{}})
+		if err == nil {
+			t.Error("expected failure when sequence disables CLTV")
+		}
+	})
+
+	t.Run("refund_wrong_address", func(t *testing.T) {
+		t.Parallel()
+		tx := makeTx([]*wire.TxOut{
+			{Value: claimAmount, PkScript: wrongPkScript},
+		}, uint32(refundLocktime), wire.MaxTxInSequenceNum-1)
+		err := runEngine(t, covenantRefundScript, tx, [][]byte{{}})
+		if err == nil {
+			t.Error("expected failure for wrong refund address")
+		}
+	})
+
+	t.Run("refund_wrong_amount", func(t *testing.T) {
+		t.Parallel()
+		tx := makeTx([]*wire.TxOut{
+			{Value: wrongAmount, PkScript: senderPkScript},
+		}, uint32(refundLocktime), wire.MaxTxInSequenceNum-1)
+		err := runEngine(t, covenantRefundScript, tx, [][]byte{{}})
+		if err == nil {
+			t.Error("expected failure for wrong refund amount")
+		}
+	})
+
+	t.Run("refund_flexible_output_index", func(t *testing.T) {
+		t.Parallel()
+		tx := makeTx([]*wire.TxOut{
+			{Value: 10000, PkScript: wrongPkScript},
+			{Value: claimAmount, PkScript: senderPkScript},
+		}, uint32(refundLocktime), wire.MaxTxInSequenceNum-1)
+		err := runEngine(t, covenantRefundScript, tx, [][]byte{{0x01}})
+		if err != nil {
+			t.Errorf("expected success with output at index 1, got: %v", err)
+		}
+	})
 }

@@ -87,7 +87,7 @@ func readArkadeScript(ptx *psbt.Packet, inputIndex int, signerPublicKey *btcec.P
 	}, nil
 }
 
-func (s arkadeScript) execute(spendingTx *wire.MsgTx, prevoutFetcher txscript.PrevOutputFetcher, inputIndex int) error {
+func (s arkadeScript) execute(spendingTx *wire.MsgTx, prevoutFetcher txscript.PrevOutputFetcher, inputIndex int, packet *arkade.IntrospectorPacket) error {
 	prevOut := prevoutFetcher.FetchPrevOutput(spendingTx.TxIn[inputIndex].PreviousOutPoint)
 	inputAmount := int64(0)
 	if prevOut != nil {
@@ -115,6 +115,10 @@ func (s arkadeScript) execute(spendingTx *wire.MsgTx, prevoutFetcher txscript.Pr
 		}
 	}
 	// If error, extension is not present - this is okay, just don't set it
+
+	if packet != nil {
+		engine.SetIntrospectorPacket(packet)
+	}
 
 	if len(s.witness) > 0 {
 		engine.SetStack(s.witness)
