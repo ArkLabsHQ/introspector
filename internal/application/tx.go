@@ -51,7 +51,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		}
 
 		log.Debugf("executing arkade script: %x", script.script)
-		if err := script.execute(arkPtx.UnsignedTx, prevoutFetcher, inputIndex); err != nil {
+		if err := script.execute(arkPtx.UnsignedTx, prevoutFetcher, inputIndex, packet); err != nil {
 			return nil, fmt.Errorf("failed to execute arkade script: %w", err)
 		}
 		log.Debugf("execution of %x succeeded", script.script)

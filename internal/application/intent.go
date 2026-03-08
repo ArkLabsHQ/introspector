@@ -53,7 +53,7 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 			continue
 		}
 
-		if err := script.execute(ptx.UnsignedTx, prevoutFetcher, inputIndex); err != nil {
+		if err := script.execute(ptx.UnsignedTx, prevoutFetcher, inputIndex, packet); err != nil {
 			log.WithError(err).WithField("input_index", inputIndex).Error("arkade script execution failed")
 			return nil, fmt.Errorf("failed to execute arkade script at input %d: %w", inputIndex, err)
 		}
