@@ -204,6 +204,7 @@ The service can be configured using environment variables:
 - Go 1.25+
 - Docker and Docker Compose
 - Buf CLI (for protocol buffer generation)
+- [Nigiri](https://nigiri.vulpem.com) (for integration testing)
 
 ### Building
 
@@ -229,6 +230,7 @@ make run
 make test
 
 # Run docker regtest environment
+nigiri start
 make docker-run
 
 # Run integration tests
