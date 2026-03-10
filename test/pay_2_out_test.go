@@ -2,7 +2,6 @@ package test
 
 import (
 	"bytes"
-	"encoding/binary"
 	"encoding/hex"
 	"strings"
 	"testing"
@@ -30,13 +29,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
-
-// uint64LE returns an 8-byte little-endian encoding of v.
-func uint64LE(v uint64) []byte {
-	b := make([]byte, 8)
-	binary.LittleEndian.PutUint64(b, v)
-	return b
-}
 
 // TestPayToTwoOutputs tests that an Arkade script can enforce payment to
 // two specific outputs with correct addresses AND amounts.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"slices"
@@ -15,6 +16,7 @@ import (
 	introspectorclient "github.com/ArkLabsHQ/introspector/pkg/client"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
+	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
@@ -670,4 +672,106 @@ func createVtxoScriptWithArkadeAndCSV(bobPubKey, aliceSigner, introspectorPubKey
 			},
 		},
 	}
+}
+
+// uint64LE returns an 8-byte little-endian encoding of v.
+func uint64LE(v uint64) []byte {
+	b := make([]byte, 8)
+	binary.LittleEndian.PutUint64(b, v)
+	return b
+}
+
+func checkpointInputPkScript(vtxoInput offchain.VtxoInput, checkpointScriptBytes []byte) ([]byte, error) {
+	signerUnrollScriptClosure := &script.CSVMultisigClosure{}
+	valid, err := signerUnrollScriptClosure.Decode(checkpointScriptBytes)
+	if err != nil {
+		return nil, err
+	}
+	if !valid {
+		return nil, fmt.Errorf("invalid signer unroll script")
+	}
+
+	collaborativeClosure, err := script.DecodeClosure(vtxoInput.Tapscript.RevealedScript)
+	if err != nil {
+		return nil, err
+	}
+
+	checkpointVtxoScript := script.TapscriptsVtxoScript{
+		Closures: []script.Closure{signerUnrollScriptClosure, collaborativeClosure},
+	}
+
+	tapKey, _, err := checkpointVtxoScript.TapTree()
+	if err != nil {
+		return nil, err
+	}
+
+	return script.P2TRScript(tapKey)
+}
+
+func debugExecuteArkadeScripts(t *testing.T, ptx *psbt.Packet, signerPublicKey *btcec.PublicKey) error {
+	t.Helper()
+
+	if len(ptx.Inputs) != len(ptx.UnsignedTx.TxIn) {
+		return fmt.Errorf("malformed psbt")
+	}
+
+	prevouts := make(map[wire.OutPoint]*wire.TxOut)
+	for index, input := range ptx.Inputs {
+		if input.WitnessUtxo == nil {
+			return fmt.Errorf("witness utxo is nil at input %d", index)
+		}
+		prevouts[ptx.UnsignedTx.TxIn[index].PreviousOutPoint] = input.WitnessUtxo
+	}
+	prevoutFetcher := txscript.NewMultiPrevOutFetcher(prevouts)
+
+	packet, err := arkade.FindIntrospectorPacket(ptx.UnsignedTx)
+	if err != nil {
+		return fmt.Errorf("failed to parse introspector packet: %w", err)
+	}
+	if packet == nil || len(packet.Entries) == 0 {
+		return fmt.Errorf("no introspector packet found in transaction")
+	}
+
+	for _, entry := range packet.Entries {
+		inputIndex := int(entry.Vin)
+		script, err := arkade.ReadArkadeScript(ptx, inputIndex, signerPublicKey, entry)
+		if err != nil {
+			continue
+		}
+
+		err = script.Execute(ptx.UnsignedTx, prevoutFetcher, inputIndex, arkade.WithDebugCallback(
+			func(step *arkade.StepInfo, engine *arkade.Engine) error {
+				disasm, err := engine.DisasmPC()
+				if err != nil {
+					disasm = "<done>"
+				}
+				t.Logf(
+					"vin=%d op=%s stack=%s altstack=%s",
+					inputIndex,
+					disasm,
+					formatHexStack(step.Stack),
+					formatHexStack(step.AltStack),
+				)
+				return nil
+			},
+		))
+		if err != nil {
+			return fmt.Errorf("failed to execute arkade script at input %d: %w", inputIndex, err)
+		}
+	}
+
+	return nil
+}
+
+func formatHexStack(items [][]byte) string {
+	if len(items) == 0 {
+		return "[]"
+	}
+
+	hexItems := make([]string, len(items))
+	for i := range items {
+		hexItems[i] = hex.EncodeToString(items[i])
+	}
+
+	return "[" + strings.Join(hexItems, " ") + "]"
 }
