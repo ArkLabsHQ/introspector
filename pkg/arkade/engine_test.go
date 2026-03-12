@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
@@ -1957,21 +1958,24 @@ func TestIntrospectorPacketOpcodes(t *testing.T) {
 
 	scriptA := []byte{OP_TRUE}
 	scriptB := []byte{OP_1, OP_1, OP_ADD}
-	witnessA := []byte{0xaa, 0xbb}
+	witnessA := wire.TxWitness{{0xaa, 0xbb}}
 
-	packet := &IntrospectorPacket{
-		Entries: []IntrospectorEntry{
-			{Vin: 0, Script: scriptA, Witness: witnessA},
-			{Vin: 1, Script: scriptB, Witness: nil},
-		},
+	packet, err := NewPacket(
+		IntrospectorEntry{Vin: 0, Script: scriptA, Witness: witnessA},
+		IntrospectorEntry{Vin: 1, Script: scriptB, Witness: nil},
+	)
+	if err != nil {
+		t.Fatalf("NewPacket: %v", err)
 	}
 
 	expectedScriptHashA := ArkadeScriptHash(scriptA)
 	expectedScriptHashB := ArkadeScriptHash(scriptB)
-	expectedWitnessHashA := chainhash.TaggedHash(TagArkWitnessHash, witnessA)
+	var witBuf bytes.Buffer
+	_ = psbt.WriteTxWitness(&witBuf, witnessA)
+	expectedWitnessHashA := chainhash.TaggedHash(TagArkWitnessHash, witBuf.Bytes())
 	zeroHash := make([]byte, 32)
 
-	runEngine := func(t *testing.T, script []byte, tx *wire.MsgTx, pkt *IntrospectorPacket, stack [][]byte) error {
+	runEngine := func(t *testing.T, script []byte, tx *wire.MsgTx, pkt IntrospectorPacket, stack [][]byte) error {
 		t.Helper()
 		engine, err := NewEngine(
 			script, tx, 0,
@@ -1996,7 +2000,7 @@ func TestIntrospectorPacketOpcodes(t *testing.T) {
 		valid   bool
 		script  []byte
 		tx      *wire.MsgTx
-		pkt     *IntrospectorPacket
+		pkt     IntrospectorPacket
 		stack   [][]byte
 		errText string
 	}
@@ -2098,10 +2102,8 @@ func TestIntrospectorPacketOpcodes(t *testing.T) {
 				return s
 			}(),
 			tx: twoInputTx,
-			pkt: &IntrospectorPacket{
-				Entries: []IntrospectorEntry{
-					{Vin: 1, Script: scriptB},
-				},
+			pkt: IntrospectorPacket{
+				{Vin: 1, Script: scriptB},
 			},
 			errText: "no introspector entry for vin 0",
 		},

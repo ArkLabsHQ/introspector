@@ -110,7 +110,7 @@ type Engine struct {
 	hashCache      *txscript.TxSigHashes
 	prevOutFetcher txscript.PrevOutputFetcher
 	assetPacket    asset.Packet
-	introspectorPacket *IntrospectorPacket
+	introspectorPacket IntrospectorPacket
 
 	// The following fields handle keeping track of the current execution state
 	// of the engine.
@@ -187,7 +187,7 @@ func (vm *Engine) SetAssetPacket(packet asset.Packet) {
 
 // SetIntrospectorPacket sets the introspector packet on the engine for
 // cross-input Arkade script/witness introspection.
-func (vm *Engine) SetIntrospectorPacket(packet *IntrospectorPacket) {
+func (vm *Engine) SetIntrospectorPacket(packet IntrospectorPacket) {
 	vm.introspectorPacket = packet
 }
 

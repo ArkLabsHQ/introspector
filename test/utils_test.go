@@ -16,6 +16,7 @@ import (
 	introspectorclient "github.com/ArkLabsHQ/introspector/pkg/client"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
+	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
@@ -602,50 +603,43 @@ func createVtxoScriptWithArkadeScript(bobPubKey, aliceSigner, introspectorPubKey
 // (e.g. from an asset packet) is present, the introspector data is merged into it.
 // Otherwise a new OP_RETURN is inserted before the last output (P2A anchor).
 func addIntrospectorPacket(t *testing.T, ptx *psbt.Packet, entries []arkade.IntrospectorEntry) {
-	packet := &arkade.IntrospectorPacket{Entries: entries}
-	packet.SortByVin()
+	packet, err := arkade.NewPacket(entries...)
+	require.NoError(t, err)
 
-	// Look for an existing OP_RETURN with ARK magic (e.g. asset packet).
+	// Look for an existing OP_RETURN with ARK extension (e.g. asset packet).
 	for i, out := range ptx.UnsignedTx.TxOut {
-		if len(out.PkScript) < 5 || out.PkScript[0] != 0x6a {
+		if !extension.IsExtension(out.PkScript) {
 			continue
 		}
-		// Extract asset payload bytes from the existing OP_RETURN.
-		_, assetPayload, err := arkade.ParseTLVStream(out.PkScript)
+		// Parse existing extension and append the introspector packet.
+		ext, err := extension.NewExtensionFromBytes(out.PkScript)
 		if err != nil {
-			continue // not an ARK OP_RETURN, skip
+			continue
 		}
 
-		// Rebuild the OP_RETURN with both asset + introspector data.
-		combined, err := arkade.BuildOpReturnScript(assetPayload, packet)
+		ext = append(ext, packet)
+		combined, err := ext.Serialize()
 		require.NoError(t, err)
 
 		ptx.UnsignedTx.TxOut[i].PkScript = combined
 		return
 	}
 
-	// No existing ARK OP_RETURN — insert a new one.
-	// For offchain ark txs the last output is a P2A anchor that must remain
-	// at the end (the server rebuilds with the anchor appended). For intent
-	// proofs there is no anchor, so we just append.
-	opReturnScript, err := arkade.BuildOpReturnScript(nil, packet)
+	// No existing ARK extension — insert a new one.
+	ext := extension.Extension{packet}
+	txOut, err := ext.TxOut()
 	require.NoError(t, err)
-
-	opReturnOut := &wire.TxOut{
-		Value:    0,
-		PkScript: opReturnScript,
-	}
 
 	lastIdx := len(ptx.UnsignedTx.TxOut) - 1
 	lastOut := ptx.UnsignedTx.TxOut[lastIdx]
 	if bytes.Equal(lastOut.PkScript, txutils.ANCHOR_PKSCRIPT) {
 		// Insert before the P2A anchor so the server rebuild matches.
-		ptx.UnsignedTx.TxOut[lastIdx] = opReturnOut
+		ptx.UnsignedTx.TxOut[lastIdx] = txOut
 		ptx.UnsignedTx.AddTxOut(lastOut)
 	} else {
 		// No anchor (e.g. intent proofs) — append at the end so payment
 		// output indices are not shifted.
-		ptx.UnsignedTx.AddTxOut(opReturnOut)
+		ptx.UnsignedTx.AddTxOut(txOut)
 	}
 	ptx.Outputs = append(ptx.Outputs, psbt.POutput{})
 }
@@ -728,11 +722,11 @@ func debugExecuteArkadeScripts(t *testing.T, ptx *psbt.Packet, signerPublicKey *
 	if err != nil {
 		return fmt.Errorf("failed to parse introspector packet: %w", err)
 	}
-	if packet == nil || len(packet.Entries) == 0 {
+	if len(packet) == 0 {
 		return fmt.Errorf("no introspector packet found in transaction")
 	}
 
-	for _, entry := range packet.Entries {
+	for _, entry := range packet {
 		inputIndex := int(entry.Vin)
 		script, err := arkade.ReadArkadeScript(ptx, inputIndex, signerPublicKey, entry)
 		if err != nil {

@@ -1,6 +1,6 @@
 module github.com/ArkLabsHQ/introspector/api-spec
 
-go 1.25.7
+go 1.26.0
 
 require (
 	github.com/meshapi/grpc-api-gateway v0.1.0
