@@ -401,6 +401,9 @@ func TestP2PEscrowSellerConfirm(t *testing.T) {
 		RevealedScript: merkleProof.Script,
 	}
 
+	revealedTapscripts, err := vtxoScript.Encode()
+	require.NoError(t, err)
+
 	infos, err := grpcBob.GetInfo(ctx)
 	require.NoError(t, err)
 	checkpointScriptBytes, err := hex.DecodeString(infos.CheckpointTapscript)
@@ -413,7 +416,7 @@ func TestP2PEscrowSellerConfirm(t *testing.T) {
 		},
 		Tapscript:          tapscript,
 		Amount:             escrowOutput.Value,
-		RevealedTapscripts: []string{hex.EncodeToString(closureTapscript)},
+		RevealedTapscripts: revealedTapscripts,
 	}
 
 	// Buyer's receive address (any address they choose)
@@ -665,6 +668,9 @@ func TestP2PEscrowArbitratorToBuyer(t *testing.T) {
 	ctrlBlock, err := txscript.ParseControlBlock(merkleProof.ControlBlock)
 	require.NoError(t, err)
 
+	revealedTapscripts, err := vtxoScript.Encode()
+	require.NoError(t, err)
+
 	infos, err := grpcBob.GetInfo(ctx)
 	require.NoError(t, err)
 	checkpointScriptBytes, err := hex.DecodeString(infos.CheckpointTapscript)
@@ -680,7 +686,7 @@ func TestP2PEscrowArbitratorToBuyer(t *testing.T) {
 			RevealedScript: merkleProof.Script,
 		},
 		Amount:             escrowOutput.Value,
-		RevealedTapscripts: []string{hex.EncodeToString(closureTapscript)},
+		RevealedTapscripts: revealedTapscripts,
 	}
 
 	buyerRecvPrivKey, err := btcec.NewPrivateKey()
@@ -857,6 +863,9 @@ func TestP2PEscrowArbitratorToSeller(t *testing.T) {
 	ctrlBlock, err := txscript.ParseControlBlock(merkleProof.ControlBlock)
 	require.NoError(t, err)
 
+	revealedTapscripts, err := vtxoScript.Encode()
+	require.NoError(t, err)
+
 	infos, err := grpcBob.GetInfo(ctx)
 	require.NoError(t, err)
 	checkpointScriptBytes, err := hex.DecodeString(infos.CheckpointTapscript)
@@ -872,7 +881,7 @@ func TestP2PEscrowArbitratorToSeller(t *testing.T) {
 			RevealedScript: merkleProof.Script,
 		},
 		Amount:             escrowOutput.Value,
-		RevealedTapscripts: []string{hex.EncodeToString(closureTapscript)},
+		RevealedTapscripts: revealedTapscripts,
 	}
 
 	sellerRecvPkScript, err := txscript.PayToTaprootScript(sellerPrivKey.PubKey())
@@ -1059,6 +1068,9 @@ func TestP2PEscrowBuyerRefund(t *testing.T) {
 		RevealedScript: merkleProof.Script,
 	}
 
+	revealedTapscripts, err := vtxoScript.Encode()
+	require.NoError(t, err)
+
 	infos, err := grpcBob.GetInfo(ctx)
 	require.NoError(t, err)
 	checkpointScriptBytes, err := hex.DecodeString(infos.CheckpointTapscript)
@@ -1071,7 +1083,7 @@ func TestP2PEscrowBuyerRefund(t *testing.T) {
 		},
 		Tapscript:          tapscriptObj,
 		Amount:             escrowOutput.Value,
-		RevealedTapscripts: []string{hex.EncodeToString(closureTapscript)},
+		RevealedTapscripts: revealedTapscripts,
 	}
 
 	sellerRecvPkScript, err := txscript.PayToTaprootScript(sellerPrivKey.PubKey())
@@ -1293,6 +1305,9 @@ func TestP2PEscrowTopupPath(t *testing.T) {
 		RevealedScript: merkleProof.Script,
 	}
 
+	revealedTapscripts, err := vtxoScript.Encode()
+	require.NoError(t, err)
+
 	infos, err := grpcBob.GetInfo(ctx)
 	require.NoError(t, err)
 	checkpointScriptBytes, err := hex.DecodeString(infos.CheckpointTapscript)
@@ -1305,7 +1320,7 @@ func TestP2PEscrowTopupPath(t *testing.T) {
 		},
 		Tapscript:          tapscriptObj,
 		Amount:             escrowOutput.Value,
-		RevealedTapscripts: []string{hex.EncodeToString(closureTapscript)},
+		RevealedTapscripts: revealedTapscripts,
 	}
 
 	changePkScript, err := txscript.PayToTaprootScript(bobPubKey)
