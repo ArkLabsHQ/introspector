@@ -246,7 +246,7 @@ const (
 	// Inputs
 	OP_INSPECTINPUTOUTPOINT = 0xc7 // 199
 
-	OP_UNKNOWN200 = 0xc8 // 200
+	OP_INSPECTINPUTARKADESCRIPTHASH = 0xc8 // 200
 
 	OP_INSPECTINPUTVALUE        = 0xc9 // 201
 	OP_INSPECTINPUTSCRIPTPUBKEY = 0xca // 202
@@ -257,7 +257,7 @@ const (
 	// current index
 	OP_PUSHCURRENTINPUTINDEX = 0xcd // 205
 
-	OP_UNKNOWN206 = 0xce // 206
+	OP_INSPECTINPUTARKADEWITNESSHASH = 0xce // 206
 
 	// outputs
 	OP_INSPECTOUTPUTVALUE = 0xcf // 207
@@ -548,7 +548,7 @@ var opcodeArray = [256]opcode{
 	// Inputs introspection
 	OP_INSPECTINPUTOUTPOINT: {OP_INSPECTINPUTOUTPOINT, "OP_INSPECTINPUTOUTPOINT", 1, opcodeInspectInputOutpoint},
 
-	OP_UNKNOWN200: {OP_UNKNOWN200, "OP_UNKNOWN200", 1, opcodeInvalid},
+	OP_INSPECTINPUTARKADESCRIPTHASH: {OP_INSPECTINPUTARKADESCRIPTHASH, "OP_INSPECTINPUTARKADESCRIPTHASH", 1, opcodeInspectInputArkadeScriptHash},
 
 	OP_INSPECTINPUTVALUE:        {OP_INSPECTINPUTVALUE, "OP_INSPECTINPUTVALUE", 1, opcodeInspectInputValue},
 	OP_INSPECTINPUTSCRIPTPUBKEY: {OP_INSPECTINPUTSCRIPTPUBKEY, "OP_INSPECTINPUTSCRIPTPUBKEY", 1, opcodeInspectInputScriptPubkey},
@@ -559,7 +559,7 @@ var opcodeArray = [256]opcode{
 	OP_PUSHCURRENTINPUTINDEX: {OP_PUSHCURRENTINPUTINDEX, "OP_PUSHCURRENTINPUTINDEX", 1, opcodePushCurrentInputIndex},
 
 	// Outputs introspection
-	OP_UNKNOWN206: {OP_UNKNOWN206, "OP_UNKNOWN206", 1, opcodeInvalid},
+	OP_INSPECTINPUTARKADEWITNESSHASH: {OP_INSPECTINPUTARKADEWITNESSHASH, "OP_INSPECTINPUTARKADEWITNESSHASH", 1, opcodeInspectInputArkadeWitnessHash},
 
 	OP_INSPECTOUTPUTVALUE: {OP_INSPECTOUTPUTVALUE, "OP_INSPECTOUTPUTVALUE", 1, opcodeInspectOutputValue},
 
@@ -3203,5 +3203,60 @@ func opcodeMerkleBranchVerify(op *opcode, data []byte, vm *Engine) error {
 func opcodeTxId(op *opcode, data []byte, vm *Engine) error {
 	txHash := vm.tx.TxHash()
 	vm.dstack.PushByteArray(txHash[:])
+	return nil
+}
+
+func opcodeInspectInputArkadeScriptHash(op *opcode, data []byte, vm *Engine) error {
+	index, err := vm.dstack.PopInt()
+	if err != nil {
+		return err
+	}
+
+	if index < 0 || int(index) >= len(vm.tx.TxIn) {
+		return scriptError(txscript.ErrInvalidIndex, "input index out of range")
+	}
+
+	if vm.introspectorPacket == nil {
+		return scriptError(txscript.ErrInvalidStackOperation, "no introspector packet")
+	}
+
+	entry, found := vm.introspectorPacket.FindEntryByVin(uint16(index))
+	if !found {
+		return scriptError(txscript.ErrInvalidStackOperation,
+			fmt.Sprintf("no introspector entry for vin %d", index))
+	}
+
+	scriptHash := ArkadeScriptHash(entry.Script)
+	vm.dstack.PushByteArray(scriptHash)
+	return nil
+}
+
+func opcodeInspectInputArkadeWitnessHash(op *opcode, data []byte, vm *Engine) error {
+	index, err := vm.dstack.PopInt()
+	if err != nil {
+		return err
+	}
+
+	if index < 0 || int(index) >= len(vm.tx.TxIn) {
+		return scriptError(txscript.ErrInvalidIndex, "input index out of range")
+	}
+
+	if vm.introspectorPacket == nil {
+		return scriptError(txscript.ErrInvalidStackOperation, "no introspector packet")
+	}
+
+	entry, found := vm.introspectorPacket.FindEntryByVin(uint16(index))
+	if !found {
+		return scriptError(txscript.ErrInvalidStackOperation,
+			fmt.Sprintf("no introspector entry for vin %d", index))
+	}
+
+	if len(entry.Witness) == 0 {
+		vm.dstack.PushByteArray(make([]byte, 32))
+		return nil
+	}
+
+	hash := chainhash.TaggedHash(TagArkWitnessHash, entry.Witness)
+	vm.dstack.PushByteArray(hash[:])
 	return nil
 }

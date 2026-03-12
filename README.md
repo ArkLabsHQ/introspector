@@ -246,10 +246,12 @@ The following opcodes are supported by the Arkade script engine. They extend Bit
 | Word | Opcode | Hex | Input | Output | Description |
 |------|--------|-----|-------|--------|-------------|
 | OP_INSPECTINPUTOUTPOINT | 199 | 0xc7 | index | txid index | Pushes the transaction ID (32 bytes) and output index (scriptNum) of the input at the given index onto the stack. |
+| OP_INSPECTINPUTARKADESCRIPTHASH | 200 | 0xc8 | index | script_hash | Pushes the 32-byte Arkade script hash (`tagged_hash("ArkScriptHash", script)`) of the IntrospectorEntry for the input at the given index. This is the same hash used as the tweak scalar in `ComputeArkadeScriptPublicKey`. Fails if no entry exists. |
 | OP_INSPECTINPUTVALUE | 201 | 0xc9 | index | value | Pushes the value (8 bytes, little-endian) of the previous output spent by the input at the given index. |
 | OP_INSPECTINPUTSCRIPTPUBKEY | 202 | 0xca | index | program version | For witness programs: pushes the witness program (2-40 bytes) and segwit version (scriptNum). For non-native segwit: pushes SHA256 hash of scriptPubKey and -1. |
 | OP_INSPECTINPUTSEQUENCE | 203 | 0xcb | index | sequence | Pushes the sequence number (4 bytes, little-endian) of the input at the given index. |
 | OP_PUSHCURRENTINPUTINDEX | 205 | 0xcd | Nothing | index | Pushes the current input index (scriptNum) being evaluated onto the stack. |
+| OP_INSPECTINPUTARKADEWITNESSHASH | 206 | 0xce | index | witness_hash | Pushes the 32-byte Arkade witness hash (`tagged_hash("ArkWitnessHash", witness)`) of the IntrospectorEntry for the input at the given index. Pushes 32 zero bytes if witness is empty. Fails if no entry exists. |
 
 ### Transaction Introspection (Outputs)
 
