@@ -30,7 +30,7 @@ import (
 //   - buyer: sends fiat, claims BTC after authorization
 //   - seller: funds escrow, receives fiat, attests to payment receipt
 //   - arbitrator: resolves disputes via CSFS attestation
-//   - operator: Ark server — signs collaborative MultisigClosure (from Ark address)
+//   - operator: Ark server — signs collaborative and seller-refund closures (from Ark address)
 //   - introspector: validates Arkade scripts (key derived from operator address)
 type escrowParams struct {
 	sellerPubKey     *btcec.PublicKey
@@ -38,6 +38,7 @@ type escrowParams struct {
 	arbitratorPubKey *btcec.PublicKey // dispute arbitrator — CSFS attestations only
 	feeSpk           []byte           // fee output scriptPubKey
 	feeBasisPoints   uint64           // fee as basis points (e.g. 200 = 2%)
+	cltvTimeout      int64            // absolute locktime (block height) for collaborative path
 	csvTimeout       int64            // relative locktime (blocks) for unilateral exit paths
 	tradeID          []byte           // 32-byte external trade identifier
 }
@@ -229,6 +230,7 @@ func extractWitnessInfo(spk []byte) (int, []byte, error) {
 
 // createEscrowVtxoScript builds a VTXO tapscript tree with:
 //   - Collaborative path: MultisigClosure{buyer, operator, introspector_tweaked}
+//   - Seller refund path: CLTVMultisigClosure{seller, operator, introspector_tweaked} with cltvTimeout
 //   - Unilateral exit 1: CSVMultisigClosure{buyer, seller} with csvTimeout
 //   - Unilateral exit 2: CSVMultisigClosure{seller} with csvTimeout * 2
 func createEscrowVtxoScript(
@@ -245,6 +247,17 @@ func createEscrowVtxoScript(
 					operatorSigner,
 					arkade.ComputeArkadeScriptPublicKey(introspectorPubKey, arkadeScriptHash),
 				},
+			},
+			// Seller refund path (requires seller + operator + introspector, after CLTV)
+			&script.CLTVMultisigClosure{
+				MultisigClosure: script.MultisigClosure{
+					PubKeys: []*btcec.PublicKey{
+						p.sellerPubKey,
+						operatorSigner,
+						arkade.ComputeArkadeScriptPublicKey(introspectorPubKey, arkadeScriptHash),
+					},
+				},
+				Locktime: arklib.AbsoluteLocktime(p.cltvTimeout),
 			},
 			// Unilateral exit: buyer + seller with CSV
 			&script.CSVMultisigClosure{
@@ -334,6 +347,7 @@ func TestP2PEscrowSellerConfirm(t *testing.T) {
 		arbitratorPubKey: arbitratorPrivKey.PubKey(),
 		feeSpk:           feePkScript,
 		feeBasisPoints:   200, // 2% fee
+		cltvTimeout:      1000,
 		csvTimeout:       144,
 		tradeID:          tradeIDHash[:],
 	}
@@ -609,6 +623,7 @@ func TestP2PEscrowArbitratorToBuyer(t *testing.T) {
 		arbitratorPubKey: arbitratorPrivKey.PubKey(),
 		feeSpk:           feePkScript,
 		feeBasisPoints:   200, // 2% fee
+		cltvTimeout:      1000,
 		csvTimeout:       144,
 		tradeID:          tradeIDHash[:],
 	}
@@ -803,6 +818,7 @@ func TestP2PEscrowArbitratorToSeller(t *testing.T) {
 		arbitratorPubKey: arbitratorPrivKey.PubKey(),
 		feeSpk:           []byte{0x6a}, // unused for this leaf
 		feeBasisPoints:   200,
+		cltvTimeout:      1000,
 		csvTimeout:       144,
 		tradeID:          tradeIDHash[:],
 	}
@@ -999,6 +1015,7 @@ func TestP2PEscrowBuyerRefund(t *testing.T) {
 		arbitratorPubKey: arbitratorPrivKey.PubKey(),
 		feeSpk:           feePkScript,
 		feeBasisPoints:   200,
+		cltvTimeout:      1000,
 		csvTimeout:       144,
 		tradeID:          tradeIDHash[:],
 	}
@@ -1229,6 +1246,7 @@ func TestP2PEscrowTopupPath(t *testing.T) {
 		arbitratorPubKey: arbitratorPrivKey.PubKey(),
 		feeSpk:           []byte{0x6a},
 		feeBasisPoints:   200,
+		cltvTimeout:      1000,
 		csvTimeout:       144,
 		tradeID:          tradeIDHash[:],
 	}
