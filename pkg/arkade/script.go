@@ -34,6 +34,9 @@ func WithDebugCallback(callback func(*StepInfo, *Engine) error) ExecuteOption {
 	}
 }
 
+// ReadArkadeScript reads an arkade script from an IntrospectorEntry and validates
+// it against the tapscript in the PSBT input. The entry contains the script and
+// witness data extracted from the Introspector Packet (OP_RETURN TLV).
 func ReadArkadeScript(ptx *psbt.Packet, signerPublicKey *btcec.PublicKey, entry IntrospectorEntry) (*ArkadeScript, error) {
 	inputIndex := int(entry.Vin)
 	if len(ptx.Inputs) <= inputIndex {
@@ -121,12 +124,14 @@ func (s *ArkadeScript) Execute(spendingTx *wire.MsgTx, prevoutFetcher txscript.P
 		opt(engine)
 	}
 
+	// Parse asset packet from transaction extension if present
 	ext, err := extension.NewExtensionFromTx(spendingTx)
 	if err == nil {
 		if ap := ext.GetAssetPacket(); ap != nil {
 			engine.SetAssetPacket(ap)
 		}
 	}
+	// If error, extension is not present - this is okay, just don't set it
 
 	if len(s.witness) > 0 {
 		engine.SetStack(s.witness)
