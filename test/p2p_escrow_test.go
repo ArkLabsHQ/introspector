@@ -32,8 +32,9 @@ type escrowParams struct {
 	arbitratorPubKey *btcec.PublicKey // dispute arbitrator — CSFS attestations only
 	feeSpk           []byte           // fee output scriptPubKey
 	feeBasisPoints   uint64           // fee as basis points (e.g. 200 = 2%)
-	csvTimeout       int64
-	tradeID          []byte // 32-byte external trade identifier
+	cltvTimeout      uint32           // absolute locktime (block height) for collaborative paths
+	csvTimeout       int64            // relative locktime (blocks) for unilateral exit paths
+	tradeID          []byte           // 32-byte external trade identifier
 }
 
 // releaseMsg returns the 32-byte RELEASE oracle message hash:
@@ -222,7 +223,7 @@ func extractWitnessInfo(spk []byte) (int, []byte, error) {
 }
 
 // createEscrowVtxoScript builds a VTXO tapscript tree with:
-//   - Collaborative path: MultisigClosure{owner, server, introspector_tweaked}
+//   - Collaborative path: CLTVMultisigClosure{owner, server, introspector_tweaked} with cltvTimeout
 //   - Unilateral exit 1: CSVMultisigClosure{buyer, seller} with csvTimeout
 //   - Unilateral exit 2: CSVMultisigClosure{seller} with csvTimeout * 2
 func createEscrowVtxoScript(
@@ -232,13 +233,16 @@ func createEscrowVtxoScript(
 ) script.TapscriptsVtxoScript {
 	return script.TapscriptsVtxoScript{
 		Closures: []script.Closure{
-			// Collaborative path (requires owner + server + introspector)
-			&script.MultisigClosure{
-				PubKeys: []*btcec.PublicKey{
-					ownerPubKey,
-					serverSigner,
-					arkade.ComputeArkadeScriptPublicKey(introspectorPubKey, arkadeScriptHash),
+			// Collaborative path (requires owner + server + introspector, CLTV-locked)
+			&script.CLTVMultisigClosure{
+				MultisigClosure: script.MultisigClosure{
+					PubKeys: []*btcec.PublicKey{
+						ownerPubKey,
+						serverSigner,
+						arkade.ComputeArkadeScriptPublicKey(introspectorPubKey, arkadeScriptHash),
+					},
 				},
+				Locktime: arklib.AbsoluteLocktime(p.cltvTimeout),
 			},
 			// Unilateral exit: buyer + seller with CSV
 			&script.CSVMultisigClosure{
@@ -329,6 +333,7 @@ func TestP2PEscrowSellerConfirm(t *testing.T) {
 		arbitratorPubKey: arbitratorPrivKey.PubKey(),
 		feeSpk:           feePkScript,
 		feeBasisPoints:   200, // 2% fee
+		cltvTimeout:      100, // absolute block height for collaborative path
 		csvTimeout:       144,
 		tradeID:          tradeIDHash[:],
 	}
@@ -607,6 +612,7 @@ func TestP2PEscrowArbitratorToBuyer(t *testing.T) {
 		arbitratorPubKey: arbitratorPrivKey.PubKey(),
 		feeSpk:           feePkScript,
 		feeBasisPoints:   200, // 2% fee
+		cltvTimeout:      100, // absolute block height for collaborative path
 		csvTimeout:       144,
 		tradeID:          tradeIDHash[:],
 	}
@@ -804,6 +810,7 @@ func TestP2PEscrowArbitratorToSeller(t *testing.T) {
 		arbitratorPubKey: arbitratorPrivKey.PubKey(),
 		feeSpk:           []byte{0x6a}, // unused for this leaf
 		feeBasisPoints:   200,
+		cltvTimeout:      100, // absolute block height for collaborative path
 		csvTimeout:       144,
 		tradeID:          tradeIDHash[:],
 	}
@@ -1003,6 +1010,7 @@ func TestP2PEscrowBuyerRefund(t *testing.T) {
 		arbitratorPubKey: arbitratorPrivKey.PubKey(),
 		feeSpk:           feePkScript,
 		feeBasisPoints:   200,
+		cltvTimeout:      100, // absolute block height for collaborative path
 		csvTimeout:       144,
 		tradeID:          tradeIDHash[:],
 	}
@@ -1234,6 +1242,7 @@ func TestP2PEscrowTopupPath(t *testing.T) {
 		arbitratorPubKey: arbitratorPrivKey.PubKey(),
 		feeSpk:           []byte{0x6a},
 		feeBasisPoints:   200,
+		cltvTimeout:      100, // absolute block height for collaborative path
 		csvTimeout:       144,
 		tradeID:          tradeIDHash[:],
 	}
