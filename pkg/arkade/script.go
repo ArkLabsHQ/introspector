@@ -51,6 +51,7 @@ func ReadArkadeScript(ptx *psbt.Packet, inputIndex int, signerPublicKey *btcec.P
 	expectedPublicKey := ComputeArkadeScriptPublicKey(signerPublicKey, scriptHash)
 	expectedPublicKeyXonly := schnorr.SerializePubKey(expectedPublicKey)
 
+	// TODO: allow any type of closure (condition, cltv ...)
 	var tapscript scriptlib.MultisigClosure
 	valid, err := tapscript.Decode(spendingTapscript.Script)
 	if err != nil {
