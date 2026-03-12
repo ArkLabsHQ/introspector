@@ -133,6 +133,15 @@ func (s *ArkadeScript) Execute(spendingTx *wire.MsgTx, prevoutFetcher txscript.P
 	}
 	// If error, extension is not present - this is okay, just don't set it
 
+	// Parse & set introspector packet from transaction outputs if present
+	packet, err := FindIntrospectorPacket(spendingTx)
+	if err != nil {
+		return fmt.Errorf("failed to parse introspector packet: %w", err)
+	}
+	if packet != nil {
+		engine.SetIntrospectorPacket(packet)
+	}
+
 	if len(s.witness) > 0 {
 		engine.SetStack(s.witness)
 	}
