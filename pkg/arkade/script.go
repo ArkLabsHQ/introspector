@@ -6,7 +6,6 @@ import (
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	scriptlib "github.com/arkade-os/arkd/pkg/ark-lib/script"
-	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil/psbt"
@@ -74,19 +73,10 @@ func ReadArkadeScript(ptx *psbt.Packet, inputIndex int, signerPublicKey *btcec.P
 		return nil, fmt.Errorf("tweaked arkade script public key not found in tapscript")
 	}
 
-	arkadeScriptWitness := make(wire.TxWitness, 0)
-	if len(entry.Witness) > 0 {
-		witness, err := txutils.ReadTxWitness(entry.Witness)
-		if err != nil {
-			return nil, fmt.Errorf("failed to deserialize witness: %w", err)
-		}
-		arkadeScriptWitness = witness
-	}
-
 	return &ArkadeScript{
 		script:  entry.Script,
 		hash:    scriptHash,
-		witness: arkadeScriptWitness,
+		witness: entry.Witness,
 		pubkey:  expectedPublicKey,
 		tapLeaf: txscript.NewBaseTapLeaf(spendingTapscript.Script),
 	}, nil

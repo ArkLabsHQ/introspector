@@ -60,7 +60,7 @@ services:
 
   arkd-wallet:
     restart: unless-stopped
-    image: ghcr.io/arkade-os/arkd-wallet:v0.9.0-rc.1
+    image: ghcr.io/arkade-os/arkd-wallet:v0.9.0
     container_name: arkd-wallet
     depends_on:
       - nbxplorer
@@ -77,7 +77,7 @@ services:
         target: /app/data
   arkd:
     build:
-      context: https://github.com/arkade-os/arkd.git#v0.9.0-rc.4
+      context: https://github.com/arkade-os/arkd.git#v0.9.0
       dockerfile: Dockerfile
     container_name: arkd
     restart: unless-stopped

@@ -18,6 +18,7 @@ import (
 	"modernc.org/mathutil"
 
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
@@ -3220,7 +3221,7 @@ func opcodeInspectInputArkadeScriptHash(op *opcode, data []byte, vm *Engine) err
 		return scriptError(txscript.ErrInvalidStackOperation, "no introspector packet")
 	}
 
-	entry, found := vm.introspectorPacket.FindEntryByVin(uint16(index))
+	entry, found := findEntryByVin(vm.introspectorPacket, int(index.Int32()))
 	if !found {
 		return scriptError(txscript.ErrInvalidStackOperation,
 			fmt.Sprintf("no introspector entry for vin %d", index))
@@ -3245,7 +3246,7 @@ func opcodeInspectInputArkadeWitnessHash(op *opcode, data []byte, vm *Engine) er
 		return scriptError(txscript.ErrInvalidStackOperation, "no introspector packet")
 	}
 
-	entry, found := vm.introspectorPacket.FindEntryByVin(uint16(index))
+	entry, found := findEntryByVin(vm.introspectorPacket, int(index.Int32()))
 	if !found {
 		return scriptError(txscript.ErrInvalidStackOperation,
 			fmt.Sprintf("no introspector entry for vin %d", index))
@@ -3256,7 +3257,18 @@ func opcodeInspectInputArkadeWitnessHash(op *opcode, data []byte, vm *Engine) er
 		return nil
 	}
 
-	hash := chainhash.TaggedHash(TagArkWitnessHash, entry.Witness)
+	var witBuf bytes.Buffer
+	_ = psbt.WriteTxWitness(&witBuf, entry.Witness)
+	hash := chainhash.TaggedHash(TagArkWitnessHash, witBuf.Bytes())
 	vm.dstack.PushByteArray(hash[:])
 	return nil
+}
+
+func findEntryByVin(packet IntrospectorPacket, index int) (IntrospectorEntry, bool) {
+	for _, entry := range packet {
+		if int(entry.Vin) == index {
+			return entry, true
+		}
+	}
+	return IntrospectorEntry{}, false
 }

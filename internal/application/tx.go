@@ -36,13 +36,13 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		return nil, fmt.Errorf("failed to parse introspector packet: %w", err)
 	}
 
-	if packet == nil || len(packet.Entries) == 0 {
+	if len(packet) == 0 {
 		return nil, fmt.Errorf("no introspector packet found in transaction")
 	}
 
 	signerPublicKey := s.signer.secretKey.PubKey()
 
-	for _, entry := range packet.Entries {
+	for _, entry := range packet {
 		inputIndex := int(entry.Vin)
 		script, err := arkade.ReadArkadeScript(arkPtx, inputIndex, signerPublicKey, entry)
 		if err != nil {

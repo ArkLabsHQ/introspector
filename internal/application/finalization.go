@@ -128,11 +128,11 @@ func getSignedInputs(ptx psbt.Packet, signerPublicKey *btcec.PublicKey) (map[wir
 		return nil, fmt.Errorf("failed to parse introspector packet: %w", err)
 	}
 
-	if packet == nil || len(packet.Entries) == 0 {
+	if len(packet) == 0 {
 		return nil, fmt.Errorf("no introspector packet found in transaction")
 	}
 
-	for _, entry := range packet.Entries {
+	for _, entry := range packet {
 		inputIndex := int(entry.Vin)
 
 		if inputIndex == 0 {
