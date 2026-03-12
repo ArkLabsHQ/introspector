@@ -177,7 +177,7 @@ func buildLeaf5TopupPath() ([]byte, error) {
 		AddInt64(0).
 		AddOp(arkade.OP_INSPECTOUTPUTSCRIPTPUBKEY).
 		AddOp(arkade.OP_1).AddOp(arkade.OP_EQUALVERIFY). // segwit v1
-		AddOp(arkade.OP_EQUALVERIFY).                     // witness programs match
+		AddOp(arkade.OP_EQUALVERIFY).                    // witness programs match
 		// output[0].value > input[current].value
 		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).
 		AddOp(arkade.OP_INSPECTINPUTVALUE).
@@ -243,7 +243,10 @@ func TestP2PEscrowSellerConfirm(t *testing.T) {
 	require.NoError(t, err)
 
 	introspectorClient, introspectorPubKey, conn := setupIntrospectorClient(t, ctx)
-	t.Cleanup(func() { conn.Close() })
+	t.Cleanup(func() {
+		//nolint:errcheck
+		conn.Close()
+	})
 
 	// Generate keys for the escrow roles
 	sellerPrivKey, err := btcec.NewPrivateKey()
@@ -491,6 +494,379 @@ func TestP2PEscrowSellerConfirm(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestP2PEscrowArbitratorToBuyer tests Leaf 1: server attests RELEASE, buyer claims.
+func TestP2PEscrowArbitratorToBuyer(t *testing.T) {
+	ctx := context.Background()
+
+	alice, _, alicePubKey, grpcAlice := setupArkSDKwithPublicKey(t)
+	t.Cleanup(func() { grpcAlice.Close() })
+
+	bob, bobWallet, bobPubKey, grpcBob := setupArkSDKwithPublicKey(t)
+	t.Cleanup(func() { grpcBob.Close() })
+
+	const escrowAmount = int64(50000)
+	const feeAmount = uint64(1000)
+
+	_ = fundAndSettleAlice(t, ctx, alice, escrowAmount)
+
+	_, bobOffchainAddr, _, err := bob.Receive(ctx)
+	require.NoError(t, err)
+	bobAddr, err := arklib.DecodeAddressV0(bobOffchainAddr)
+	require.NoError(t, err)
+
+	introspectorClient, introspectorPubKey, conn := setupIntrospectorClient(t, ctx)
+	t.Cleanup(func() {
+		//nolint:errcheck
+		conn.Close()
+	})
+
+	sellerPrivKey, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+	serverPrivKey, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	feePkScript, err := txscript.PayToTaprootScript(alicePubKey)
+	require.NoError(t, err)
+
+	params := &escrowParams{
+		sellerPubKey: sellerPrivKey.PubKey(),
+		buyerPubKey:  bobPubKey,
+		serverPubKey: serverPrivKey.PubKey(),
+		feeSpk:       feePkScript,
+		minFeeSats:   feeAmount,
+		csvTimeout:   144,
+	}
+
+	arkadeScript, err := buildLeaf1ArbitratorToBuyer(params)
+	require.NoError(t, err)
+
+	vtxoScript := createVtxoScriptWithArkadeScript(
+		bobPubKey, bobAddr.Signer, introspectorPubKey,
+		arkade.ArkadeScriptHash(arkadeScript),
+	)
+
+	vtxoTapKey, vtxoTapTree, err := vtxoScript.TapTree()
+	require.NoError(t, err)
+
+	escrowAddr := arklib.Address{
+		HRP:        "tark",
+		VtxoTapKey: vtxoTapKey,
+		Signer:     bobAddr.Signer,
+	}
+	escrowAddrStr, err := escrowAddr.EncodeV0()
+	require.NoError(t, err)
+
+	fundingTxid, err := alice.SendOffChain(
+		ctx, []types.Receiver{{To: escrowAddrStr, Amount: uint64(escrowAmount)}},
+	)
+	require.NoError(t, err)
+
+	indexerSvc := setupIndexer(t)
+	fundingTxs, err := indexerSvc.GetVirtualTxs(ctx, []string{fundingTxid})
+	require.NoError(t, err)
+	require.Len(t, fundingTxs.Txs, 1)
+
+	fundingPtx, err := psbt.NewFromRawBytes(strings.NewReader(fundingTxs.Txs[0]), true)
+	require.NoError(t, err)
+
+	var escrowOutput *wire.TxOut
+	var escrowOutputIndex uint32
+	for i, out := range fundingPtx.UnsignedTx.TxOut {
+		if bytes.Equal(out.PkScript[2:], schnorr.SerializePubKey(escrowAddr.VtxoTapKey)) {
+			escrowOutput = out
+			escrowOutputIndex = uint32(i)
+			break
+		}
+	}
+	require.NotNil(t, escrowOutput)
+
+	closure := vtxoScript.ForfeitClosures()[0]
+	closureTapscript, err := closure.Script()
+	require.NoError(t, err)
+
+	merkleProof, err := vtxoTapTree.GetTaprootMerkleProof(
+		txscript.NewBaseTapLeaf(closureTapscript).TapHash(),
+	)
+	require.NoError(t, err)
+
+	ctrlBlock, err := txscript.ParseControlBlock(merkleProof.ControlBlock)
+	require.NoError(t, err)
+
+	infos, err := grpcBob.GetInfo(ctx)
+	require.NoError(t, err)
+	checkpointScriptBytes, err := hex.DecodeString(infos.CheckpointTapscript)
+	require.NoError(t, err)
+
+	vtxoInput := offchain.VtxoInput{
+		Outpoint: &wire.OutPoint{
+			Hash:  fundingPtx.UnsignedTx.TxHash(),
+			Index: escrowOutputIndex,
+		},
+		Tapscript: &waddrmgr.Tapscript{
+			ControlBlock:   ctrlBlock,
+			RevealedScript: merkleProof.Script,
+		},
+		Amount:             escrowOutput.Value,
+		RevealedTapscripts: []string{hex.EncodeToString(closureTapscript)},
+	}
+
+	buyerRecvPrivKey, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+	buyerRecvPkScript, err := txscript.PayToTaprootScript(buyerRecvPrivKey.PubKey())
+	require.NoError(t, err)
+
+	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+	require.NoError(t, err)
+
+	releaseMsg := params.releaseMsg()
+
+	// Valid: server attests RELEASE + correct fee
+	serverSig := signCSFS(serverPrivKey, releaseMsg)
+
+	validTx, validCheckpoints, err := offchain.BuildTxs(
+		[]offchain.VtxoInput{vtxoInput},
+		[]*wire.TxOut{
+			{Value: escrowOutput.Value - int64(feeAmount), PkScript: buyerRecvPkScript},
+			{Value: int64(feeAmount), PkScript: feePkScript},
+		},
+		checkpointScriptBytes,
+	)
+	require.NoError(t, err)
+
+	addIntrospectorPacket(t, validTx, []arkade.IntrospectorEntry{
+		{Vin: 0, Script: arkadeScript, Witness: serializeWitness(serverSig, releaseMsg)},
+	})
+
+	require.NoError(t, debugExecuteArkadeScripts(t, validTx, introspectorPubKey))
+
+	encodedTx, err := validTx.B64Encode()
+	require.NoError(t, err)
+
+	signedTx, err := bobWallet.SignTransaction(ctx, explorer, encodedTx)
+	require.NoError(t, err)
+
+	encodedCheckpoints := make([]string, 0, len(validCheckpoints))
+	for _, cp := range validCheckpoints {
+		encoded, err := cp.B64Encode()
+		require.NoError(t, err)
+		encodedCheckpoints = append(encodedCheckpoints, encoded)
+	}
+
+	signedTx, signedByIntrospectorCheckpoints, err := introspectorClient.SubmitTx(ctx, signedTx, encodedCheckpoints)
+	require.NoError(t, err)
+
+	txid, _, signedByServerCheckpoints, err := grpcBob.SubmitTx(ctx, signedTx, encodedCheckpoints)
+	require.NoError(t, err)
+
+	finalCheckpoints := make([]string, 0, len(signedByServerCheckpoints))
+	for i, checkpoint := range signedByServerCheckpoints {
+		finalCheckpoint, err := bobWallet.SignTransaction(ctx, explorer, checkpoint)
+		require.NoError(t, err)
+
+		introspectorCheckpointPtx, err := psbt.NewFromRawBytes(strings.NewReader(signedByIntrospectorCheckpoints[i]), true)
+		require.NoError(t, err)
+
+		checkpointPtx, err := psbt.NewFromRawBytes(strings.NewReader(finalCheckpoint), true)
+		require.NoError(t, err)
+
+		checkpointPtx.Inputs[0].TaprootScriptSpendSig = append(
+			checkpointPtx.Inputs[0].TaprootScriptSpendSig,
+			introspectorCheckpointPtx.Inputs[0].TaprootScriptSpendSig...,
+		)
+
+		finalCheckpoint, err = checkpointPtx.B64Encode()
+		require.NoError(t, err)
+
+		finalCheckpoints = append(finalCheckpoints, finalCheckpoint)
+	}
+
+	err = grpcBob.FinalizeTx(ctx, txid, finalCheckpoints)
+	require.NoError(t, err)
+}
+
+// TestP2PEscrowArbitratorToSeller tests Leaf 3: server attests CANCEL, seller reclaims.
+func TestP2PEscrowArbitratorToSeller(t *testing.T) {
+	ctx := context.Background()
+
+	alice, _, _, grpcAlice := setupArkSDKwithPublicKey(t)
+	t.Cleanup(func() { grpcAlice.Close() })
+
+	bob, bobWallet, bobPubKey, grpcBob := setupArkSDKwithPublicKey(t)
+	t.Cleanup(func() { grpcBob.Close() })
+
+	const escrowAmount = int64(50000)
+
+	_ = fundAndSettleAlice(t, ctx, alice, escrowAmount)
+
+	_, bobOffchainAddr, _, err := bob.Receive(ctx)
+	require.NoError(t, err)
+	bobAddr, err := arklib.DecodeAddressV0(bobOffchainAddr)
+	require.NoError(t, err)
+
+	introspectorClient, introspectorPubKey, conn := setupIntrospectorClient(t, ctx)
+	t.Cleanup(func() {
+		//nolint:errcheck
+		conn.Close()
+	})
+
+	sellerPrivKey, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+	serverPrivKey, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	params := &escrowParams{
+		sellerPubKey: sellerPrivKey.PubKey(),
+		buyerPubKey:  bobPubKey,
+		serverPubKey: serverPrivKey.PubKey(),
+		feeSpk:       []byte{0x6a}, // unused for this leaf
+		minFeeSats:   1000,
+		csvTimeout:   144,
+	}
+
+	arkadeScript, err := buildLeaf3ArbitratorToSeller(params)
+	require.NoError(t, err)
+
+	vtxoScript := createVtxoScriptWithArkadeScript(
+		bobPubKey, bobAddr.Signer, introspectorPubKey,
+		arkade.ArkadeScriptHash(arkadeScript),
+	)
+
+	vtxoTapKey, vtxoTapTree, err := vtxoScript.TapTree()
+	require.NoError(t, err)
+
+	escrowAddr := arklib.Address{
+		HRP:        "tark",
+		VtxoTapKey: vtxoTapKey,
+		Signer:     bobAddr.Signer,
+	}
+	escrowAddrStr, err := escrowAddr.EncodeV0()
+	require.NoError(t, err)
+
+	fundingTxid, err := alice.SendOffChain(
+		ctx, []types.Receiver{{To: escrowAddrStr, Amount: uint64(escrowAmount)}},
+	)
+	require.NoError(t, err)
+
+	indexerSvc := setupIndexer(t)
+	fundingTxs, err := indexerSvc.GetVirtualTxs(ctx, []string{fundingTxid})
+	require.NoError(t, err)
+	require.Len(t, fundingTxs.Txs, 1)
+
+	fundingPtx, err := psbt.NewFromRawBytes(strings.NewReader(fundingTxs.Txs[0]), true)
+	require.NoError(t, err)
+
+	var escrowOutput *wire.TxOut
+	var escrowOutputIndex uint32
+	for i, out := range fundingPtx.UnsignedTx.TxOut {
+		if bytes.Equal(out.PkScript[2:], schnorr.SerializePubKey(escrowAddr.VtxoTapKey)) {
+			escrowOutput = out
+			escrowOutputIndex = uint32(i)
+			break
+		}
+	}
+	require.NotNil(t, escrowOutput)
+
+	closure := vtxoScript.ForfeitClosures()[0]
+	closureTapscript, err := closure.Script()
+	require.NoError(t, err)
+
+	merkleProof, err := vtxoTapTree.GetTaprootMerkleProof(
+		txscript.NewBaseTapLeaf(closureTapscript).TapHash(),
+	)
+	require.NoError(t, err)
+
+	ctrlBlock, err := txscript.ParseControlBlock(merkleProof.ControlBlock)
+	require.NoError(t, err)
+
+	infos, err := grpcBob.GetInfo(ctx)
+	require.NoError(t, err)
+	checkpointScriptBytes, err := hex.DecodeString(infos.CheckpointTapscript)
+	require.NoError(t, err)
+
+	vtxoInput := offchain.VtxoInput{
+		Outpoint: &wire.OutPoint{
+			Hash:  fundingPtx.UnsignedTx.TxHash(),
+			Index: escrowOutputIndex,
+		},
+		Tapscript: &waddrmgr.Tapscript{
+			ControlBlock:   ctrlBlock,
+			RevealedScript: merkleProof.Script,
+		},
+		Amount:             escrowOutput.Value,
+		RevealedTapscripts: []string{hex.EncodeToString(closureTapscript)},
+	}
+
+	sellerRecvPkScript, err := txscript.PayToTaprootScript(sellerPrivKey.PubKey())
+	require.NoError(t, err)
+
+	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+	require.NoError(t, err)
+
+	cancelMsg := params.cancelMsg()
+
+	// Valid: server attests CANCEL, full refund to seller
+	serverCancelSig := signCSFS(serverPrivKey, cancelMsg)
+
+	validTx, validCheckpoints, err := offchain.BuildTxs(
+		[]offchain.VtxoInput{vtxoInput},
+		[]*wire.TxOut{
+			{Value: escrowOutput.Value, PkScript: sellerRecvPkScript},
+		},
+		checkpointScriptBytes,
+	)
+	require.NoError(t, err)
+
+	addIntrospectorPacket(t, validTx, []arkade.IntrospectorEntry{
+		{Vin: 0, Script: arkadeScript, Witness: serializeWitness(serverCancelSig, cancelMsg)},
+	})
+
+	require.NoError(t, debugExecuteArkadeScripts(t, validTx, introspectorPubKey))
+
+	encodedTx, err := validTx.B64Encode()
+	require.NoError(t, err)
+
+	signedTx, err := bobWallet.SignTransaction(ctx, explorer, encodedTx)
+	require.NoError(t, err)
+
+	encodedCheckpoints := make([]string, 0, len(validCheckpoints))
+	for _, cp := range validCheckpoints {
+		encoded, err := cp.B64Encode()
+		require.NoError(t, err)
+		encodedCheckpoints = append(encodedCheckpoints, encoded)
+	}
+
+	signedTx, signedByIntrospectorCheckpoints, err := introspectorClient.SubmitTx(ctx, signedTx, encodedCheckpoints)
+	require.NoError(t, err)
+
+	txid, _, signedByServerCheckpoints, err := grpcBob.SubmitTx(ctx, signedTx, encodedCheckpoints)
+	require.NoError(t, err)
+
+	finalCheckpoints := make([]string, 0, len(signedByServerCheckpoints))
+	for i, checkpoint := range signedByServerCheckpoints {
+		finalCheckpoint, err := bobWallet.SignTransaction(ctx, explorer, checkpoint)
+		require.NoError(t, err)
+
+		introspectorCheckpointPtx, err := psbt.NewFromRawBytes(strings.NewReader(signedByIntrospectorCheckpoints[i]), true)
+		require.NoError(t, err)
+
+		checkpointPtx, err := psbt.NewFromRawBytes(strings.NewReader(finalCheckpoint), true)
+		require.NoError(t, err)
+
+		checkpointPtx.Inputs[0].TaprootScriptSpendSig = append(
+			checkpointPtx.Inputs[0].TaprootScriptSpendSig,
+			introspectorCheckpointPtx.Inputs[0].TaprootScriptSpendSig...,
+		)
+
+		finalCheckpoint, err = checkpointPtx.B64Encode()
+		require.NoError(t, err)
+
+		finalCheckpoints = append(finalCheckpoints, finalCheckpoint)
+	}
+
+	err = grpcBob.FinalizeTx(ctx, txid, finalCheckpoints)
+	require.NoError(t, err)
+}
+
 // TestP2PEscrowBuyerRefund tests Leaf 2: buyer attests CANCEL, seller reclaims.
 func TestP2PEscrowBuyerRefund(t *testing.T) {
 	ctx := context.Background()
@@ -511,7 +887,10 @@ func TestP2PEscrowBuyerRefund(t *testing.T) {
 	require.NoError(t, err)
 
 	introspectorClient, introspectorPubKey, conn := setupIntrospectorClient(t, ctx)
-	t.Cleanup(func() { conn.Close() })
+	t.Cleanup(func() {
+		//nolint:errcheck
+		conn.Close()
+	})
 
 	sellerPrivKey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
@@ -739,7 +1118,10 @@ func TestP2PEscrowTopupPath(t *testing.T) {
 	require.NoError(t, err)
 
 	introspectorClient, introspectorPubKey, conn := setupIntrospectorClient(t, ctx)
-	t.Cleanup(func() { conn.Close() })
+	t.Cleanup(func() {
+		//nolint:errcheck
+		conn.Close()
+	})
 
 	// Build the topup Arkade script
 	arkadeScript, err := buildLeaf5TopupPath()
