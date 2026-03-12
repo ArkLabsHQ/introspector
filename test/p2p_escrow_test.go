@@ -45,20 +45,24 @@ func (p *escrowParams) tradeID() []byte {
 	return sum
 }
 
-// releaseMsg returns the 33-byte RELEASE oracle message: 0x01 || trade_id.
+// releaseMsg returns the 32-byte RELEASE oracle message hash:
+// SHA256(0x01 || trade_id).
 func (p *escrowParams) releaseMsg() []byte {
-	msg := make([]byte, 33)
-	msg[0] = 0x01
-	copy(msg[1:], p.tradeID())
-	return msg
+	preimage := make([]byte, 33)
+	preimage[0] = 0x01
+	copy(preimage[1:], p.tradeID())
+	hash := sha256.Sum256(preimage)
+	return hash[:]
 }
 
-// cancelMsg returns the 33-byte CANCEL oracle message: 0x02 || trade_id.
+// cancelMsg returns the 32-byte CANCEL oracle message hash:
+// SHA256(0x02 || trade_id).
 func (p *escrowParams) cancelMsg() []byte {
-	msg := make([]byte, 33)
-	msg[0] = 0x02
-	copy(msg[1:], p.tradeID())
-	return msg
+	preimage := make([]byte, 33)
+	preimage[0] = 0x02
+	copy(preimage[1:], p.tradeID())
+	hash := sha256.Sum256(preimage)
+	return hash[:]
 }
 
 // buildLeaf0SellerConfirm builds the Arkade script for Leaf 0:
