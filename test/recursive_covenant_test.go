@@ -44,8 +44,8 @@ func TestRecursivePolicy(t *testing.T) {
 		maxAllowedOutput = int64(1000)
 	)
 
-	// Fund Alice so she can send to Bob's policy VTXO.
-	_ = fundAndSettleAlice(t, ctx, alice, policyAmount)
+	// Fund Alice so she can send to Bob's policy VTXOs.
+	_ = fundAndSettleAlice(t, ctx, alice, 2*policyAmount)
 
 	_, bobOffchainAddr, _, err := bob.Receive(ctx)
 	require.NoError(t, err)
@@ -110,9 +110,13 @@ func TestRecursivePolicy(t *testing.T) {
 	policyAddrStr, err := policyAddr.EncodeV0()
 	require.NoError(t, err)
 
-	// Alice sends 20k sats to Bob's policy VTXO.
+	// fund 2 policy VTXOs in order to test multi-input rejection
 	fundingTxid, err := alice.SendOffChain(
-		ctx, []types.Receiver{{To: policyAddrStr, Amount: uint64(policyAmount)}},
+		ctx,
+		[]types.Receiver{
+			{To: policyAddrStr, Amount: uint64(policyAmount)},
+			{To: policyAddrStr, Amount: uint64(policyAmount)},
+		},
 	)
 	require.NoError(t, err)
 	require.NotEmpty(t, fundingTxid)
@@ -127,16 +131,19 @@ func TestRecursivePolicy(t *testing.T) {
 	fundingPtx, err := psbt.NewFromRawBytes(strings.NewReader(fundingTxs.Txs[0]), true)
 	require.NoError(t, err)
 
-	var policyOutput *wire.TxOut
-	var policyOutputIndex uint32
+	var policyOutputs []*wire.TxOut
+	var policyOutputIndexes []uint32
 	for i, out := range fundingPtx.UnsignedTx.TxOut {
 		if bytes.Equal(out.PkScript[2:], schnorr.SerializePubKey(policyAddr.VtxoTapKey)) {
-			policyOutput = out
-			policyOutputIndex = uint32(i)
-			break
+			policyOutputs = append(policyOutputs, out)
+			policyOutputIndexes = append(policyOutputIndexes, uint32(i))
 		}
 	}
-	require.NotNil(t, policyOutput)
+	require.GreaterOrEqual(t, len(policyOutputs), 2)
+	policyOutput := policyOutputs[0]
+	policyOutputIndex := policyOutputIndexes[0]
+	policyOutput2 := policyOutputs[1]
+	policyOutputIndex2 := policyOutputIndexes[1]
 
 	closure := policyVtxoScript.ForfeitClosures()[0]
 	policyTapscript, err := closure.Script()
@@ -170,8 +177,19 @@ func TestRecursivePolicy(t *testing.T) {
 		Amount:             policyOutput.Value,
 		RevealedTapscripts: []string{hex.EncodeToString(policyTapscript)},
 	}
+	vtxoInput2 := offchain.VtxoInput{
+		Outpoint: &wire.OutPoint{
+			Hash:  fundingPtx.UnsignedTx.TxHash(),
+			Index: policyOutputIndex2,
+		},
+		Tapscript:          tapscript,
+		Amount:             policyOutput2.Value,
+		RevealedTapscripts: []string{hex.EncodeToString(policyTapscript)},
+	}
 
 	inputPkScript, err := checkpointInputPkScript(vtxoInput, checkpointScriptBytes)
+	require.NoError(t, err)
+	inputPkScript2, err := checkpointInputPkScript(vtxoInput2, checkpointScriptBytes)
 	require.NoError(t, err)
 
 	carolPrivKey, err := btcec.NewPrivateKey()
@@ -269,15 +287,20 @@ func TestRecursivePolicy(t *testing.T) {
 		}
 	}
 
-	submitAndExpectFailure := func(outputs []*wire.TxOut) {
+	submitAndExpectFailure := func(inputs []offchain.VtxoInput, outputs []*wire.TxOut) {
 		candidateTx, checkpoints, err := offchain.BuildTxs(
-			[]offchain.VtxoInput{vtxoInput},
+			inputs,
 			outputs,
 			checkpointScriptBytes,
 		)
 		require.NoError(t, err)
 
-		addIntrospectorPacket(t, candidateTx, []arkade.IntrospectorEntry{{Vin: 0, Script: arkadeScript}})
+		entries := make([]arkade.IntrospectorEntry, 0, len(inputs))
+		for i := range inputs {
+			entries = append(entries, arkade.IntrospectorEntry{Vin: uint16(i), Script: arkadeScript})
+		}
+
+		addIntrospectorPacket(t, candidateTx, entries)
 
 		encodedTx, err := candidateTx.B64Encode()
 		require.NoError(t, err)
@@ -297,21 +320,28 @@ func TestRecursivePolicy(t *testing.T) {
 		require.Contains(t, err.Error(), "failed to process transaction")
 	}
 
+	// Invalid: policy script requires exactly one input.
+	submitAndExpectFailure([]offchain.VtxoInput{vtxoInput, vtxoInput2}, []*wire.TxOut{
+		{Value: maxAllowedOutput, PkScript: carolPkScript},
+		{Value: policyOutput.Value - maxAllowedOutput, PkScript: inputPkScript},
+		{Value: policyOutput2.Value, PkScript: inputPkScript2},
+	})
+
 	// Invalid: recipient amount is not <= 1000.
-	submitAndExpectFailure([]*wire.TxOut{
+	submitAndExpectFailure([]offchain.VtxoInput{vtxoInput}, []*wire.TxOut{
 		{Value: maxAllowedOutput + 1, PkScript: carolPkScript},
 		{Value: policyOutput.Value - int64(maxAllowedOutput+1), PkScript: inputPkScript},
 	})
 
 	// Invalid: recursive output does not receive the full remainder
-	submitAndExpectFailure([]*wire.TxOut{
+	submitAndExpectFailure([]offchain.VtxoInput{vtxoInput}, []*wire.TxOut{
 		{Value: maxAllowedOutput, PkScript: carolPkScript},
 		{Value: policyOutput.Value - maxAllowedOutput - 1, PkScript: inputPkScript},
 		{Value: 1, PkScript: carolPkScript},
 	})
 
 	// Invalid: output 1 does not return to the policy scriptPubKey.
-	submitAndExpectFailure([]*wire.TxOut{
+	submitAndExpectFailure([]offchain.VtxoInput{vtxoInput}, []*wire.TxOut{
 		{Value: maxAllowedOutput, PkScript: carolPkScript},
 		{Value: policyOutput.Value - maxAllowedOutput, PkScript: alicePkScript},
 	})
