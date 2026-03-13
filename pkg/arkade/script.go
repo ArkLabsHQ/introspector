@@ -13,6 +13,24 @@ import (
 	"github.com/btcsuite/btcd/wire"
 )
 
+// closurePubKeys extracts the PubKeys from any closure type that embeds MultisigClosure.
+func closurePubKeys(c scriptlib.Closure) []*btcec.PublicKey {
+	switch v := c.(type) {
+	case *scriptlib.MultisigClosure:
+		return v.PubKeys
+	case *scriptlib.CLTVMultisigClosure:
+		return v.PubKeys
+	case *scriptlib.CSVMultisigClosure:
+		return v.PubKeys
+	case *scriptlib.ConditionMultisigClosure:
+		return v.PubKeys
+	case *scriptlib.ConditionCSVMultisigClosure:
+		return v.PubKeys
+	default:
+		return nil
+	}
+}
+
 type ArkadeScript struct {
 	script  []byte
 	hash    []byte
@@ -50,18 +68,18 @@ func ReadArkadeScript(ptx *psbt.Packet, inputIndex int, signerPublicKey *btcec.P
 	expectedPublicKey := ComputeArkadeScriptPublicKey(signerPublicKey, scriptHash)
 	expectedPublicKeyXonly := schnorr.SerializePubKey(expectedPublicKey)
 
-	// TODO: allow any type of closure (condition, cltv ...)
-	var tapscript scriptlib.MultisigClosure
-	valid, err := tapscript.Decode(spendingTapscript.Script)
+	closure, err := scriptlib.DecodeClosure(spendingTapscript.Script)
 	if err != nil {
 		return nil, fmt.Errorf("unexpected error while decoding tapscript: %w", err)
 	}
-	if !valid {
-		return nil, fmt.Errorf("spendingtapscript is not a MultisigClosure")
+
+	pubkeys := closurePubKeys(closure)
+	if pubkeys == nil {
+		return nil, fmt.Errorf("decoded closure has no public keys")
 	}
 
 	found := false
-	for _, pubkey := range tapscript.PubKeys {
+	for _, pubkey := range pubkeys {
 		xonly := schnorr.SerializePubKey(pubkey)
 		if bytes.Equal(xonly, expectedPublicKeyXonly) {
 			found = true
