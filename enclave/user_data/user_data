@@ -1,0 +1,94 @@
+Content-Type: multipart/mixed; boundary="//"
+MIME-Version: 1.0
+
+--//
+Content-Type: text/cloud-config; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+Content-Disposition: attachment; filename="cloud-config.txt"
+
+#cloud-config
+bootcmd:
+  - [ dnf, install, aws-nitro-enclaves-cli, aws-nitro-enclaves-cli-devel, htop, git, jq, unzip, -y ]
+
+--//
+Content-Type: text/x-shellscript; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+Content-Disposition: attachment; filename="userdata.txt"
+
+#!/bin/bash
+
+exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
+
+set -x
+set +e
+
+usermod -aG docker ec2-user
+usermod -aG ne ec2-user
+
+ALLOCATOR_YAML=/etc/nitro_enclaves/allocator.yaml
+MEM_KEY=memory_mib
+CPU_KEY=cpu_count
+DEFAULT_MEM=6144
+DEFAULT_CPU=2
+
+sed -r "s/^(\s*$MEM_KEY\s*:\s*).*/\1$DEFAULT_MEM/" -i "$ALLOCATOR_YAML"
+sed -r "s/^(\s*$CPU_KEY\s*:\s*).*/\1$DEFAULT_CPU/" -i "$ALLOCATOR_YAML"
+
+VSOCK_PROXY_YAML=/etc/nitro_enclaves/vsock-proxy.yaml
+cat <<EOF > $VSOCK_PROXY_YAML
+allowlist:
+- {address: kms.${__REGION__}.amazonaws.com, port: 443}
+- {address: kms-fips.${__REGION__}.amazonaws.com, port: 443}
+- {address: ssm.${__REGION__}.amazonaws.com, port: 443}
+- {address: ssm-fips.${__REGION__}.amazonaws.com, port: 443}
+- {address: sts.${__REGION__}.amazonaws.com, port: 443}
+- {address: 169.254.169.254, port: 80}
+
+EOF
+
+systemctl enable --now docker
+systemctl enable --now nitro-enclaves-allocator.service
+systemctl enable --now nitro-enclaves-vsock-proxy.service
+
+cd /home/ec2-user
+
+if [[ ! -d ./app/server ]]; then
+  mkdir -p ./app/server
+  chown -R ec2-user:ec2-user ./app
+fi
+
+# Download pre-built EIF from S3 (built reproducibly with Nix)
+aws s3 cp ${__EIF_S3_URL__} /home/ec2-user/app/server/enclave.eif
+chmod 644 /home/ec2-user/app/server/enclave.eif
+chown ec2-user:ec2-user /home/ec2-user/app/server/enclave.eif
+
+# Pull gvproxy image for outbound networking
+ACCOUNT_ID=$( aws sts get-caller-identity | jq -r '.Account' )
+REGION=$(TOKEN=`curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600"` && curl -H "X-aws-ec2-metadata-token: $TOKEN" -v http://169.254.169.254/latest/meta-data/placement/region)
+aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
+docker pull ${__GVPROXY_IMAGE_URI__}
+docker tag ${__GVPROXY_IMAGE_URI__} gvproxy:latest
+
+aws s3 cp ${__ENCLAVE_INIT_S3_URL__} /home/ec2-user/app/enclave_init.sh
+chmod +x /home/ec2-user/app/enclave_init.sh
+
+aws s3 cp ${__ENCLAVE_INIT_SYSTEMD_S3_URL__} /etc/systemd/system/enclave-watchdog.service
+aws s3 cp ${__IMDS_SYSTEMD_S3_URL__} /etc/systemd/system/enclave-imds-proxy.service
+aws s3 cp ${__GVPROXY_SYSTEMD_S3_URL__} /etc/systemd/system/gvproxy.service
+
+cat <<EOF >> /etc/environment
+ENCLAVE_APP_NAME=${__APP_NAME__}
+EIF_PATH=/home/ec2-user/app/server/enclave.eif
+ENCLAVE_NITRIDING_ENABLED=true
+ENCLAVE_NITRIDING_FQDN=example.com
+ENCLAVE_KMS_KEY_ID=${__KMS_KEY_ID__}
+ENCLAVE_DEPLOYMENT=${__DEV_MODE__}
+ENCLAVE_AWS_REGION=${__REGION__}
+EOF
+
+systemctl enable --now enclave-watchdog.service
+systemctl enable --now enclave-imds-proxy.service
+systemctl enable --now gvproxy.service
+--//--

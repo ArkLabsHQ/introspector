@@ -1,0 +1,27 @@
+name: introspector
+version: v0.2.0
+region: us-east-1
+account: "043673801220"
+prefix: dev
+instance_type: m6i.xlarge
+nix_image: nixos/nix:2.24.9
+lock_kms: false
+
+app:
+  source: nix
+  nix_owner: ArkLabsHQ
+  nix_repo: introspector
+  nix_rev: dcec46c447261a0dc7895cae7771283fafc803d2
+  nix_hash: "sha256-3Ce/GX4O2Mg0PH82ESGx7MMYJw+mYZnnrIkdCHTVluI="
+  nix_vendor_hash: "sha256-Zk7onQE+KLrctHt4H5NBfxorySkl+dzkPOhRRky8yI4="
+  nix_sub_packages:
+    - cmd
+  binary_name: introspector
+  
+env:
+  INTROSPECTOR_PORT: "7074"
+
+secrets:
+  - name: signing_key
+    env_var: INTRPSOECTOR_SIGNING_KEY
+
