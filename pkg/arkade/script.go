@@ -2,6 +2,7 @@ package arkade
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
@@ -12,6 +13,8 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 )
+
+var ErrTweakedArkadePubKeyNotFound = errors.New("tweaked arkade script public key not found in tapscript")
 
 type ArkadeScript struct {
 	script  []byte
@@ -70,7 +73,7 @@ func ReadArkadeScript(ptx *psbt.Packet, inputIndex int, signerPublicKey *btcec.P
 	}
 
 	if !found {
-		return nil, fmt.Errorf("tweaked arkade script public key not found in tapscript")
+		return nil, ErrTweakedArkadePubKeyNotFound
 	}
 
 	return &ArkadeScript{

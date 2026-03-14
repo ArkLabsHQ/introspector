@@ -166,13 +166,12 @@ func FindIntrospectorPacket(tx *wire.MsgTx) (IntrospectorPacket, error) {
 		if pkt.Type() != PacketType {
 			continue
 		}
-		unknwonPacket, ok := pkt.(extension.UnknownPacket)
+		unknownPacket, ok := pkt.(extension.UnknownPacket)
 		if !ok {
 			continue
 		}
-		
-		return DeserializeIntrospectorPacket(unknwonPacket.Data)
+
+		return DeserializeIntrospectorPacket(unknownPacket.Data)
 	}
 	return nil, nil
 }
-

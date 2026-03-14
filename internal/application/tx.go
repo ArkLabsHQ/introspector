@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/ArkLabsHQ/introspector/pkg/arkade"
@@ -42,17 +43,21 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 
 	signerPublicKey := s.signer.secretKey.PubKey()
 
+	var nSigned = 0
 	for _, entry := range packet {
 		inputIndex := int(entry.Vin)
 		script, err := arkade.ReadArkadeScript(arkPtx, inputIndex, signerPublicKey, entry)
 		if err != nil {
-			// skip if the input is not a valid arkade script
-			continue
+			// there may be input/entry pairs attributed to a different signer
+			if errors.Is(err, arkade.ErrTweakedArkadePubKeyNotFound) && len(arkPtx.Inputs) > 1 {
+				continue
+			}
+			return nil, fmt.Errorf("failed to read arkade script: %w vin=%d", err, inputIndex)
 		}
 
 		log.Debugf("executing arkade script: %x", script.Script())
 		if err := script.Execute(arkPtx.UnsignedTx, prevoutFetcher, inputIndex); err != nil {
-			return nil, fmt.Errorf("failed to execute arkade script: %w", err)
+			return nil, fmt.Errorf("failed to execute arkade script: %w vin=%d", err, inputIndex)
 		}
 		log.Debugf("execution of %x succeeded", script.Script())
 
@@ -75,6 +80,12 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		if err := s.signer.signInput(checkpointPtx, 0, script.Hash(), checkpointPrevoutFetcher); err != nil {
 			return nil, fmt.Errorf("failed to sign checkpoint input %d: %w", inputIndex, err)
 		}
+
+		nSigned++
+	}
+
+	if nSigned == 0 {
+		return nil, fmt.Errorf("failed to find any valid input/entry pairs")
 	}
 
 	signedCheckpointTxs := make([]*psbt.Packet, 0, len(orderedCheckpointTxids))
