@@ -34,7 +34,8 @@ func WithDebugCallback(callback func(*StepInfo, *Engine) error) ExecuteOption {
 	}
 }
 
-func ReadArkadeScript(ptx *psbt.Packet, inputIndex int, signerPublicKey *btcec.PublicKey, entry IntrospectorEntry) (*ArkadeScript, error) {
+func ReadArkadeScript(ptx *psbt.Packet, signerPublicKey *btcec.PublicKey, entry IntrospectorEntry) (*ArkadeScript, error) {
+	inputIndex := int(entry.Vin)
 	if len(ptx.Inputs) <= inputIndex {
 		return nil, fmt.Errorf("input index out of range")
 	}
@@ -53,18 +54,29 @@ func ReadArkadeScript(ptx *psbt.Packet, inputIndex int, signerPublicKey *btcec.P
 	expectedPublicKey := ComputeArkadeScriptPublicKey(signerPublicKey, scriptHash)
 	expectedPublicKeyXonly := schnorr.SerializePubKey(expectedPublicKey)
 
-	// TODO: allow any type of closure (condition, cltv ...)
-	var tapscript scriptlib.MultisigClosure
-	valid, err := tapscript.Decode(spendingTapscript.Script)
+	closure, err := scriptlib.DecodeClosure(spendingTapscript.Script)
 	if err != nil {
-		return nil, fmt.Errorf("unexpected error while decoding tapscript: %w", err)
+		return nil, fmt.Errorf("failed to decode tapscript: %w", err)
 	}
-	if !valid {
-		return nil, fmt.Errorf("spendingtapscript is not a MultisigClosure")
+
+	var pubkeys []*btcec.PublicKey
+	switch c := closure.(type) {
+	case *scriptlib.MultisigClosure:
+		pubkeys = c.PubKeys
+	case *scriptlib.CSVMultisigClosure:
+		pubkeys = c.PubKeys
+	case *scriptlib.CLTVMultisigClosure:
+		pubkeys = c.PubKeys
+	case *scriptlib.ConditionMultisigClosure:
+		pubkeys = c.PubKeys
+	case *scriptlib.ConditionCSVMultisigClosure:
+		pubkeys = c.PubKeys
+	default:
+		return nil, fmt.Errorf("unsupported closure type: %T", closure)
 	}
 
 	found := false
-	for _, pubkey := range tapscript.PubKeys {
+	for _, pubkey := range pubkeys {
 		xonly := schnorr.SerializePubKey(pubkey)
 		if bytes.Equal(xonly, expectedPublicKeyXonly) {
 			found = true

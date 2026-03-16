@@ -151,7 +151,7 @@ func getSignedInputs(ptx psbt.Packet, signerPublicKey *btcec.PublicKey) (map[wir
 			continue // not signed: skip
 		}
 
-		script, err := arkade.ReadArkadeScript(&ptx, inputIndex, signerPublicKey, entry)
+		script, err := arkade.ReadArkadeScript(&ptx, signerPublicKey, entry)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read arkade script: %w", err)
 		}

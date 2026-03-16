@@ -728,7 +728,7 @@ func debugExecuteArkadeScripts(t *testing.T, ptx *psbt.Packet, signerPublicKey *
 
 	for _, entry := range packet {
 		inputIndex := int(entry.Vin)
-		script, err := arkade.ReadArkadeScript(ptx, inputIndex, signerPublicKey, entry)
+		script, err := arkade.ReadArkadeScript(ptx, signerPublicKey, entry)
 		if err != nil {
 			return fmt.Errorf("failed to read arkade script at input %d: %w", inputIndex, err)
 		}
