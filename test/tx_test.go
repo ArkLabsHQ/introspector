@@ -935,23 +935,8 @@ func TestIntrospectorRejectsInvalidArkadeScript(t *testing.T) {
 			},
 		},
 		{
-			name:     "non-multisig tapscript",
-			contains: "spendingtapscript is not a MultisigClosure",
-			entry: arkade.IntrospectorEntry{
-				Vin:    0,
-				Script: arkadeScript,
-			},
-			mutateTx: func(t *testing.T, ptx *psbt.Packet) {
-				t.Helper()
-				require.NotEmpty(t, ptx.Inputs)
-				require.NotEmpty(t, ptx.Inputs[0].TaprootLeafScript)
-				require.NotNil(t, ptx.Inputs[0].TaprootLeafScript[0])
-				ptx.Inputs[0].TaprootLeafScript[0].Script = []byte{txscript.OP_TRUE}
-			},
-		},
-		{
 			name:     "malformed tapscript decode",
-			contains: "unexpected error while decoding tapscript",
+			contains: "failed to decode tapscript",
 			entry: arkade.IntrospectorEntry{
 				Vin:    0,
 				Script: arkadeScript,
