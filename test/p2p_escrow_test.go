@@ -147,7 +147,7 @@ func buildLeaf0SellerConfirm(p *escrowParams) ([]byte, error) {
 		// Check output[1] value >= computed min fee
 		AddInt64(1).
 		AddOp(arkade.OP_INSPECTOUTPUTVALUE).
-		AddOp(arkade.OP_SWAP).   // [fee_output, min_fee]
+		AddOp(arkade.OP_SWAP). // [fee_output, min_fee]
 		AddOp(arkade.OP_GREATERTHANOREQUAL64).
 		AddOp(arkade.OP_VERIFY). // fee check must pass
 		// Enforce buyer amount: output[0].value >= inputValue - output[1].value
@@ -208,7 +208,7 @@ func buildLeaf2BuyerRefund(p *escrowParams) ([]byte, error) {
 		AddOp(arkade.OP_INSPECTINPUTVALUE).
 		AddInt64(0).
 		AddOp(arkade.OP_INSPECTOUTPUTVALUE).
-		AddOp(arkade.OP_SWAP).               // [seller_output, inputValue]
+		AddOp(arkade.OP_SWAP). // [seller_output, inputValue]
 		AddOp(arkade.OP_GREATERTHANOREQUAL64).
 		Script()
 }

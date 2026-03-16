@@ -936,7 +936,7 @@ func TestIntrospectorRejectsInvalidArkadeScript(t *testing.T) {
 		},
 		{
 			name:     "non-multisig tapscript",
-			contains: "unexpected error while decoding tapscript",
+			contains: "failed to decode tapscript",
 			entry: arkade.IntrospectorEntry{
 				Vin:    0,
 				Script: arkadeScript,
@@ -951,7 +951,7 @@ func TestIntrospectorRejectsInvalidArkadeScript(t *testing.T) {
 		},
 		{
 			name:     "malformed tapscript decode",
-			contains: "unexpected error while decoding tapscript",
+			contains: "failed to decode tapscript",
 			entry: arkade.IntrospectorEntry{
 				Vin:    0,
 				Script: arkadeScript,
