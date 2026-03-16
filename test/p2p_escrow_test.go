@@ -74,7 +74,6 @@ func (p *escrowParams) cancelMsg() []byte {
 //
 //	<seller_pk> OP_CHECKSIGFROMSTACK(RELEASE) OP_VERIFY   # seller attests RELEASE
 //	OP_INSPECTNUMINPUTS 1 OP_EQUALVERIFY                  # single input only
-//	OP_INSPECTNUMOUTPUTS 2 OP_EQUALVERIFY                 # exactly 2 outputs (buyer + fee)
 //	0 OP_INSPECTOUTPUTSCRIPTPUBKEY                        # output[0] = buyer destination
 //	  <buyer_ver> OP_EQUALVERIFY
 //	  <buyer_prog> OP_EQUALVERIFY
@@ -114,10 +113,6 @@ func buildLeaf0SellerConfirm(p *escrowParams) ([]byte, error) {
 		// Enforce single input
 		AddOp(arkade.OP_INSPECTNUMINPUTS).
 		AddOp(arkade.OP_1).
-		AddOp(arkade.OP_EQUALVERIFY).
-		// Enforce exactly 2 outputs (buyer + fee)
-		AddOp(arkade.OP_INSPECTNUMOUTPUTS).
-		AddInt64(2).
 		AddOp(arkade.OP_EQUALVERIFY).
 		// Check output[0] scriptPubKey == pre-approved buyer destination
 		AddInt64(0).
@@ -172,7 +167,6 @@ func buildLeaf0SellerConfirm(p *escrowParams) ([]byte, error) {
 // Script:
 //
 //	<buyer_pk> OP_CHECKSIGFROMSTACK(CANCEL) OP_VERIFY     # buyer attests CANCEL
-//	OP_INSPECTNUMOUTPUTS 1 OP_EQUALVERIFY                 # exactly 1 output (seller)
 //	0 OP_INSPECTOUTPUTSCRIPTPUBKEY                        # output[0] = seller destination
 //	  <seller_ver> OP_EQUALVERIFY
 //	  <seller_prog> OP_EQUALVERIFY
@@ -192,10 +186,6 @@ func buildLeaf2BuyerRefund(p *escrowParams) ([]byte, error) {
 		AddData(schnorr.SerializePubKey(p.buyerPubKey)).
 		AddOp(arkade.OP_CHECKSIGFROMSTACK).
 		AddOp(arkade.OP_VERIFY).
-		// Enforce exactly 1 output (seller only)
-		AddOp(arkade.OP_INSPECTNUMOUTPUTS).
-		AddOp(arkade.OP_1).
-		AddOp(arkade.OP_EQUALVERIFY).
 		// Check output[0] scriptPubKey == pre-approved seller destination
 		AddInt64(0).
 		AddOp(arkade.OP_INSPECTOUTPUTSCRIPTPUBKEY).
