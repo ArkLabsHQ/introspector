@@ -46,7 +46,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 	var nSigned = 0
 	for _, entry := range packet {
 		inputIndex := int(entry.Vin)
-		script, err := arkade.ReadArkadeScript(arkPtx, inputIndex, signerPublicKey, entry)
+		script, err := arkade.ReadArkadeScript(arkPtx, signerPublicKey, entry)
 		if err != nil {
 			// there may be input/entry pairs attributed to a different signer
 			if errors.Is(err, arkade.ErrTweakedArkadePubKeyNotFound) && len(arkPtx.Inputs) > 1 {

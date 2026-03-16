@@ -34,7 +34,8 @@ func WithDebugCallback(callback func(*StepInfo, *Engine) error) ExecuteOption {
 	}
 }
 
-func ReadArkadeScript(ptx *psbt.Packet, inputIndex int, signerPublicKey *btcec.PublicKey, entry IntrospectorEntry) (*ArkadeScript, error) {
+func ReadArkadeScript(ptx *psbt.Packet, signerPublicKey *btcec.PublicKey, entry IntrospectorEntry) (*ArkadeScript, error) {
+	inputIndex := int(entry.Vin)
 	if len(ptx.Inputs) <= inputIndex {
 		return nil, fmt.Errorf("input index out of range")
 	}

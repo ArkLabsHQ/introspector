@@ -998,7 +998,7 @@ func TestIntrospectorRejectsInvalidArkadeScript(t *testing.T) {
 				require.Len(t, packet, 1)
 
 				entry := packet[0]
-				_, err = arkade.ReadArkadeScript(invalidTx, int(entry.Vin), introspectorPublicKey, entry)
+				_, err = arkade.ReadArkadeScript(invalidTx, introspectorPublicKey, entry)
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tc.contains)
 			}

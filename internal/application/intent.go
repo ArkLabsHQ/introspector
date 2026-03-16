@@ -47,7 +47,7 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 			continue
 		}
 
-		script, err := arkade.ReadArkadeScript(ptx, inputIndex, signerPublicKey, entry)
+		script, err := arkade.ReadArkadeScript(ptx, signerPublicKey, entry)
 		if err != nil {
 			// skip if the input is not a valid arkade script
 			continue
