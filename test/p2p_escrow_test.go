@@ -29,15 +29,18 @@ import (
 // Entities:
 //   - buyer: sends fiat, claims BTC after authorization
 //   - seller: funds escrow, receives fiat, attests to payment receipt
-//   - arbitrator: resolves disputes via CSFS attestation
-//   - operator: Ark server — signs collaborative MultisigClosure (from Ark address)
-//   - introspector: validates Arkade scripts (key derived from operator address)
+//   - arbitrator: resolves disputes by signing transactions directly (OP_CHECKSIG)
+//   - operator: Ark server — signs all collaborative closures (from Ark address)
+//   - introspector: validates Arkade scripts (key tweaked with arkade script hash)
 type escrowParams struct {
 	sellerPubKey     *btcec.PublicKey
 	buyerPubKey      *btcec.PublicKey
-	arbitratorPubKey *btcec.PublicKey // dispute arbitrator — CSFS attestations only
+	arbitratorPubKey *btcec.PublicKey // dispute arbitrator — signs tx directly via OP_CHECKSIG
+	buyerSpk         []byte           // pre-approved buyer destination scriptPubKey
+	sellerSpk        []byte           // pre-approved seller destination scriptPubKey
 	feeSpk           []byte           // fee output scriptPubKey
 	feeBasisPoints   uint64           // fee as basis points (e.g. 200 = 2%)
+	cltvTimeout      int64            // absolute locktime (block height) for seller self-release
 	csvTimeout       int64            // relative locktime (blocks) for unilateral exit paths
 	tradeID          []byte           // 32-byte external trade identifier
 }
@@ -63,25 +66,41 @@ func (p *escrowParams) cancelMsg() []byte {
 }
 
 // buildLeaf0SellerConfirm builds the Arkade script for Leaf 0:
-// Seller attests RELEASE via CSFS, fee output enforced as percentage of input.
+// Seller attests RELEASE via CSFS, buyer claims BTC to pre-approved address,
+// fee output enforced as percentage of input, buyer amount enforced.
 //
 // Stack (witness): <seller_csfs_sig> <RELEASE_msg>
 // Script:
 //
-//	<seller_pk> OP_CHECKSIGFROMSTACK OP_VERIFY   # seller attests RELEASE
-//	OP_INSPECTNUMINPUTS 1 OP_EQUALVERIFY         # single input only
-//	1 OP_INSPECTOUTPUTSCRIPTPUBKEY               # output[1] = fee address
-//	  <fee_version> OP_EQUALVERIFY
-//	  <fee_program> OP_EQUALVERIFY
+//	<seller_pk> OP_CHECKSIGFROMSTACK(RELEASE) OP_VERIFY   # seller attests RELEASE
+//	OP_INSPECTNUMINPUTS 1 OP_EQUALVERIFY                  # single input only
+//	OP_INSPECTNUMOUTPUTS 2 OP_EQUALVERIFY                 # exactly 2 outputs (buyer + fee)
+//	0 OP_INSPECTOUTPUTSCRIPTPUBKEY                        # output[0] = buyer destination
+//	  <buyer_ver> OP_EQUALVERIFY
+//	  <buyer_prog> OP_EQUALVERIFY
+//	1 OP_INSPECTOUTPUTSCRIPTPUBKEY                        # output[1] = fee address
+//	  <fee_ver> OP_EQUALVERIFY
+//	  <fee_prog> OP_EQUALVERIFY
 //	# Compute min fee = inputValue * basisPoints / 10000
 //	OP_PUSHCURRENTINPUTINDEX OP_INSPECTINPUTVALUE
 //	<basisPoints_le64> OP_MUL64 OP_VERIFY
 //	<10000_le64> OP_DIV64 OP_VERIFY
-//	OP_SWAP OP_DROP                              # drop remainder, keep quotient
-//	1 OP_INSPECTOUTPUTVALUE                      # get fee output value
-//	OP_SWAP                                      # [fee_output, min_fee]
-//	OP_GREATERTHANOREQUAL64                      # fee_output >= min_fee
+//	OP_SWAP OP_DROP                                       # drop remainder, keep min_fee
+//	1 OP_INSPECTOUTPUTVALUE OP_SWAP                       # [fee_output, min_fee]
+//	OP_GREATERTHANOREQUAL64 OP_VERIFY                     # fee_output >= min_fee
+//	# Enforce buyer amount: output[0].value >= inputValue - min_fee
+//	OP_PUSHCURRENTINPUTINDEX OP_INSPECTINPUTVALUE         # inputValue
+//	1 OP_INSPECTOUTPUTVALUE                               # fee_output
+//	OP_SUB64 OP_VERIFY                                    # inputValue - fee_output (= buyer_min)
+//	0 OP_INSPECTOUTPUTVALUE                               # buyer_output
+//	OP_SWAP                                               # [buyer_output, buyer_min]
+//	OP_GREATERTHANOREQUAL64                               # buyer_output >= buyer_min
 func buildLeaf0SellerConfirm(p *escrowParams) ([]byte, error) {
+	buyerVersion, buyerProgram, err := extractWitnessInfo(p.buyerSpk)
+	if err != nil {
+		return nil, err
+	}
+
 	feeVersion, feeProgram, err := extractWitnessInfo(p.feeSpk)
 	if err != nil {
 		return nil, err
@@ -96,6 +115,17 @@ func buildLeaf0SellerConfirm(p *escrowParams) ([]byte, error) {
 		AddOp(arkade.OP_INSPECTNUMINPUTS).
 		AddOp(arkade.OP_1).
 		AddOp(arkade.OP_EQUALVERIFY).
+		// Enforce exactly 2 outputs (buyer + fee)
+		AddOp(arkade.OP_INSPECTNUMOUTPUTS).
+		AddInt64(2).
+		AddOp(arkade.OP_EQUALVERIFY).
+		// Check output[0] scriptPubKey == pre-approved buyer destination
+		AddInt64(0).
+		AddOp(arkade.OP_INSPECTOUTPUTSCRIPTPUBKEY).
+		AddInt64(int64(buyerVersion)).
+		AddOp(arkade.OP_EQUALVERIFY).
+		AddData(buyerProgram).
+		AddOp(arkade.OP_EQUALVERIFY).
 		// Check output[1] scriptPubKey == fee address
 		AddInt64(1).
 		AddOp(arkade.OP_INSPECTOUTPUTSCRIPTPUBKEY).
@@ -117,78 +147,69 @@ func buildLeaf0SellerConfirm(p *escrowParams) ([]byte, error) {
 		// Check output[1] value >= computed min fee
 		AddInt64(1).
 		AddOp(arkade.OP_INSPECTOUTPUTVALUE).
-		AddOp(arkade.OP_SWAP). // [fee_output, min_fee]
+		AddOp(arkade.OP_SWAP).   // [fee_output, min_fee]
 		AddOp(arkade.OP_GREATERTHANOREQUAL64).
-		Script()
-}
-
-// buildLeaf1ArbitratorToBuyer builds the Arkade script for Leaf 1:
-// Arbitrator attests RELEASE via CSFS, fee output enforced as percentage of input.
-// Same structure as Leaf 0 but uses arbitrator pubkey instead of seller.
-//
-// Stack (witness): <arbitrator_csfs_sig> <RELEASE_msg>
-func buildLeaf1ArbitratorToBuyer(p *escrowParams) ([]byte, error) {
-	feeVersion, feeProgram, err := extractWitnessInfo(p.feeSpk)
-	if err != nil {
-		return nil, err
-	}
-
-	return txscript.NewScriptBuilder().
-		// CSFS: verify arbitrator attests RELEASE
-		AddData(schnorr.SerializePubKey(p.arbitratorPubKey)).
-		AddOp(arkade.OP_CHECKSIGFROMSTACK).
-		AddOp(arkade.OP_VERIFY).
-		// Enforce single input
-		AddOp(arkade.OP_INSPECTNUMINPUTS).
-		AddOp(arkade.OP_1).
-		AddOp(arkade.OP_EQUALVERIFY).
-		// Check output[1] scriptPubKey == fee address
-		AddInt64(1).
-		AddOp(arkade.OP_INSPECTOUTPUTSCRIPTPUBKEY).
-		AddInt64(int64(feeVersion)).
-		AddOp(arkade.OP_EQUALVERIFY).
-		AddData(feeProgram).
-		AddOp(arkade.OP_EQUALVERIFY).
-		// Compute min fee = inputValue * feeBasisPoints / 10000
+		AddOp(arkade.OP_VERIFY). // fee check must pass
+		// Enforce buyer amount: output[0].value >= inputValue - output[1].value
 		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).
-		AddOp(arkade.OP_INSPECTINPUTVALUE).
-		AddData(uint64LE(p.feeBasisPoints)).
-		AddOp(arkade.OP_MUL64).
-		AddOp(arkade.OP_VERIFY). // check no overflow
-		AddData(uint64LE(10000)).
-		AddOp(arkade.OP_DIV64).
-		AddOp(arkade.OP_VERIFY). // check no div-by-zero
-		AddOp(arkade.OP_SWAP).   // [remainder, quotient] -> [quotient, remainder]
-		AddOp(arkade.OP_DROP).   // drop remainder, keep quotient (= min fee)
-		// Check output[1] value >= computed min fee
+		AddOp(arkade.OP_INSPECTINPUTVALUE). // inputValue
 		AddInt64(1).
-		AddOp(arkade.OP_INSPECTOUTPUTVALUE).
-		AddOp(arkade.OP_SWAP). // [fee_output, min_fee]
+		AddOp(arkade.OP_INSPECTOUTPUTVALUE). // fee_output
+		AddOp(arkade.OP_SUB64).              // inputValue - fee_output
+		AddOp(arkade.OP_VERIFY).             // check no underflow
+		AddInt64(0).
+		AddOp(arkade.OP_INSPECTOUTPUTVALUE). // buyer_output
+		AddOp(arkade.OP_SWAP).               // [buyer_output, buyer_min]
 		AddOp(arkade.OP_GREATERTHANOREQUAL64).
 		Script()
 }
 
 // buildLeaf2BuyerRefund builds the Arkade script for Leaf 2:
-// Buyer attests CANCEL via CSFS. No fee. Destinations free.
+// Buyer attests CANCEL via CSFS. No fee. Funds go to pre-approved seller address.
+// Full input value must be returned to seller.
 //
 // Stack (witness): <buyer_csfs_sig> <CANCEL_msg>
+// Script:
+//
+//	<buyer_pk> OP_CHECKSIGFROMSTACK(CANCEL) OP_VERIFY     # buyer attests CANCEL
+//	OP_INSPECTNUMOUTPUTS 1 OP_EQUALVERIFY                 # exactly 1 output (seller)
+//	0 OP_INSPECTOUTPUTSCRIPTPUBKEY                        # output[0] = seller destination
+//	  <seller_ver> OP_EQUALVERIFY
+//	  <seller_prog> OP_EQUALVERIFY
+//	# Enforce full refund: output[0].value >= inputValue
+//	OP_PUSHCURRENTINPUTINDEX OP_INSPECTINPUTVALUE
+//	0 OP_INSPECTOUTPUTVALUE
+//	OP_SWAP                                               # [seller_output, inputValue]
+//	OP_GREATERTHANOREQUAL64                               # seller_output >= inputValue
 func buildLeaf2BuyerRefund(p *escrowParams) ([]byte, error) {
+	sellerVersion, sellerProgram, err := extractWitnessInfo(p.sellerSpk)
+	if err != nil {
+		return nil, err
+	}
+
 	return txscript.NewScriptBuilder().
 		// CSFS: verify buyer attests CANCEL
 		AddData(schnorr.SerializePubKey(p.buyerPubKey)).
 		AddOp(arkade.OP_CHECKSIGFROMSTACK).
-		Script()
-}
-
-// buildLeaf3ArbitratorToSeller builds the Arkade script for Leaf 3:
-// Arbitrator attests CANCEL via CSFS. No fee. Destinations free.
-//
-// Stack (witness): <arbitrator_csfs_sig> <CANCEL_msg>
-func buildLeaf3ArbitratorToSeller(p *escrowParams) ([]byte, error) {
-	return txscript.NewScriptBuilder().
-		// CSFS: verify arbitrator attests CANCEL
-		AddData(schnorr.SerializePubKey(p.arbitratorPubKey)).
-		AddOp(arkade.OP_CHECKSIGFROMSTACK).
+		AddOp(arkade.OP_VERIFY).
+		// Enforce exactly 1 output (seller only)
+		AddOp(arkade.OP_INSPECTNUMOUTPUTS).
+		AddOp(arkade.OP_1).
+		AddOp(arkade.OP_EQUALVERIFY).
+		// Check output[0] scriptPubKey == pre-approved seller destination
+		AddInt64(0).
+		AddOp(arkade.OP_INSPECTOUTPUTSCRIPTPUBKEY).
+		AddInt64(int64(sellerVersion)).
+		AddOp(arkade.OP_EQUALVERIFY).
+		AddData(sellerProgram).
+		AddOp(arkade.OP_EQUALVERIFY).
+		// Enforce full refund: output[0].value >= inputValue
+		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).
+		AddOp(arkade.OP_INSPECTINPUTVALUE).
+		AddInt64(0).
+		AddOp(arkade.OP_INSPECTOUTPUTVALUE).
+		AddOp(arkade.OP_SWAP).               // [seller_output, inputValue]
+		AddOp(arkade.OP_GREATERTHANOREQUAL64).
 		Script()
 }
 
@@ -228,32 +249,71 @@ func extractWitnessInfo(spk []byte) (int, []byte, error) {
 }
 
 // createEscrowVtxoScript builds a VTXO tapscript tree with:
-//   - Collaborative path: MultisigClosure{buyer, operator, introspector_tweaked}
-//   - Unilateral exit 1: CSVMultisigClosure{buyer, seller} with csvTimeout
-//   - Unilateral exit 2: CSVMultisigClosure{seller} with csvTimeout * 2
+//   - Buyer collab: MultisigClosure{buyer, introspector_tweaked, operator} — SellerConfirm, Topup (Arkade)
+//   - Seller collab: MultisigClosure{seller, introspector_tweaked, operator} — BuyerRefund (Arkade)
+//   - Arbitrator-to-buyer: MultisigClosure{buyer, arbitrator, operator} — no Arkade, arbitrator signs tx
+//   - Arbitrator-to-seller: MultisigClosure{seller, arbitrator, operator} — no Arkade, arbitrator signs tx
+//   - Seller self-release: CLTVMultisigClosure{seller, operator} — after CLTV, no introspector
+//   - Mutual exit: CSVMultisigClosure{buyer, seller} — after CSV
+//   - Seller recovery: CSVMultisigClosure{seller} — after CSV × 2
 func createEscrowVtxoScript(
 	buyerPubKey, operatorSigner, introspectorPubKey *btcec.PublicKey,
 	arkadeScriptHash []byte,
 	p *escrowParams,
 ) script.TapscriptsVtxoScript {
+	tweakedIntrospector := arkade.ComputeArkadeScriptPublicKey(introspectorPubKey, arkadeScriptHash)
 	return script.TapscriptsVtxoScript{
 		Closures: []script.Closure{
-			// Collaborative path (requires buyer + operator + introspector)
+			// Buyer collab — SellerConfirm, Topup (Arkade scripts validated by introspector)
 			&script.MultisigClosure{
 				PubKeys: []*btcec.PublicKey{
 					buyerPubKey,
+					tweakedIntrospector,
 					operatorSigner,
-					arkade.ComputeArkadeScriptPublicKey(introspectorPubKey, arkadeScriptHash),
 				},
 			},
-			// Unilateral exit: buyer + seller with CSV
+			// Seller collab — BuyerRefund (Arkade script validated by introspector)
+			&script.MultisigClosure{
+				PubKeys: []*btcec.PublicKey{
+					p.sellerPubKey,
+					tweakedIntrospector,
+					operatorSigner,
+				},
+			},
+			// Arbitrator releases to buyer — no Arkade, arbitrator signs the tx directly
+			&script.MultisigClosure{
+				PubKeys: []*btcec.PublicKey{
+					buyerPubKey,
+					p.arbitratorPubKey,
+					operatorSigner,
+				},
+			},
+			// Arbitrator refunds seller — no Arkade, arbitrator signs the tx directly
+			&script.MultisigClosure{
+				PubKeys: []*btcec.PublicKey{
+					p.sellerPubKey,
+					p.arbitratorPubKey,
+					operatorSigner,
+				},
+			},
+			// Seller self-release after CLTV (no introspector, no arkade script)
+			&script.CLTVMultisigClosure{
+				MultisigClosure: script.MultisigClosure{
+					PubKeys: []*btcec.PublicKey{
+						p.sellerPubKey,
+						operatorSigner,
+					},
+				},
+				Locktime: arklib.AbsoluteLocktime(p.cltvTimeout),
+			},
+			// Mutual exit: buyer + seller with CSV
 			&script.CSVMultisigClosure{
 				MultisigClosure: script.MultisigClosure{
 					PubKeys: []*btcec.PublicKey{p.buyerPubKey, p.sellerPubKey},
 				},
 				Locktime: arklib.RelativeLocktime{Type: arklib.LocktimeTypeBlock, Value: uint32(p.csvTimeout)},
 			},
-			// Unilateral exit: seller-only with CSV * 2
+			// Seller-only recovery with CSV × 2
 			&script.CSVMultisigClosure{
 				MultisigClosure: script.MultisigClosure{
 					PubKeys: []*btcec.PublicKey{p.sellerPubKey},
@@ -262,16 +322,6 @@ func createEscrowVtxoScript(
 			},
 		},
 	}
-}
-
-// serializeWitness serializes witness stack items using the wire TxWitness format.
-func serializeWitness(items ...[]byte) []byte {
-	var buf bytes.Buffer
-	witness := wire.TxWitness(items)
-	if err := psbt.WriteTxWitness(&buf, witness); err != nil {
-		panic(err)
-	}
-	return buf.Bytes()
 }
 
 // signCSFS creates a Schnorr signature over the given message with the private key.
@@ -285,10 +335,11 @@ func signCSFS(privKey *btcec.PrivateKey, message []byte) []byte {
 
 // TestP2PEscrowSellerConfirm tests Leaf 0: seller attests RELEASE, buyer claims.
 // Verifies:
-//   - Valid: seller CSFS attestation + correct fee output → script passes
+//   - Valid: seller CSFS attestation + correct fee output + buyer destination → script passes
 //   - Invalid: wrong CSFS message → script fails
 //   - Invalid: fee too low → script fails
 //   - Invalid: wrong fee address → script fails
+//   - Invalid: wrong buyer destination → script fails
 func TestP2PEscrowSellerConfirm(t *testing.T) {
 	ctx := context.Background()
 
@@ -321,6 +372,15 @@ func TestP2PEscrowSellerConfirm(t *testing.T) {
 	wrongPrivKey, err := btcec.NewPrivateKey() // for negative test
 	require.NoError(t, err)
 
+	// Pre-approved destination addresses
+	buyerRecvPrivKey, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+	buyerRecvPkScript, err := txscript.PayToTaprootScript(buyerRecvPrivKey.PubKey())
+	require.NoError(t, err)
+
+	sellerRecvPkScript, err := txscript.PayToTaprootScript(sellerPrivKey.PubKey())
+	require.NoError(t, err)
+
 	// Fee address (use alice's taproot key)
 	feePkScript, err := txscript.PayToTaprootScript(alicePubKey)
 	require.NoError(t, err)
@@ -332,8 +392,11 @@ func TestP2PEscrowSellerConfirm(t *testing.T) {
 		sellerPubKey:     sellerPrivKey.PubKey(),
 		buyerPubKey:      bobPubKey,
 		arbitratorPubKey: arbitratorPrivKey.PubKey(),
+		buyerSpk:         buyerRecvPkScript,
+		sellerSpk:        sellerRecvPkScript,
 		feeSpk:           feePkScript,
 		feeBasisPoints:   200, // 2% fee
+		cltvTimeout:      1000,
 		csvTimeout:       144,
 		tradeID:          tradeIDHash[:],
 	}
@@ -424,18 +487,12 @@ func TestP2PEscrowSellerConfirm(t *testing.T) {
 		RevealedTapscripts: revealedTapscripts,
 	}
 
-	// Buyer's receive address (any address they choose)
-	buyerRecvPrivKey, err := btcec.NewPrivateKey()
-	require.NoError(t, err)
-	buyerRecvPkScript, err := txscript.PayToTaprootScript(buyerRecvPrivKey.PubKey())
-	require.NoError(t, err)
-
 	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
 	require.NoError(t, err)
 
 	releaseMsg := params.releaseMsg()
 
-	submitAndExpectFailure := func(outputs []*wire.TxOut, witness []byte) {
+	submitAndExpectFailure := func(outputs []*wire.TxOut, witness wire.TxWitness) {
 		candidateTx, checkpoints, err := offchain.BuildTxs(
 			[]offchain.VtxoInput{vtxoInput},
 			outputs,
@@ -474,7 +531,7 @@ func TestP2PEscrowSellerConfirm(t *testing.T) {
 			{Value: escrowOutput.Value - expectedFee, PkScript: buyerRecvPkScript},
 			{Value: expectedFee, PkScript: feePkScript},
 		},
-		serializeWitness(wrongKeySig, releaseMsg),
+		wire.TxWitness{wrongKeySig, releaseMsg},
 	)
 
 	// ========================================
@@ -486,7 +543,7 @@ func TestP2PEscrowSellerConfirm(t *testing.T) {
 			{Value: escrowOutput.Value - expectedFee/2, PkScript: buyerRecvPkScript},
 			{Value: expectedFee / 2, PkScript: feePkScript}, // fee too low
 		},
-		serializeWitness(validSig, releaseMsg),
+		wire.TxWitness{validSig, releaseMsg},
 	)
 
 	// ========================================
@@ -499,11 +556,24 @@ func TestP2PEscrowSellerConfirm(t *testing.T) {
 			{Value: escrowOutput.Value - expectedFee, PkScript: buyerRecvPkScript},
 			{Value: expectedFee, PkScript: wrongFeePkScript}, // wrong address
 		},
-		serializeWitness(validSig, releaseMsg),
+		wire.TxWitness{validSig, releaseMsg},
 	)
 
 	// ========================================
-	// CASE 4: Valid — correct seller attestation + fee
+	// CASE 4: Invalid — wrong buyer destination address
+	// ========================================
+	wrongBuyerDest, err := txscript.PayToTaprootScript(wrongPrivKey.PubKey())
+	require.NoError(t, err)
+	submitAndExpectFailure(
+		[]*wire.TxOut{
+			{Value: escrowOutput.Value - expectedFee, PkScript: wrongBuyerDest}, // wrong destination
+			{Value: expectedFee, PkScript: feePkScript},
+		},
+		wire.TxWitness{validSig, releaseMsg},
+	)
+
+	// ========================================
+	// CASE 5: Valid — correct seller attestation + fee + buyer destination
 	// ========================================
 	validTx, validCheckpoints, err := offchain.BuildTxs(
 		[]offchain.VtxoInput{vtxoInput},
@@ -516,7 +586,7 @@ func TestP2PEscrowSellerConfirm(t *testing.T) {
 	require.NoError(t, err)
 
 	addIntrospectorPacket(t, validTx, []arkade.IntrospectorEntry{
-		{Vin: 0, Script: arkadeScript, Witness: serializeWitness(validSig, releaseMsg)},
+		{Vin: 0, Script: arkadeScript, Witness: wire.TxWitness{validSig, releaseMsg}},
 	})
 
 	// Debug execute to verify locally first
@@ -568,391 +638,13 @@ func TestP2PEscrowSellerConfirm(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestP2PEscrowArbitratorToBuyer tests Leaf 1: arbitrator attests RELEASE, buyer claims.
-func TestP2PEscrowArbitratorToBuyer(t *testing.T) {
-	ctx := context.Background()
-
-	alice, _, alicePubKey, grpcAlice := setupArkSDKwithPublicKey(t)
-	t.Cleanup(func() { grpcAlice.Close() })
-
-	bob, bobWallet, bobPubKey, grpcBob := setupArkSDKwithPublicKey(t)
-	t.Cleanup(func() { grpcBob.Close() })
-
-	const escrowAmount = int64(50000)
-
-	_ = fundAndSettleAlice(t, ctx, alice, escrowAmount)
-
-	_, bobOffchainAddr, _, err := bob.Receive(ctx)
-	require.NoError(t, err)
-	bobAddr, err := arklib.DecodeAddressV0(bobOffchainAddr)
-	require.NoError(t, err)
-
-	introspectorClient, introspectorPubKey, conn := setupIntrospectorClient(t, ctx)
-	t.Cleanup(func() {
-		//nolint:errcheck
-		conn.Close()
-	})
-
-	sellerPrivKey, err := btcec.NewPrivateKey()
-	require.NoError(t, err)
-	arbitratorPrivKey, err := btcec.NewPrivateKey()
-	require.NoError(t, err)
-
-	feePkScript, err := txscript.PayToTaprootScript(alicePubKey)
-	require.NoError(t, err)
-
-	tradeIDHash := sha256.Sum256([]byte("test-trade-arbitrator-to-buyer"))
-
-	params := &escrowParams{
-		sellerPubKey:     sellerPrivKey.PubKey(),
-		buyerPubKey:      bobPubKey,
-		arbitratorPubKey: arbitratorPrivKey.PubKey(),
-		feeSpk:           feePkScript,
-		feeBasisPoints:   200, // 2% fee
-		csvTimeout:       144,
-		tradeID:          tradeIDHash[:],
-	}
-
-	expectedFee := int64(escrowAmount) * int64(params.feeBasisPoints) / 10000
-
-	arkadeScript, err := buildLeaf1ArbitratorToBuyer(params)
-	require.NoError(t, err)
-
-	vtxoScript := createEscrowVtxoScript(
-		bobPubKey, bobAddr.Signer, introspectorPubKey,
-		arkade.ArkadeScriptHash(arkadeScript), params,
-	)
-
-	vtxoTapKey, vtxoTapTree, err := vtxoScript.TapTree()
-	require.NoError(t, err)
-
-	escrowAddr := arklib.Address{
-		HRP:        "tark",
-		VtxoTapKey: vtxoTapKey,
-		Signer:     bobAddr.Signer,
-	}
-	escrowAddrStr, err := escrowAddr.EncodeV0()
-	require.NoError(t, err)
-
-	fundingTxid, err := alice.SendOffChain(
-		ctx, []types.Receiver{{To: escrowAddrStr, Amount: uint64(escrowAmount)}},
-	)
-	require.NoError(t, err)
-
-	indexerSvc := setupIndexer(t)
-	fundingTxs, err := indexerSvc.GetVirtualTxs(ctx, []string{fundingTxid})
-	require.NoError(t, err)
-	require.Len(t, fundingTxs.Txs, 1)
-
-	fundingPtx, err := psbt.NewFromRawBytes(strings.NewReader(fundingTxs.Txs[0]), true)
-	require.NoError(t, err)
-
-	var escrowOutput *wire.TxOut
-	var escrowOutputIndex uint32
-	for i, out := range fundingPtx.UnsignedTx.TxOut {
-		if bytes.Equal(out.PkScript[2:], schnorr.SerializePubKey(escrowAddr.VtxoTapKey)) {
-			escrowOutput = out
-			escrowOutputIndex = uint32(i)
-			break
-		}
-	}
-	require.NotNil(t, escrowOutput)
-
-	closure := vtxoScript.ForfeitClosures()[0]
-	closureTapscript, err := closure.Script()
-	require.NoError(t, err)
-
-	merkleProof, err := vtxoTapTree.GetTaprootMerkleProof(
-		txscript.NewBaseTapLeaf(closureTapscript).TapHash(),
-	)
-	require.NoError(t, err)
-
-	ctrlBlock, err := txscript.ParseControlBlock(merkleProof.ControlBlock)
-	require.NoError(t, err)
-
-	revealedTapscripts, err := vtxoScript.Encode()
-	require.NoError(t, err)
-
-	infos, err := grpcBob.GetInfo(ctx)
-	require.NoError(t, err)
-	checkpointScriptBytes, err := hex.DecodeString(infos.CheckpointTapscript)
-	require.NoError(t, err)
-
-	vtxoInput := offchain.VtxoInput{
-		Outpoint: &wire.OutPoint{
-			Hash:  fundingPtx.UnsignedTx.TxHash(),
-			Index: escrowOutputIndex,
-		},
-		Tapscript: &waddrmgr.Tapscript{
-			ControlBlock:   ctrlBlock,
-			RevealedScript: merkleProof.Script,
-		},
-		Amount:             escrowOutput.Value,
-		RevealedTapscripts: revealedTapscripts,
-	}
-
-	buyerRecvPrivKey, err := btcec.NewPrivateKey()
-	require.NoError(t, err)
-	buyerRecvPkScript, err := txscript.PayToTaprootScript(buyerRecvPrivKey.PubKey())
-	require.NoError(t, err)
-
-	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
-	require.NoError(t, err)
-
-	releaseMsg := params.releaseMsg()
-
-	// Valid: arbitrator attests RELEASE + correct fee
-	arbitratorSig := signCSFS(arbitratorPrivKey, releaseMsg)
-
-	validTx, validCheckpoints, err := offchain.BuildTxs(
-		[]offchain.VtxoInput{vtxoInput},
-		[]*wire.TxOut{
-			{Value: escrowOutput.Value - expectedFee, PkScript: buyerRecvPkScript},
-			{Value: expectedFee, PkScript: feePkScript},
-		},
-		checkpointScriptBytes,
-	)
-	require.NoError(t, err)
-
-	addIntrospectorPacket(t, validTx, []arkade.IntrospectorEntry{
-		{Vin: 0, Script: arkadeScript, Witness: serializeWitness(arbitratorSig, releaseMsg)},
-	})
-
-	require.NoError(t, debugExecuteArkadeScripts(t, validTx, introspectorPubKey))
-
-	encodedTx, err := validTx.B64Encode()
-	require.NoError(t, err)
-
-	signedTx, err := bobWallet.SignTransaction(ctx, explorer, encodedTx)
-	require.NoError(t, err)
-
-	encodedCheckpoints := make([]string, 0, len(validCheckpoints))
-	for _, cp := range validCheckpoints {
-		encoded, err := cp.B64Encode()
-		require.NoError(t, err)
-		encodedCheckpoints = append(encodedCheckpoints, encoded)
-	}
-
-	signedTx, signedByIntrospectorCheckpoints, err := introspectorClient.SubmitTx(ctx, signedTx, encodedCheckpoints)
-	require.NoError(t, err)
-
-	txid, _, signedByServerCheckpoints, err := grpcBob.SubmitTx(ctx, signedTx, encodedCheckpoints)
-	require.NoError(t, err)
-
-	finalCheckpoints := make([]string, 0, len(signedByServerCheckpoints))
-	for i, checkpoint := range signedByServerCheckpoints {
-		finalCheckpoint, err := bobWallet.SignTransaction(ctx, explorer, checkpoint)
-		require.NoError(t, err)
-
-		introspectorCheckpointPtx, err := psbt.NewFromRawBytes(strings.NewReader(signedByIntrospectorCheckpoints[i]), true)
-		require.NoError(t, err)
-
-		checkpointPtx, err := psbt.NewFromRawBytes(strings.NewReader(finalCheckpoint), true)
-		require.NoError(t, err)
-
-		checkpointPtx.Inputs[0].TaprootScriptSpendSig = append(
-			checkpointPtx.Inputs[0].TaprootScriptSpendSig,
-			introspectorCheckpointPtx.Inputs[0].TaprootScriptSpendSig...,
-		)
-
-		finalCheckpoint, err = checkpointPtx.B64Encode()
-		require.NoError(t, err)
-
-		finalCheckpoints = append(finalCheckpoints, finalCheckpoint)
-	}
-
-	err = grpcBob.FinalizeTx(ctx, txid, finalCheckpoints)
-	require.NoError(t, err)
-}
-
-// TestP2PEscrowArbitratorToSeller tests Leaf 3: arbitrator attests CANCEL, seller reclaims.
-func TestP2PEscrowArbitratorToSeller(t *testing.T) {
-	ctx := context.Background()
-
-	alice, _, _, grpcAlice := setupArkSDKwithPublicKey(t)
-	t.Cleanup(func() { grpcAlice.Close() })
-
-	bob, bobWallet, bobPubKey, grpcBob := setupArkSDKwithPublicKey(t)
-	t.Cleanup(func() { grpcBob.Close() })
-
-	const escrowAmount = int64(50000)
-
-	_ = fundAndSettleAlice(t, ctx, alice, escrowAmount)
-
-	_, bobOffchainAddr, _, err := bob.Receive(ctx)
-	require.NoError(t, err)
-	bobAddr, err := arklib.DecodeAddressV0(bobOffchainAddr)
-	require.NoError(t, err)
-
-	introspectorClient, introspectorPubKey, conn := setupIntrospectorClient(t, ctx)
-	t.Cleanup(func() {
-		//nolint:errcheck
-		conn.Close()
-	})
-
-	sellerPrivKey, err := btcec.NewPrivateKey()
-	require.NoError(t, err)
-	arbitratorPrivKey, err := btcec.NewPrivateKey()
-	require.NoError(t, err)
-
-	tradeIDHash := sha256.Sum256([]byte("test-trade-arbitrator-to-seller"))
-
-	params := &escrowParams{
-		sellerPubKey:     sellerPrivKey.PubKey(),
-		buyerPubKey:      bobPubKey,
-		arbitratorPubKey: arbitratorPrivKey.PubKey(),
-		feeSpk:           []byte{0x6a}, // unused for this leaf
-		feeBasisPoints:   200,
-		csvTimeout:       144,
-		tradeID:          tradeIDHash[:],
-	}
-
-	arkadeScript, err := buildLeaf3ArbitratorToSeller(params)
-	require.NoError(t, err)
-
-	vtxoScript := createEscrowVtxoScript(
-		bobPubKey, bobAddr.Signer, introspectorPubKey,
-		arkade.ArkadeScriptHash(arkadeScript), params,
-	)
-
-	vtxoTapKey, vtxoTapTree, err := vtxoScript.TapTree()
-	require.NoError(t, err)
-
-	escrowAddr := arklib.Address{
-		HRP:        "tark",
-		VtxoTapKey: vtxoTapKey,
-		Signer:     bobAddr.Signer,
-	}
-	escrowAddrStr, err := escrowAddr.EncodeV0()
-	require.NoError(t, err)
-
-	fundingTxid, err := alice.SendOffChain(
-		ctx, []types.Receiver{{To: escrowAddrStr, Amount: uint64(escrowAmount)}},
-	)
-	require.NoError(t, err)
-
-	indexerSvc := setupIndexer(t)
-	fundingTxs, err := indexerSvc.GetVirtualTxs(ctx, []string{fundingTxid})
-	require.NoError(t, err)
-	require.Len(t, fundingTxs.Txs, 1)
-
-	fundingPtx, err := psbt.NewFromRawBytes(strings.NewReader(fundingTxs.Txs[0]), true)
-	require.NoError(t, err)
-
-	var escrowOutput *wire.TxOut
-	var escrowOutputIndex uint32
-	for i, out := range fundingPtx.UnsignedTx.TxOut {
-		if bytes.Equal(out.PkScript[2:], schnorr.SerializePubKey(escrowAddr.VtxoTapKey)) {
-			escrowOutput = out
-			escrowOutputIndex = uint32(i)
-			break
-		}
-	}
-	require.NotNil(t, escrowOutput)
-
-	closure := vtxoScript.ForfeitClosures()[0]
-	closureTapscript, err := closure.Script()
-	require.NoError(t, err)
-
-	merkleProof, err := vtxoTapTree.GetTaprootMerkleProof(
-		txscript.NewBaseTapLeaf(closureTapscript).TapHash(),
-	)
-	require.NoError(t, err)
-
-	ctrlBlock, err := txscript.ParseControlBlock(merkleProof.ControlBlock)
-	require.NoError(t, err)
-
-	revealedTapscripts, err := vtxoScript.Encode()
-	require.NoError(t, err)
-
-	infos, err := grpcBob.GetInfo(ctx)
-	require.NoError(t, err)
-	checkpointScriptBytes, err := hex.DecodeString(infos.CheckpointTapscript)
-	require.NoError(t, err)
-
-	vtxoInput := offchain.VtxoInput{
-		Outpoint: &wire.OutPoint{
-			Hash:  fundingPtx.UnsignedTx.TxHash(),
-			Index: escrowOutputIndex,
-		},
-		Tapscript: &waddrmgr.Tapscript{
-			ControlBlock:   ctrlBlock,
-			RevealedScript: merkleProof.Script,
-		},
-		Amount:             escrowOutput.Value,
-		RevealedTapscripts: revealedTapscripts,
-	}
-
-	sellerRecvPkScript, err := txscript.PayToTaprootScript(sellerPrivKey.PubKey())
-	require.NoError(t, err)
-
-	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
-	require.NoError(t, err)
-
-	cancelMsg := params.cancelMsg()
-
-	// Valid: arbitrator attests CANCEL, full refund to seller
-	arbitratorCancelSig := signCSFS(arbitratorPrivKey, cancelMsg)
-
-	validTx, validCheckpoints, err := offchain.BuildTxs(
-		[]offchain.VtxoInput{vtxoInput},
-		[]*wire.TxOut{
-			{Value: escrowOutput.Value, PkScript: sellerRecvPkScript},
-		},
-		checkpointScriptBytes,
-	)
-	require.NoError(t, err)
-
-	addIntrospectorPacket(t, validTx, []arkade.IntrospectorEntry{
-		{Vin: 0, Script: arkadeScript, Witness: serializeWitness(arbitratorCancelSig, cancelMsg)},
-	})
-
-	require.NoError(t, debugExecuteArkadeScripts(t, validTx, introspectorPubKey))
-
-	encodedTx, err := validTx.B64Encode()
-	require.NoError(t, err)
-
-	signedTx, err := bobWallet.SignTransaction(ctx, explorer, encodedTx)
-	require.NoError(t, err)
-
-	encodedCheckpoints := make([]string, 0, len(validCheckpoints))
-	for _, cp := range validCheckpoints {
-		encoded, err := cp.B64Encode()
-		require.NoError(t, err)
-		encodedCheckpoints = append(encodedCheckpoints, encoded)
-	}
-
-	signedTx, signedByIntrospectorCheckpoints, err := introspectorClient.SubmitTx(ctx, signedTx, encodedCheckpoints)
-	require.NoError(t, err)
-
-	txid, _, signedByServerCheckpoints, err := grpcBob.SubmitTx(ctx, signedTx, encodedCheckpoints)
-	require.NoError(t, err)
-
-	finalCheckpoints := make([]string, 0, len(signedByServerCheckpoints))
-	for i, checkpoint := range signedByServerCheckpoints {
-		finalCheckpoint, err := bobWallet.SignTransaction(ctx, explorer, checkpoint)
-		require.NoError(t, err)
-
-		introspectorCheckpointPtx, err := psbt.NewFromRawBytes(strings.NewReader(signedByIntrospectorCheckpoints[i]), true)
-		require.NoError(t, err)
-
-		checkpointPtx, err := psbt.NewFromRawBytes(strings.NewReader(finalCheckpoint), true)
-		require.NoError(t, err)
-
-		checkpointPtx.Inputs[0].TaprootScriptSpendSig = append(
-			checkpointPtx.Inputs[0].TaprootScriptSpendSig,
-			introspectorCheckpointPtx.Inputs[0].TaprootScriptSpendSig...,
-		)
-
-		finalCheckpoint, err = checkpointPtx.B64Encode()
-		require.NoError(t, err)
-
-		finalCheckpoints = append(finalCheckpoints, finalCheckpoint)
-	}
-
-	err = grpcBob.FinalizeTx(ctx, txid, finalCheckpoints)
-	require.NoError(t, err)
-}
+// TODO: TestP2PEscrowArbitratorToBuyer — arbitrator signs the transaction directly
+// via OP_CHECKSIG on MultisigClosure{buyer, arbitrator, operator}. No Arkade script.
+// Requires manual witness construction with arbitrator's Schnorr signature.
+
+// TODO: TestP2PEscrowArbitratorToSeller — arbitrator signs the transaction directly
+// via OP_CHECKSIG on MultisigClosure{seller, arbitrator, operator}. No Arkade script.
+// Requires manual witness construction with arbitrator's Schnorr signature.
 
 // TestP2PEscrowBuyerRefund tests Leaf 2: buyer attests CANCEL, seller reclaims.
 func TestP2PEscrowBuyerRefund(t *testing.T) {
@@ -986,8 +678,13 @@ func TestP2PEscrowBuyerRefund(t *testing.T) {
 	arbitratorPrivKey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
 
-	// For this test, bob acts as the counterparty managing the VTXO,
-	// and buyer/seller are oracle signers
+	// Pre-approved destination addresses
+	buyerRecvPkScript, err := txscript.PayToTaprootScript(buyerPrivKey.PubKey())
+	require.NoError(t, err)
+	sellerRecvPkScript, err := txscript.PayToTaprootScript(sellerPrivKey.PubKey())
+	require.NoError(t, err)
+
+	// Fee address
 	feePkScript, err := txscript.PayToTaprootScript(sellerPrivKey.PubKey())
 	require.NoError(t, err)
 
@@ -997,8 +694,11 @@ func TestP2PEscrowBuyerRefund(t *testing.T) {
 		sellerPubKey:     sellerPrivKey.PubKey(),
 		buyerPubKey:      buyerPrivKey.PubKey(),
 		arbitratorPubKey: arbitratorPrivKey.PubKey(),
+		buyerSpk:         buyerRecvPkScript,
+		sellerSpk:        sellerRecvPkScript,
 		feeSpk:           feePkScript,
 		feeBasisPoints:   200,
+		cltvTimeout:      1000,
 		csvTimeout:       144,
 		tradeID:          tradeIDHash[:],
 	}
@@ -1082,9 +782,6 @@ func TestP2PEscrowBuyerRefund(t *testing.T) {
 		RevealedTapscripts: revealedTapscripts,
 	}
 
-	sellerRecvPkScript, err := txscript.PayToTaprootScript(sellerPrivKey.PubKey())
-	require.NoError(t, err)
-
 	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
 	require.NoError(t, err)
 
@@ -1104,7 +801,7 @@ func TestP2PEscrowBuyerRefund(t *testing.T) {
 	require.NoError(t, err)
 
 	addIntrospectorPacket(t, candidateTx, []arkade.IntrospectorEntry{
-		{Vin: 0, Script: arkadeScript, Witness: serializeWitness(wrongPartySig, cancelMsg)},
+		{Vin: 0, Script: arkadeScript, Witness: wire.TxWitness{wrongPartySig, cancelMsg}},
 	})
 
 	encodedTx, err := candidateTx.B64Encode()
@@ -1124,9 +821,41 @@ func TestP2PEscrowBuyerRefund(t *testing.T) {
 	require.Contains(t, err.Error(), "failed to process transaction")
 
 	// ========================================
-	// CASE 2: Valid — buyer attests CANCEL, full refund to seller
+	// CASE 2: Invalid — wrong seller destination address
 	// ========================================
 	buyerCancelSig := signCSFS(buyerPrivKey, cancelMsg)
+	wrongDestTx, wrongDestCheckpoints, err := offchain.BuildTxs(
+		[]offchain.VtxoInput{vtxoInput},
+		[]*wire.TxOut{
+			{Value: escrowOutput.Value, PkScript: buyerRecvPkScript}, // wrong: buyer address instead of seller
+		},
+		checkpointScriptBytes,
+	)
+	require.NoError(t, err)
+
+	addIntrospectorPacket(t, wrongDestTx, []arkade.IntrospectorEntry{
+		{Vin: 0, Script: arkadeScript, Witness: wire.TxWitness{buyerCancelSig, cancelMsg}},
+	})
+
+	encodedTx, err = wrongDestTx.B64Encode()
+	require.NoError(t, err)
+	signedTx, err = bobWallet.SignTransaction(ctx, explorer, encodedTx)
+	require.NoError(t, err)
+
+	encodedCheckpoints = make([]string, 0, len(wrongDestCheckpoints))
+	for _, cp := range wrongDestCheckpoints {
+		encoded, err := cp.B64Encode()
+		require.NoError(t, err)
+		encodedCheckpoints = append(encodedCheckpoints, encoded)
+	}
+
+	_, _, err = introspectorClient.SubmitTx(ctx, signedTx, encodedCheckpoints)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to process transaction")
+
+	// ========================================
+	// CASE 3: Valid — buyer attests CANCEL, full refund to pre-approved seller address
+	// ========================================
 
 	validTx, validCheckpoints, err := offchain.BuildTxs(
 		[]offchain.VtxoInput{vtxoInput},
@@ -1138,7 +867,7 @@ func TestP2PEscrowBuyerRefund(t *testing.T) {
 	require.NoError(t, err)
 
 	addIntrospectorPacket(t, validTx, []arkade.IntrospectorEntry{
-		{Vin: 0, Script: arkadeScript, Witness: serializeWitness(buyerCancelSig, cancelMsg)},
+		{Vin: 0, Script: arkadeScript, Witness: wire.TxWitness{buyerCancelSig, cancelMsg}},
 	})
 
 	require.NoError(t, debugExecuteArkadeScripts(t, validTx, introspectorPubKey))
@@ -1221,14 +950,22 @@ func TestP2PEscrowTopupPath(t *testing.T) {
 	arbitratorPrivKey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
 
+	buyerRecvPkScript, err := txscript.PayToTaprootScript(buyerPrivKey.PubKey())
+	require.NoError(t, err)
+	sellerRecvPkScript, err := txscript.PayToTaprootScript(sellerPrivKey.PubKey())
+	require.NoError(t, err)
+
 	tradeIDHash := sha256.Sum256([]byte("test-trade-topup"))
 
 	params := &escrowParams{
 		sellerPubKey:     sellerPrivKey.PubKey(),
 		buyerPubKey:      buyerPrivKey.PubKey(),
 		arbitratorPubKey: arbitratorPrivKey.PubKey(),
+		buyerSpk:         buyerRecvPkScript,
+		sellerSpk:        sellerRecvPkScript,
 		feeSpk:           []byte{0x6a},
 		feeBasisPoints:   200,
+		cltvTimeout:      1000,
 		csvTimeout:       144,
 		tradeID:          tradeIDHash[:],
 	}
