@@ -935,8 +935,23 @@ func TestIntrospectorRejectsInvalidArkadeScript(t *testing.T) {
 			},
 		},
 		{
+			name:     "non-multisig tapscript",
+			contains: "unexpected error while decoding tapscript",
+			entry: arkade.IntrospectorEntry{
+				Vin:    0,
+				Script: arkadeScript,
+			},
+			mutateTx: func(t *testing.T, ptx *psbt.Packet) {
+				t.Helper()
+				require.NotEmpty(t, ptx.Inputs)
+				require.NotEmpty(t, ptx.Inputs[0].TaprootLeafScript)
+				require.NotNil(t, ptx.Inputs[0].TaprootLeafScript[0])
+				ptx.Inputs[0].TaprootLeafScript[0].Script = []byte{txscript.OP_TRUE}
+			},
+		},
+		{
 			name:     "malformed tapscript decode",
-			contains: "failed to decode tapscript",
+			contains: "unexpected error while decoding tapscript",
 			entry: arkade.IntrospectorEntry{
 				Vin:    0,
 				Script: arkadeScript,
@@ -998,7 +1013,7 @@ func TestIntrospectorRejectsInvalidArkadeScript(t *testing.T) {
 				require.Len(t, packet, 1)
 
 				entry := packet[0]
-				_, err = arkade.ReadArkadeScript(invalidTx, introspectorPublicKey, entry)
+				_, err = arkade.ReadArkadeScript(invalidTx, int(entry.Vin), introspectorPublicKey, entry)
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tc.contains)
 			}
