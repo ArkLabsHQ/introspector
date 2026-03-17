@@ -49,6 +49,18 @@
     {
       "name": "truncated entry",
       "encoded": "0100"
+    },
+    {
+      "name": "entry count exceeds max",
+      "encoded": "fde903"
+    },
+    {
+      "name": "script length exceeds max",
+      "encoded": "010000fd1127"
+    },
+    {
+      "name": "witness length exceeds max",
+      "encoded": "0100000101fe41420f00"
     }
   ]
 }

@@ -98,7 +98,7 @@ func decodeEntries(raw []rawEntry) []IntrospectorEntry {
 	return entries
 }
 
-func readFixtures(t *testing.T) fixtures {
+func readFixtures(t testing.TB) fixtures {
 	t.Helper()
 	raw, err := os.ReadFile("testdata/introspector_packet.json")
 	require.NoError(t, err)
