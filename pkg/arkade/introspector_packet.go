@@ -15,6 +15,12 @@ import (
 const (
 	// PacketType is the extension type for the Introspector Packet.
 	PacketType = 0x01
+	// MaxEntryCount is the maximum number of entries allowed in one packet.
+	MaxEntryCount = 1_000
+	// MaxScriptLength is the maximum script size per entry.
+	MaxScriptLength = 10_000
+	// MaxWitnessLength is the maximum serialized witness size per entry.
+	MaxWitnessLength = 1_000_000
 )
 
 // IntrospectorEntry represents a single entry in the Introspector Packet.
@@ -42,6 +48,9 @@ func (p IntrospectorPacket) Validate() error {
 	if len(p) == 0 {
 		return fmt.Errorf("empty packet")
 	}
+	if len(p) > MaxEntryCount {
+		return fmt.Errorf("max introspector entry count exceeded, max=%d got=%d", MaxEntryCount, len(p))
+	}
 	seen := make(map[uint16]bool, len(p))
 	for i, entry := range p {
 		if len(entry.Script) == 0 {
@@ -66,7 +75,7 @@ func (p IntrospectorPacket) Serialize() ([]byte, error) {
 	var buf bytes.Buffer
 
 	// Write entry count as varint
-	if err := wire.WriteVarInt(&buf, 0,uint64(len(p))); err != nil {
+	if err := wire.WriteVarInt(&buf, 0, uint64(len(p))); err != nil {
 		return nil, fmt.Errorf("failed to write entry count: %w", err)
 	}
 
@@ -77,7 +86,7 @@ func (p IntrospectorPacket) Serialize() ([]byte, error) {
 		}
 
 		// Write script_len + script
-		if err := wire.WriteVarInt(&buf, 0,uint64(len(entry.Script))); err != nil {
+		if err := wire.WriteVarInt(&buf, 0, uint64(len(entry.Script))); err != nil {
 			return nil, fmt.Errorf("failed to write script_len for entry %d: %w", i, err)
 		}
 		if _, err := buf.Write(entry.Script); err != nil {
@@ -89,7 +98,7 @@ func (p IntrospectorPacket) Serialize() ([]byte, error) {
 		if err := psbt.WriteTxWitness(&witBuf, entry.Witness); err != nil {
 			return nil, fmt.Errorf("failed to serialize witness for entry %d: %w", i, err)
 		}
-		if err := wire.WriteVarInt(&buf, 0,uint64(witBuf.Len())); err != nil {
+		if err := wire.WriteVarInt(&buf, 0, uint64(witBuf.Len())); err != nil {
 			return nil, fmt.Errorf("failed to write witness_len for entry %d: %w", i, err)
 		}
 		if _, err := buf.Write(witBuf.Bytes()); err != nil {
@@ -108,9 +117,12 @@ func DeserializeIntrospectorPacket(data []byte) (IntrospectorPacket, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read entry count: %w", err)
 	}
+	if entryCount > MaxEntryCount {
+		return nil, fmt.Errorf("max introspector entry count exceeded, max=%d got=%d", MaxEntryCount, entryCount)
+	}
 
 	entries := make([]IntrospectorEntry, 0, entryCount)
-	for i := uint64(0); i < entryCount; i++ {
+	for i := range entryCount {
 		var entry IntrospectorEntry
 
 		// Read vin (u16 LE)
@@ -123,6 +135,9 @@ func DeserializeIntrospectorPacket(data []byte) (IntrospectorPacket, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to read script_len for entry %d: %w", i, err)
 		}
+		if scriptLen > MaxScriptLength {
+			return nil, fmt.Errorf("max introspector script length exceeded, max=%d got=%d", MaxScriptLength, scriptLen)
+		}
 		entry.Script = make([]byte, scriptLen)
 		if _, err := io.ReadFull(r, entry.Script); err != nil {
 			return nil, fmt.Errorf("failed to read script for entry %d: %w", i, err)
@@ -132,6 +147,9 @@ func DeserializeIntrospectorPacket(data []byte) (IntrospectorPacket, error) {
 		witnessLen, err := wire.ReadVarInt(r, 0)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read witness_len for entry %d: %w", i, err)
+		}
+		if witnessLen > MaxWitnessLength {
+			return nil, fmt.Errorf("max introspector witness length exceeded, max=%d got=%d", MaxWitnessLength, witnessLen)
 		}
 		witnessBytes := make([]byte, witnessLen)
 		if _, err := io.ReadFull(r, witnessBytes); err != nil {
