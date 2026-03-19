@@ -3,7 +3,7 @@ module github.com/ArkLabsHQ/introspector/pkg/arkade
 go 1.26.1
 
 require (
-	github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260312030432-9ac7220f14e3
+	github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260318170839-137daaec3a70
 	github.com/btcsuite/btcd v0.24.3-0.20240921052913-67b8efd3ba53
 	github.com/btcsuite/btcd/btcec/v2 v2.3.5
 	github.com/btcsuite/btcd/btcutil/psbt v1.1.9
