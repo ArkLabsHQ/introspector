@@ -702,7 +702,25 @@ func checkpointInputPkScript(vtxoInput offchain.VtxoInput, checkpointScriptBytes
 	return script.P2TRScript(tapKey)
 }
 
-func debugExecuteArkadeScripts(t *testing.T, ptx *psbt.Packet, signerPublicKey *btcec.PublicKey) error {
+func debugScriptExecution(t *testing.T) arkade.ExecuteOption {
+	return arkade.WithDebugCallback(
+		func(step *arkade.StepInfo, engine *arkade.Engine) error {
+			disasm, err := engine.DisasmPC()
+			if err != nil {
+				disasm = "<done>"
+			}
+			t.Logf(
+				"op=%s stack=%s altstack=%s",
+				disasm,
+				formatHexStack(step.Stack),
+				formatHexStack(step.AltStack),
+			)
+			return nil
+		},
+	)
+}
+
+func executeArkadeScripts(t *testing.T, ptx *psbt.Packet, signerPublicKey *btcec.PublicKey, opts ...arkade.ExecuteOption) error {
 	t.Helper()
 
 	if len(ptx.Inputs) != len(ptx.UnsignedTx.TxIn) {
@@ -733,22 +751,7 @@ func debugExecuteArkadeScripts(t *testing.T, ptx *psbt.Packet, signerPublicKey *
 			return fmt.Errorf("failed to read arkade script at input %d: %w", inputIndex, err)
 		}
 
-		err = script.Execute(ptx.UnsignedTx, prevoutFetcher, inputIndex, arkade.WithDebugCallback(
-			func(step *arkade.StepInfo, engine *arkade.Engine) error {
-				disasm, err := engine.DisasmPC()
-				if err != nil {
-					disasm = "<done>"
-				}
-				t.Logf(
-					"vin=%d op=%s stack=%s altstack=%s",
-					inputIndex,
-					disasm,
-					formatHexStack(step.Stack),
-					formatHexStack(step.AltStack),
-				)
-				return nil
-			},
-		))
+		err = script.Execute(ptx.UnsignedTx, prevoutFetcher, inputIndex, opts...)
 		if err != nil {
 			return fmt.Errorf("failed to execute arkade script at input %d: %w", inputIndex, err)
 		}
