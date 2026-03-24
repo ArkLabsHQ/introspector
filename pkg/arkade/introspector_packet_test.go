@@ -55,6 +55,19 @@ func TestIntrospectorPacket(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("entry count exceeds max", func(t *testing.T) {
+		entries := make([]IntrospectorEntry, MaxEntryCount+1)
+		for i := range entries {
+			entries[i] = IntrospectorEntry{
+				Vin:    uint16(i),
+				Script: []byte{0x01},
+			}
+		}
+
+		_, err := NewPacket(entries...)
+		require.EqualError(t, err, "max introspector entry count exceeded, max=1000 got=1001")
+	})
 }
 
 type validFixture struct {
@@ -98,7 +111,7 @@ func decodeEntries(raw []rawEntry) []IntrospectorEntry {
 	return entries
 }
 
-func readFixtures(t *testing.T) fixtures {
+func readFixtures(t testing.TB) fixtures {
 	t.Helper()
 	raw, err := os.ReadFile("testdata/introspector_packet.json")
 	require.NoError(t, err)

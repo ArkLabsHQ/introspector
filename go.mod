@@ -1,10 +1,8 @@
 module github.com/ArkLabsHQ/introspector
 
-go 1.26.0
+go 1.26.1
 
 replace github.com/btcsuite/btcd/btcec/v2 => github.com/btcsuite/btcd/btcec/v2 v2.3.3
-
-replace github.com/arkade-os/arkd/pkg/ark-lib => github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260312030432-9ac7220f14e3
 
 replace github.com/arkade-os/go-sdk => github.com/arkade-os/go-sdk v0.8.2-0.20260303154656-f29d9e77d5c7
 
@@ -18,7 +16,7 @@ require (
 	github.com/ArkLabsHQ/introspector/api-spec v0.0.0-00010101000000-000000000000
 	github.com/ArkLabsHQ/introspector/pkg/arkade v0.0.0-00010101000000-000000000000
 	github.com/ArkLabsHQ/introspector/pkg/client v0.0.0-00010101000000-000000000000
-	github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260312030432-9ac7220f14e3
+	github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260318170839-137daaec3a70
 	github.com/arkade-os/arkd/pkg/errors v0.0.0-20260303153651-8615412e4dea
 	github.com/arkade-os/arkd/pkg/macaroons v0.7.1-0.20260216152434-74a173c67a37
 	github.com/arkade-os/go-sdk v0.8.2-0.20260217102020-4153ef9cde49
@@ -36,7 +34,7 @@ require (
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.63.0
 	go.opentelemetry.io/otel v1.39.0
 	golang.org/x/net v0.49.0
-	google.golang.org/grpc v1.79.1
+	google.golang.org/grpc v1.79.3
 )
 
 require (
