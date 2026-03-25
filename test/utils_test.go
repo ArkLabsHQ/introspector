@@ -702,24 +702,6 @@ func checkpointInputPkScript(vtxoInput offchain.VtxoInput, checkpointScriptBytes
 	return script.P2TRScript(tapKey)
 }
 
-func debugScriptExecution(t *testing.T) arkade.ExecuteOption {
-	return arkade.WithDebugCallback(
-		func(step *arkade.StepInfo, engine *arkade.Engine) error {
-			disasm, err := engine.DisasmPC()
-			if err != nil {
-				disasm = "<done>"
-			}
-			t.Logf(
-				"op=%s stack=%s altstack=%s",
-				disasm,
-				formatHexStack(step.Stack),
-				formatHexStack(step.AltStack),
-			)
-			return nil
-		},
-	)
-}
-
 func executeArkadeScripts(t *testing.T, ptx *psbt.Packet, signerPublicKey *btcec.PublicKey, opts ...arkade.ExecuteOption) error {
 	t.Helper()
 
@@ -760,15 +742,36 @@ func executeArkadeScripts(t *testing.T, ptx *psbt.Packet, signerPublicKey *btcec
 	return nil
 }
 
-func formatHexStack(items [][]byte) string {
-	if len(items) == 0 {
-		return "[]"
+// To get debug output for script execution: call `executeArkadeScripts(t, psbt, pubkey, debugScriptExecution(t))`
+//
+//nolint:unused
+func debugScriptExecution(t *testing.T) arkade.ExecuteOption {
+	formatHexStack := func(items [][]byte) string {
+		if len(items) == 0 {
+			return "[]"
+		}
+
+		hexItems := make([]string, len(items))
+		for i := range items {
+			hexItems[i] = hex.EncodeToString(items[i])
+		}
+
+		return "[" + strings.Join(hexItems, " ") + "]"
 	}
 
-	hexItems := make([]string, len(items))
-	for i := range items {
-		hexItems[i] = hex.EncodeToString(items[i])
-	}
-
-	return "[" + strings.Join(hexItems, " ") + "]"
+	return arkade.WithDebugCallback(
+		func(step *arkade.StepInfo, engine *arkade.Engine) error {
+			disasm, err := engine.DisasmPC()
+			if err != nil {
+				disasm = "<done>"
+			}
+			t.Logf(
+				"op=%s stack=%s altstack=%s",
+				disasm,
+				formatHexStack(step.Stack),
+				formatHexStack(step.AltStack),
+			)
+			return nil
+		},
+	)
 }
