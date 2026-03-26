@@ -359,7 +359,7 @@ func TestRecursivePolicy(t *testing.T) {
 	require.Equal(t, inputPkScript, validTx.Inputs[0].WitnessUtxo.PkScript)
 
 	addIntrospectorPacket(t, validTx, []arkade.IntrospectorEntry{{Vin: 0, Script: arkadeScript}})
-	require.NoError(t, debugExecuteArkadeScripts(t, validTx, introspectorPubKey))
+	require.NoError(t, executeArkadeScripts(t, validTx, introspectorPubKey))
 	submitAndFinalize(validTx, validCheckpoints)
 
 	// Spend the recursive output again to prove it remains spendable.
@@ -377,6 +377,6 @@ func TestRecursivePolicy(t *testing.T) {
 	require.Equal(t, inputPkScript, nextTx.Inputs[0].WitnessUtxo.PkScript)
 
 	addIntrospectorPacket(t, nextTx, []arkade.IntrospectorEntry{{Vin: 0, Script: arkadeScript}})
-	require.NoError(t, debugExecuteArkadeScripts(t, nextTx, introspectorPubKey))
+	require.NoError(t, executeArkadeScripts(t, nextTx, introspectorPubKey))
 	submitAndFinalize(nextTx, nextCheckpoints)
 }
