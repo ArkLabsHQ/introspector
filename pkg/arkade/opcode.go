@@ -522,14 +522,14 @@ var opcodeArray = [256]opcode{
 	OP_CHECKSIGADD:         {OP_CHECKSIGADD, "OP_CHECKSIGADD", 1, opcodeCheckSigAdd},
 
 	// Reserved opcodes.
-	OP_NOP1:  {OP_NOP1, "OP_NOP1", 1, opcodeNop},
-	OP_MERKLEBRANCHVERIFY:  {OP_MERKLEBRANCHVERIFY, "OP_MERKLEBRANCHVERIFY", 1, opcodeMerkleBranchVerify},
-	OP_NOP5:  {OP_NOP5, "OP_NOP5", 1, opcodeNop},
-	OP_NOP6:  {OP_NOP6, "OP_NOP6", 1, opcodeNop},
-	OP_NOP7:  {OP_NOP7, "OP_NOP7", 1, opcodeNop},
-	OP_NOP8:  {OP_NOP8, "OP_NOP8", 1, opcodeNop},
-	OP_NOP9:  {OP_NOP9, "OP_NOP9", 1, opcodeNop},
-	OP_NOP10: {OP_NOP10, "OP_NOP10", 1, opcodeNop},
+	OP_NOP1:               {OP_NOP1, "OP_NOP1", 1, opcodeNop},
+	OP_MERKLEBRANCHVERIFY: {OP_MERKLEBRANCHVERIFY, "OP_MERKLEBRANCHVERIFY", 1, opcodeMerkleBranchVerify},
+	OP_NOP5:               {OP_NOP5, "OP_NOP5", 1, opcodeNop},
+	OP_NOP6:               {OP_NOP6, "OP_NOP6", 1, opcodeNop},
+	OP_NOP7:               {OP_NOP7, "OP_NOP7", 1, opcodeNop},
+	OP_NOP8:               {OP_NOP8, "OP_NOP8", 1, opcodeNop},
+	OP_NOP9:               {OP_NOP9, "OP_NOP9", 1, opcodeNop},
+	OP_NOP10:              {OP_NOP10, "OP_NOP10", 1, opcodeNop},
 
 	// Undefined opcodes.
 	OP_UNKNOWN187: {OP_UNKNOWN187, "OP_UNKNOWN187", 1, opcodeInvalid},
