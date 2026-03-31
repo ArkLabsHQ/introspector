@@ -2041,6 +2041,10 @@ func opcodeInspectInputOutpoint(op *opcode, data []byte, vm *Engine) error {
 		return err
 	}
 
+	if index < 0 {
+		return scriptError(txscript.ErrInvalidIndex, "input index cannot be negative")
+	}
+
 	if int(index) >= len(vm.tx.TxIn) {
 		return scriptError(txscript.ErrInvalidIndex, "input index out of range")
 	}
@@ -2060,6 +2064,10 @@ func opcodeInspectInputValue(op *opcode, data []byte, vm *Engine) error {
 	index, err := vm.dstack.PopInt()
 	if err != nil {
 		return err
+	}
+
+	if index < 0 {
+		return scriptError(txscript.ErrInvalidIndex, "input index cannot be negative")
 	}
 
 	if int(index) >= len(vm.tx.TxIn) {
@@ -2110,6 +2118,10 @@ func opcodeInspectInputScriptPubkey(op *opcode, data []byte, vm *Engine) error {
 		return err
 	}
 
+	if index < 0 {
+		return scriptError(txscript.ErrInvalidIndex, "input index cannot be negative")
+	}
+
 	if int(index) >= len(vm.tx.TxIn) {
 		return scriptError(txscript.ErrInvalidIndex, "input index out of range")
 	}
@@ -2132,6 +2144,10 @@ func opcodeInspectInputSequence(op *opcode, data []byte, vm *Engine) error {
 	index, err := vm.dstack.PopInt()
 	if err != nil {
 		return err
+	}
+
+	if index < 0 {
+		return scriptError(txscript.ErrInvalidIndex, "input index cannot be negative")
 	}
 
 	if int(index) >= len(vm.tx.TxIn) {
@@ -2159,6 +2175,10 @@ func opcodeInspectOutputValue(op *opcode, data []byte, vm *Engine) error {
 		return err
 	}
 
+	if index < 0 {
+		return scriptError(txscript.ErrInvalidIndex, "output index cannot be negative")
+	}
+
 	if int(index) >= len(vm.tx.TxOut) {
 		return scriptError(txscript.ErrInvalidIndex, "output index out of range")
 	}
@@ -2175,6 +2195,10 @@ func opcodeInspectOutputScriptPubkey(op *opcode, data []byte, vm *Engine) error 
 	index, err := vm.dstack.PopInt()
 	if err != nil {
 		return err
+	}
+
+	if index < 0 {
+		return scriptError(txscript.ErrInvalidIndex, "output index cannot be negative")
 	}
 
 	if int(index) >= len(vm.tx.TxOut) {
@@ -3213,7 +3237,11 @@ func opcodeInspectInputArkadeScriptHash(op *opcode, data []byte, vm *Engine) err
 		return err
 	}
 
-	if index < 0 || int(index) >= len(vm.tx.TxIn) {
+	if index < 0 {
+		return scriptError(txscript.ErrInvalidIndex, "input index cannot be negative")
+	}
+
+	if int(index) >= len(vm.tx.TxIn) {
 		return scriptError(txscript.ErrInvalidIndex, "input index out of range")
 	}
 
@@ -3238,7 +3266,11 @@ func opcodeInspectInputArkadeWitnessHash(op *opcode, data []byte, vm *Engine) er
 		return err
 	}
 
-	if index < 0 || int(index) >= len(vm.tx.TxIn) {
+	if index < 0 {
+		return scriptError(txscript.ErrInvalidIndex, "input index cannot be negative")
+	}
+
+	if int(index) >= len(vm.tx.TxIn) {
 		return scriptError(txscript.ErrInvalidIndex, "input index out of range")
 	}
 
