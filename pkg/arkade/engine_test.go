@@ -26,6 +26,7 @@ func TestNewOpcodes(t *testing.T) {
 		txIdx       int
 		inputAmount int64
 		stack       [][]byte
+		errText     string
 	}
 
 	type fixture struct {
@@ -972,6 +973,32 @@ func TestNewOpcodes(t *testing.T) {
 			},
 		},
 		{
+			name: "OP_INSPECTINPUTOUTPOINT invalid negative index",
+			script: txscript.NewScriptBuilder().
+				AddOp(OP_1NEGATE).
+				AddOp(OP_INSPECTINPUTOUTPOINT),
+			cases: []testCase{
+				{
+					valid: false,
+					tx: &wire.MsgTx{
+						Version: 1,
+						TxIn: []*wire.TxIn{
+							{
+								PreviousOutPoint: wire.OutPoint{
+									Hash:  chainhash.Hash{},
+									Index: 0,
+								},
+							},
+						},
+					},
+					txIdx:       0,
+					inputAmount: 0,
+					stack:       nil,
+					errText:     "input index cannot be negative",
+				},
+			},
+		},
+		{
 			name: "OP_INSPECTINPUTVALUE",
 			script: txscript.NewScriptBuilder().
 				AddData([]byte{0x00}).
@@ -995,6 +1022,32 @@ func TestNewOpcodes(t *testing.T) {
 					txIdx:       0,
 					inputAmount: 1000000000,
 					stack:       nil,
+				},
+			},
+		},
+		{
+			name: "OP_INSPECTINPUTVALUE invalid negative index",
+			script: txscript.NewScriptBuilder().
+				AddOp(OP_1NEGATE).
+				AddOp(OP_INSPECTINPUTVALUE),
+			cases: []testCase{
+				{
+					valid: false,
+					tx: &wire.MsgTx{
+						Version: 1,
+						TxIn: []*wire.TxIn{
+							{
+								PreviousOutPoint: wire.OutPoint{
+									Hash:  chainhash.Hash{},
+									Index: 0,
+								},
+							},
+						},
+					},
+					txIdx:       0,
+					inputAmount: 1000000000,
+					stack:       nil,
+					errText:     "input index cannot be negative",
 				},
 			},
 		},
@@ -1033,6 +1086,32 @@ func TestNewOpcodes(t *testing.T) {
 			},
 		},
 		{
+			name: "OP_INSPECTINPUTSCRIPTPUBKEY invalid negative index",
+			script: txscript.NewScriptBuilder().
+				AddOp(OP_1NEGATE).
+				AddOp(OP_INSPECTINPUTSCRIPTPUBKEY),
+			cases: []testCase{
+				{
+					valid: false,
+					tx: &wire.MsgTx{
+						Version: 1,
+						TxIn: []*wire.TxIn{
+							{
+								PreviousOutPoint: wire.OutPoint{
+									Hash:  chainhash.Hash{},
+									Index: 0,
+								},
+							},
+						},
+					},
+					txIdx:       0,
+					inputAmount: 0,
+					stack:       nil,
+					errText:     "input index cannot be negative",
+				},
+			},
+		},
+		{
 			name: "OP_INSPECTINPUTSEQUENCE",
 			script: txscript.NewScriptBuilder().
 				AddData([]byte{0x00}).
@@ -1057,6 +1136,33 @@ func TestNewOpcodes(t *testing.T) {
 					txIdx:       0,
 					inputAmount: 0,
 					stack:       nil,
+				},
+			},
+		},
+		{
+			name: "OP_INSPECTINPUTSEQUENCE invalid negative index",
+			script: txscript.NewScriptBuilder().
+				AddOp(OP_1NEGATE).
+				AddOp(OP_INSPECTINPUTSEQUENCE),
+			cases: []testCase{
+				{
+					valid: false,
+					tx: &wire.MsgTx{
+						Version: 1,
+						TxIn: []*wire.TxIn{
+							{
+								PreviousOutPoint: wire.OutPoint{
+									Hash:  chainhash.Hash{},
+									Index: 0,
+								},
+								Sequence: 4294967295,
+							},
+						},
+					},
+					txIdx:       0,
+					inputAmount: 0,
+					stack:       nil,
+					errText:     "input index cannot be negative",
 				},
 			},
 		},
@@ -1120,6 +1226,38 @@ func TestNewOpcodes(t *testing.T) {
 			},
 		},
 		{
+			name: "OP_INSPECTOUTPUTVALUE invalid negative index",
+			script: txscript.NewScriptBuilder().
+				AddOp(OP_1NEGATE).
+				AddOp(OP_INSPECTOUTPUTVALUE),
+			cases: []testCase{
+				{
+					valid: false,
+					tx: &wire.MsgTx{
+						Version: 1,
+						TxIn: []*wire.TxIn{
+							{
+								PreviousOutPoint: wire.OutPoint{
+									Hash:  chainhash.Hash{},
+									Index: 0,
+								},
+							},
+						},
+						TxOut: []*wire.TxOut{
+							{
+								Value:    1000000000,
+								PkScript: nil,
+							},
+						},
+					},
+					txIdx:       0,
+					inputAmount: 0,
+					stack:       nil,
+					errText:     "output index cannot be negative",
+				},
+			},
+		},
+		{
 			name: "OP_INSPECTOUTPUTSCRIPTPUBKEY",
 			script: txscript.NewScriptBuilder().
 				AddData([]byte{0x00}).
@@ -1162,6 +1300,44 @@ func TestNewOpcodes(t *testing.T) {
 					txIdx:       0,
 					inputAmount: 0,
 					stack:       nil,
+				},
+			},
+		},
+		{
+			name: "OP_INSPECTOUTPUTSCRIPTPUBKEY invalid negative index",
+			script: txscript.NewScriptBuilder().
+				AddOp(OP_1NEGATE).
+				AddOp(OP_INSPECTOUTPUTSCRIPTPUBKEY),
+			cases: []testCase{
+				{
+					valid: false,
+					tx: &wire.MsgTx{
+						Version: 1,
+						TxIn: []*wire.TxIn{
+							{
+								PreviousOutPoint: wire.OutPoint{
+									Hash:  chainhash.Hash{},
+									Index: 0,
+								},
+							},
+						},
+						TxOut: []*wire.TxOut{
+							{
+								Value: 0,
+								PkScript: []byte{
+									OP_1, OP_DATA_32,
+									0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+									0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+									0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+									0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+								},
+							},
+						},
+					},
+					txIdx:       0,
+					inputAmount: 0,
+					stack:       nil,
+					errText:     "output index cannot be negative",
 				},
 			},
 		},
@@ -1497,12 +1673,13 @@ func TestNewOpcodes(t *testing.T) {
 
 				if !c.valid && err == nil {
 					tt.Errorf("Execute should have failed")
+				} else if !c.valid && c.errText != "" && !strings.Contains(err.Error(), c.errText) {
+					tt.Errorf("expected error containing %q, got: %v", c.errText, err)
 				}
 			})
 		}
 	}
 }
-
 
 func TestMerkleBranchVerify(t *testing.T) {
 	t.Parallel()
@@ -1711,10 +1888,10 @@ func TestMerkleBranchVerify(t *testing.T) {
 				return s
 			},
 			stack: [][]byte{
-				{},           // empty leaf_tag -> raw hash mode
-				branchTag,    // branch_tag
-				rawSibling,   // proof = sibling
-				rawLeafData,  // leaf_data = 32 bytes (pre-computed hash)
+				{},          // empty leaf_tag -> raw hash mode
+				branchTag,   // branch_tag
+				rawSibling,  // proof = sibling
+				rawLeafData, // leaf_data = 32 bytes (pre-computed hash)
 			},
 		},
 		// ---- Test 5: valid proof chaining ----
@@ -1852,7 +2029,7 @@ func TestMerkleBranchVerify(t *testing.T) {
 			},
 			stack: [][]byte{
 				leafTag,
-				{},          // empty branch_tag
+				{}, // empty branch_tag
 				leafB2[:],
 				[]byte("hello"),
 			},
@@ -1875,10 +2052,10 @@ func TestMerkleBranchVerify(t *testing.T) {
 				return s
 			},
 			stack: [][]byte{
-				{},                    // empty leaf_tag -> raw hash mode
+				{}, // empty leaf_tag -> raw hash mode
 				branchTag,
 				rawSibling,
-				make([]byte, 10),      // only 10 bytes, must be 32 in raw mode
+				make([]byte, 10), // only 10 bytes, must be 32 in raw mode
 			},
 			errText: "leaf_data",
 		},
@@ -1899,10 +2076,10 @@ func TestMerkleBranchVerify(t *testing.T) {
 				return s
 			},
 			stack: [][]byte{
-				{},                    // empty leaf_tag -> raw hash mode
+				{}, // empty leaf_tag -> raw hash mode
 				branchTag,
 				rawSibling,
-				make([]byte, 31),      // 31 bytes, must be 32 in raw mode
+				make([]byte, 31), // 31 bytes, must be 32 in raw mode
 			},
 			errText: "leaf_data",
 		},
@@ -2062,7 +2239,7 @@ func TestIntrospectorPacketOpcodes(t *testing.T) {
 			pkt:    packet,
 		},
 		{
-			name: "script_hash_equality_across_inputs",
+			name:  "script_hash_equality_across_inputs",
 			valid: true,
 			script: func() []byte {
 				s, _ := txscript.NewScriptBuilder().
