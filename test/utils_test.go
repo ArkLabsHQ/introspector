@@ -551,11 +551,11 @@ func createArkadeScriptWithAssetIntrospection(t *testing.T, alicePkScript []byte
 		AddOp(arkade.OP_INSPECTNUMASSETGROUPS).
 		AddInt64(1).
 		AddOp(arkade.OP_EQUALVERIFY).
-		// Check: sum of outputs for group 0 equals assetAmount
+		// Check: sum of outputs for group 0 equals assetAmount (LE64)
 		AddInt64(0). // group index
 		AddInt64(1). // source = outputs
 		AddOp(arkade.OP_INSPECTASSETGROUPSUM).
-		AddInt64(assetAmount).
+		AddData(uint64LE(uint64(assetAmount))).
 		AddOp(arkade.OP_EQUAL).
 		Script()
 	require.NoError(t, err)

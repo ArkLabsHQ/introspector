@@ -2,12 +2,22 @@ package arkade
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"math/big"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 )
+
+// pushAmountLE64 encodes a uint64 as 8-byte little-endian and pushes it onto
+// the data stack. This is consistent with how OP_INSPECTOUTPUTVALUE pushes
+// satoshi values, allowing scripts to use 64-bit arithmetic ops directly.
+func pushAmountLE64(vm *Engine, amount uint64) {
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint64(buf, amount)
+	vm.dstack.PushByteArray(buf)
+}
 
 // opcodeInspectNumAssetGroups pushes the total number of asset groups in the packet onto the stack.
 func opcodeInspectNumAssetGroups(op *opcode, data []byte, vm *Engine) error {
@@ -243,7 +253,7 @@ func opcodeInspectAssetGroup(op *opcode, data []byte, vm *Engine) error {
 			vm.dstack.PushByteArray(input.Txid[:])
 		}
 		vm.dstack.PushInt(scriptNum(input.Vin))
-		vm.dstack.PushInt(scriptNum(input.Amount))
+		pushAmountLE64(vm, input.Amount)
 
 	case 1:
 		if int(j) >= len(group.Outputs) || j < 0 {
@@ -253,7 +263,7 @@ func opcodeInspectAssetGroup(op *opcode, data []byte, vm *Engine) error {
 
 		vm.dstack.PushInt(1)
 		vm.dstack.PushInt(scriptNum(output.Vout))
-		vm.dstack.PushInt(scriptNum(output.Amount))
+		pushAmountLE64(vm, output.Amount)
 
 	default:
 		return scriptError(txscript.ErrInvalidStackOperation, "invalid source value")
@@ -290,24 +300,24 @@ func opcodeInspectAssetGroupSum(op *opcode, data []byte, vm *Engine) error {
 		if !sum.IsUint64() {
 			return scriptError(txscript.ErrInvalidStackOperation, "amount overflow")
 		}
-		vm.dstack.PushInt(scriptNum(sum.Uint64()))
+		pushAmountLE64(vm, sum.Uint64())
 	case 1:
 		sum := safeSumOutputs(group.Outputs)
 		if !sum.IsUint64() {
 			return scriptError(txscript.ErrInvalidStackOperation, "amount overflow")
 		}
-		vm.dstack.PushInt(scriptNum(sum.Uint64()))
+		pushAmountLE64(vm, sum.Uint64())
 	case 2:
 		inSum := safeSumInputs(group.Inputs)
 		if !inSum.IsUint64() {
 			return scriptError(txscript.ErrInvalidStackOperation, "amount overflow")
 		}
-		vm.dstack.PushInt(scriptNum(inSum.Uint64()))
+		pushAmountLE64(vm, inSum.Uint64())
 		outSum := safeSumOutputs(group.Outputs)
 		if !outSum.IsUint64() {
 			return scriptError(txscript.ErrInvalidStackOperation, "amount overflow")
 		}
-		vm.dstack.PushInt(scriptNum(outSum.Uint64()))
+		pushAmountLE64(vm, outSum.Uint64())
 	default:
 		return scriptError(txscript.ErrInvalidStackOperation, "invalid source value")
 	}
@@ -374,7 +384,7 @@ func opcodeInspectOutAssetAt(op *opcode, data []byte, vm *Engine) error {
 				if scriptNum(idx) == t {
 					vm.dstack.PushByteArray(assetTxid[:])
 					vm.dstack.PushInt(scriptNum(gidx))
-					vm.dstack.PushInt(scriptNum(output.Amount))
+					pushAmountLE64(vm, output.Amount)
 					return nil
 				}
 				idx++
@@ -386,7 +396,8 @@ func opcodeInspectOutAssetAt(op *opcode, data []byte, vm *Engine) error {
 }
 
 // opcodeInspectOutAssetLookup pops gidx, txid, and output index o, then looks up the asset amount.
-// Pushes the amount if found, or -1 if not found.
+// Found:     pushes 1 (success flag) then the amount as 8-byte LE64.
+// Not found: pushes 0 (failure flag only — no amount on stack).
 func opcodeInspectOutAssetLookup(op *opcode, data []byte, vm *Engine) error {
 	if vm.assetPacket == nil {
 		return scriptError(txscript.ErrInvalidStackOperation, "no asset packet")
@@ -434,13 +445,14 @@ func opcodeInspectOutAssetLookup(op *opcode, data []byte, vm *Engine) error {
 
 		for _, output := range group.Outputs {
 			if uint32(output.Vout) == uint32(o) {
-				vm.dstack.PushInt(scriptNum(output.Amount))
+				vm.dstack.PushInt(1)
+				pushAmountLE64(vm, output.Amount)
 				return nil
 			}
 		}
 	}
 
-	vm.dstack.PushInt(-1)
+	vm.dstack.PushInt(0)
 	return nil
 }
 
@@ -511,7 +523,7 @@ func opcodeInspectInAssetAt(op *opcode, data []byte, vm *Engine) error {
 
 					vm.dstack.PushByteArray(inputTxid[:])
 					vm.dstack.PushInt(scriptNum(gidx))
-					vm.dstack.PushInt(scriptNum(input.Amount))
+					pushAmountLE64(vm, input.Amount)
 					return nil
 				}
 				idx++
@@ -523,7 +535,8 @@ func opcodeInspectInAssetAt(op *opcode, data []byte, vm *Engine) error {
 }
 
 // opcodeInspectInAssetLookup pops gidx, txid, and input index i, then looks up the asset amount.
-// Pushes the amount if found, or -1 if not found.
+// Found:     pushes 1 (success flag) then the amount as 8-byte LE64.
+// Not found: pushes 0 (failure flag only — no amount on stack).
 func opcodeInspectInAssetLookup(op *opcode, data []byte, vm *Engine) error {
 	if vm.assetPacket == nil {
 		return scriptError(txscript.ErrInvalidStackOperation, "no asset packet")
@@ -578,13 +591,14 @@ func opcodeInspectInAssetLookup(op *opcode, data []byte, vm *Engine) error {
 			}
 
 			if inputTxid.IsEqual(&searchTxid) {
-				vm.dstack.PushInt(scriptNum(input.Amount))
+				vm.dstack.PushInt(1)
+				pushAmountLE64(vm, input.Amount)
 				return nil
 			}
 		}
 	}
 
-	vm.dstack.PushInt(-1)
+	vm.dstack.PushInt(0)
 	return nil
 }
 
