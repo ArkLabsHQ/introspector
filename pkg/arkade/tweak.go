@@ -40,7 +40,7 @@ func ComputeArkadeScriptPublicKey(pubKey *btcec.PublicKey, scriptHash []byte) *b
 func ComputeArkadeScriptPrivateKey(privKey *btcec.PrivateKey, scriptHash []byte) *btcec.PrivateKey {
 	privKeyScalar := privKey.Key
 	pubKeyBytes := privKey.PubKey().SerializeCompressed()
-	if pubKeyBytes[0]&0x03 == 0 {
+	if pubKeyBytes[0] == 0x03 {
 		privKeyScalar.Negate()
 	}
 
