@@ -4,6 +4,7 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 )
 
 var (
@@ -40,7 +41,7 @@ func ComputeArkadeScriptPublicKey(pubKey *btcec.PublicKey, scriptHash []byte) *b
 func ComputeArkadeScriptPrivateKey(privKey *btcec.PrivateKey, scriptHash []byte) *btcec.PrivateKey {
 	privKeyScalar := privKey.Key
 	pubKeyBytes := privKey.PubKey().SerializeCompressed()
-	if pubKeyBytes[0] == 0x03 {
+	if pubKeyBytes[0] == secp256k1.PubKeyFormatCompressedOdd {
 		privKeyScalar.Negate()
 	}
 
