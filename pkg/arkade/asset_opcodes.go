@@ -51,8 +51,8 @@ func opcodeInspectAssetGroupAssetId(op *opcode, data []byte, vm *Engine) error {
 
 // opcodeInspectAssetGroupCtrl pops a group index k and pushes a tagged control
 // asset reference.
-// Found:   pushes 1, txid, index.
-// Missing: pushes 0, empty txid, 0.
+// Found:   pushes txid, index, 1.
+// Missing: pushes empty txid, 0, 0.
 func opcodeInspectAssetGroupCtrl(op *opcode, data []byte, vm *Engine) error {
 	if vm.assetPacket == nil {
 		return scriptError(txscript.ErrInvalidStackOperation, "no asset packet")
@@ -70,16 +70,16 @@ func opcodeInspectAssetGroupCtrl(op *opcode, data []byte, vm *Engine) error {
 	group := vm.assetPacket[int(k)]
 
 	if group.ControlAsset == nil {
-		vm.dstack.PushInt(0)
 		vm.dstack.PushByteArray(nil)
+		vm.dstack.PushInt(0)
 		vm.dstack.PushInt(0)
 		return nil
 	}
 
 	if group.ControlAsset.Type == asset.AssetRefByID {
-		vm.dstack.PushInt(1)
 		vm.dstack.PushByteArray(group.ControlAsset.AssetId.Txid[:])
 		vm.dstack.PushInt(scriptNum(group.ControlAsset.AssetId.Index))
+		vm.dstack.PushInt(1)
 		return nil
 	}
 
@@ -91,13 +91,13 @@ func opcodeInspectAssetGroupCtrl(op *opcode, data []byte, vm *Engine) error {
 		if ctrlGroup.AssetId == nil {
 			// Referenced group is a fresh issuance, use current tx hash and the group index
 			txHash := vm.tx.TxHash()
-			vm.dstack.PushInt(1)
 			vm.dstack.PushByteArray(txHash[:])
 			vm.dstack.PushInt(scriptNum(group.ControlAsset.GroupIndex))
-		} else {
 			vm.dstack.PushInt(1)
+		} else {
 			vm.dstack.PushByteArray(ctrlGroup.AssetId.Txid[:])
 			vm.dstack.PushInt(scriptNum(ctrlGroup.AssetId.Index))
+			vm.dstack.PushInt(1)
 		}
 		return nil
 	}
@@ -107,7 +107,7 @@ func opcodeInspectAssetGroupCtrl(op *opcode, data []byte, vm *Engine) error {
 
 // opcodeFindAssetGroupByAssetId pops an asset ID (gidx, txid) and searches for
 // the matching group index.
-// Found:   pushes 1, group index.
+// Found:   pushes group index, 1.
 // Missing: pushes 0, 0.
 func opcodeFindAssetGroupByAssetId(op *opcode, data []byte, vm *Engine) error {
 	if vm.assetPacket == nil {
@@ -135,16 +135,16 @@ func opcodeFindAssetGroupByAssetId(op *opcode, data []byte, vm *Engine) error {
 		if group.AssetId == nil {
 			txHash := vm.tx.TxHash()
 			if txHash.IsEqual(&searchTxid) && scriptNum(i) == gidx {
-				vm.dstack.PushInt(1)
 				vm.dstack.PushInt(scriptNum(i))
+				vm.dstack.PushInt(1)
 				return nil
 			}
 			continue
 		}
 
 		if group.AssetId.Txid.IsEqual(&searchTxid) && scriptNum(group.AssetId.Index) == gidx {
-			vm.dstack.PushInt(1)
 			vm.dstack.PushInt(scriptNum(i))
+			vm.dstack.PushInt(1)
 			return nil
 		}
 	}
@@ -399,8 +399,8 @@ func opcodeInspectOutAssetAt(op *opcode, data []byte, vm *Engine) error {
 }
 
 // opcodeInspectOutAssetLookup pops gidx, txid, and output index o, then looks up the asset amount.
-// Found:     pushes 1 (success flag) then the amount as 8-byte LE64.
-// Not found: pushes 0 (failure flag) then 0 as 8-byte LE64.
+// Found:     pushes the amount as 8-byte LE64, then 1 (success flag).
+// Not found: pushes 0 as 8-byte LE64, then 0 (failure flag).
 func opcodeInspectOutAssetLookup(op *opcode, data []byte, vm *Engine) error {
 	if vm.assetPacket == nil {
 		return scriptError(txscript.ErrInvalidStackOperation, "no asset packet")
@@ -448,15 +448,15 @@ func opcodeInspectOutAssetLookup(op *opcode, data []byte, vm *Engine) error {
 
 		for _, output := range group.Outputs {
 			if uint32(output.Vout) == uint32(o) {
-				vm.dstack.PushInt(1)
 				pushAmountLE64(vm, output.Amount)
+				vm.dstack.PushInt(1)
 				return nil
 			}
 		}
 	}
 
-	vm.dstack.PushInt(0)
 	vm.dstack.PushByteArray(make([]byte, 8))
+	vm.dstack.PushInt(0)
 	return nil
 }
 
@@ -539,8 +539,8 @@ func opcodeInspectInAssetAt(op *opcode, data []byte, vm *Engine) error {
 }
 
 // opcodeInspectInAssetLookup pops gidx, txid, and input index i, then looks up the asset amount.
-// Found:     pushes 1 (success flag) then the amount as 8-byte LE64.
-// Not found: pushes 0 (failure flag) then 0 as 8-byte LE64.
+// Found:     pushes the amount as 8-byte LE64, then 1 (success flag).
+// Not found: pushes 0 as 8-byte LE64, then 0 (failure flag).
 func opcodeInspectInAssetLookup(op *opcode, data []byte, vm *Engine) error {
 	if vm.assetPacket == nil {
 		return scriptError(txscript.ErrInvalidStackOperation, "no asset packet")
@@ -595,15 +595,15 @@ func opcodeInspectInAssetLookup(op *opcode, data []byte, vm *Engine) error {
 			}
 
 			if inputTxid.IsEqual(&searchTxid) {
-				vm.dstack.PushInt(1)
 				pushAmountLE64(vm, input.Amount)
+				vm.dstack.PushInt(1)
 				return nil
 			}
 		}
 	}
 
-	vm.dstack.PushInt(0)
 	vm.dstack.PushByteArray(make([]byte, 8))
+	vm.dstack.PushInt(0)
 	return nil
 }
 
