@@ -2102,8 +2102,7 @@ func pushScriptPubKey(scriptPubKey []byte, vm *Engine) error {
 	return nil
 }
 
-// opcodeInspectInputScriptPubkey pops the input index from the stack and pushes
-// the scriptPubKey of the current input onto the stack.
+// opcodeInspectInputScriptPubkey pops the input index from the stack and pushes the scriptPubKey of the current input onto the stack.
 // Stack transformation: [... index] -> [... scriptPubKey]
 func opcodeInspectInputScriptPubkey(op *opcode, data []byte, vm *Engine) error {
 	index, err := vm.dstack.PopInt()
@@ -2124,21 +2123,7 @@ func opcodeInspectInputScriptPubkey(op *opcode, data []byte, vm *Engine) error {
 		return scriptError(txscript.ErrInvalidIndex, "previous output not found")
 	}
 
-	if txscript.IsWitnessProgram(prevOut.PkScript) {
-		version, program, err := txscript.ExtractWitnessProgramInfo(prevOut.PkScript)
-		if err != nil {
-			return err
-		}
-
-		vm.dstack.PushByteArray(program)
-		vm.dstack.PushInt(scriptNum(version))
-		return nil
-	}
-
-	hash := sha256.Sum256(prevOut.PkScript)
-	vm.dstack.PushByteArray(hash[:])
-	vm.dstack.PushInt(-1)
-	return nil
+	return pushScriptPubKey(prevOut.PkScript, vm)
 }
 
 // opcodeInspectInputSequence pops the input index from the stack and pushes the sequence number of the current input onto the stack.
@@ -2184,7 +2169,7 @@ func opcodeInspectOutputValue(op *opcode, data []byte, vm *Engine) error {
 	return nil
 }
 
-// opcodeInspectOutputScriptkey pushes the scriptPubKey of the output at the given index onto the stack.
+// opcodeInspectOutputScriptPubkey pushes the scriptPubKey of the output at the given index onto the stack.
 // Stack transformation: [... index] -> [... scriptPubKey]
 func opcodeInspectOutputScriptPubkey(op *opcode, data []byte, vm *Engine) error {
 	index, err := vm.dstack.PopInt()
