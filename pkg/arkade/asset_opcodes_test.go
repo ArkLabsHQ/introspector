@@ -232,6 +232,8 @@ func TestAssetOpcodes(t *testing.T) {
 				AddInt64(7). // expected ctrl gidx
 				AddOp(OP_EQUALVERIFY).
 				AddData(ctrlTxid[:]). // expected ctrl txid
+				AddOp(OP_EQUALVERIFY).
+				AddOp(OP_1).
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{valid: true, assetPacket: twoGroupPacket},
@@ -242,8 +244,11 @@ func TestAssetOpcodes(t *testing.T) {
 			script: txscript.NewScriptBuilder().
 				AddInt64(1). // group 1 has no control asset
 				AddOp(OP_INSPECTASSETGROUPCTRL).
-				AddInt64(-1). // expected -1
-				AddOp(OP_EQUAL),
+				AddInt64(0). // expected missing index
+				AddOp(OP_EQUALVERIFY).
+				AddData(nil). // expected missing txid
+				AddOp(OP_EQUALVERIFY).
+				AddOp(OP_NOT), // flag=0
 			cases: []testCase{
 				{valid: true, assetPacket: twoGroupPacket},
 			},
@@ -257,6 +262,8 @@ func TestAssetOpcodes(t *testing.T) {
 				AddInt64(0). // expected ctrl gidx (group 0's AssetId.Index)
 				AddOp(OP_EQUALVERIFY).
 				AddData(assetTxid[:]). // expected ctrl txid (group 0's AssetId.Txid)
+				AddOp(OP_EQUALVERIFY).
+				AddOp(OP_1).
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{valid: true, assetPacket: ctrlByGroupPacket},
@@ -271,6 +278,8 @@ func TestAssetOpcodes(t *testing.T) {
 				AddInt64(3).           // gidx to search
 				AddOp(OP_FINDASSETGROUPBYASSETID).
 				AddInt64(0). // expected group index
+				AddOp(OP_EQUALVERIFY).
+				AddOp(OP_1).
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{valid: true, assetPacket: twoGroupPacket},
@@ -282,8 +291,9 @@ func TestAssetOpcodes(t *testing.T) {
 				AddData(assetTxid[:]). // txid to search
 				AddInt64(99).          // wrong gidx
 				AddOp(OP_FINDASSETGROUPBYASSETID).
-				AddInt64(-1). // not found
-				AddOp(OP_EQUAL),
+				AddInt64(0). // expected missing index
+				AddOp(OP_EQUALVERIFY).
+				AddOp(OP_NOT), // flag=0
 			cases: []testCase{
 				{valid: true, assetPacket: twoGroupPacket},
 			},
@@ -596,6 +606,8 @@ func TestAssetOpcodes(t *testing.T) {
 				AddData(assetTxid[:]). // txid
 				AddInt64(0).           // gidx 0
 				AddOp(OP_INSPECTOUTASSETLOOKUP).
+				AddData(make([]byte, 8)). // expected dummy LE64
+				AddOp(OP_EQUALVERIFY).
 				AddOp(OP_NOT), // flag=0 → NOT → true
 			cases: []testCase{
 				{valid: true, assetPacket: twoGroupPacket},
@@ -727,13 +739,13 @@ func TestAssetOpcodes(t *testing.T) {
 				AddData(assetTxid[:]). // txid
 				AddInt64(5).           // wrong gidx
 				AddOp(OP_INSPECTINASSETLOOKUP).
+				AddData(make([]byte, 8)). // expected dummy LE64
+				AddOp(OP_EQUALVERIFY).
 				AddOp(OP_NOT), // flag=0 → NOT → true
 			cases: []testCase{
 				{valid: true, assetPacket: twoGroupPacket},
 			},
 		},
-
-		// ========== Edge cases: large amounts (> 2^31, formerly broken via scriptNum) ==========
 		{
 			name: "large_amount_group_output_read",
 			// 3 billion > 2^31-1: would have failed with ErrNumberTooBig under scriptNum.
