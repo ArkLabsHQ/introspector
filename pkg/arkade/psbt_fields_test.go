@@ -3,6 +3,7 @@ package arkade
 import (
 	"testing"
 
+	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
@@ -16,13 +17,12 @@ func TestPrevoutTxField(t *testing.T) {
 		prevTx := newTestPrevoutTx(1)
 		ptx.UnsignedTx.TxIn[0].PreviousOutPoint.Hash = prevTx.TxHash()
 
-		err := SetArkPsbtField(ptx, 0, PrevoutTxField, prevTx)
+		err := txutils.SetArkPsbtField(ptx, 0, PrevoutTxField, *prevTx)
 		require.NoError(t, err)
 
-		fields, err := GetArkPsbtFields(ptx, 0, PrevoutTxField)
+		fields, err := txutils.GetArkPsbtFields(ptx, 0, PrevoutTxField)
 		require.NoError(t, err)
 		require.Len(t, fields, 1)
-		require.NotNil(t, fields[0])
 		require.Equal(t, prevTx.TxHash(), fields[0].TxHash())
 	})
 
@@ -34,8 +34,8 @@ func TestPrevoutTxField(t *testing.T) {
 		ptx.UnsignedTx.TxIn[0].PreviousOutPoint.Hash = prevTx0.TxHash()
 		ptx.UnsignedTx.TxIn[1].PreviousOutPoint.Hash = prevTx1.TxHash()
 
-		require.NoError(t, SetArkPsbtField(ptx, 0, PrevoutTxField, prevTx0))
-		require.NoError(t, SetArkPsbtField(ptx, 1, PrevoutTxField, prevTx1))
+		require.NoError(t, txutils.SetArkPsbtField(ptx, 0, PrevoutTxField, *prevTx0))
+		require.NoError(t, txutils.SetArkPsbtField(ptx, 1, PrevoutTxField, *prevTx1))
 
 		prevoutTxs, err := PrevoutTxsFromPSBT(ptx)
 		require.NoError(t, err)
@@ -49,7 +49,7 @@ func TestPrevoutTxField(t *testing.T) {
 		prevTx := newTestPrevoutTx(1)
 		ptx.UnsignedTx.TxIn[0].PreviousOutPoint.Hash = chainhash.Hash{9, 9, 9}
 
-		require.NoError(t, SetArkPsbtField(ptx, 0, PrevoutTxField, prevTx))
+		require.NoError(t, txutils.SetArkPsbtField(ptx, 0, PrevoutTxField, *prevTx))
 
 		_, err := PrevoutTxsFromPSBT(ptx)
 		require.Error(t, err)
@@ -61,8 +61,8 @@ func TestPrevoutTxField(t *testing.T) {
 		prevTx := newTestPrevoutTx(1)
 		ptx.UnsignedTx.TxIn[0].PreviousOutPoint.Hash = prevTx.TxHash()
 
-		require.NoError(t, SetArkPsbtField(ptx, 0, PrevoutTxField, prevTx))
-		require.NoError(t, SetArkPsbtField(ptx, 0, PrevoutTxField, prevTx))
+		require.NoError(t, txutils.SetArkPsbtField(ptx, 0, PrevoutTxField, *prevTx))
+		require.NoError(t, txutils.SetArkPsbtField(ptx, 0, PrevoutTxField, *prevTx))
 
 		_, err := PrevoutTxsFromPSBT(ptx)
 		require.Error(t, err)
