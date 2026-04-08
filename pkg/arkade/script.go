@@ -34,6 +34,12 @@ func WithDebugCallback(callback func(*StepInfo, *Engine) error) ExecuteOption {
 	}
 }
 
+func WithPrevoutTxs(prevoutTxs map[int]*wire.MsgTx) ExecuteOption {
+	return func(engine *Engine) {
+		engine.SetPrevoutTxs(prevoutTxs)
+	}
+}
+
 // ReadArkadeScript reads an arkade script from an IntrospectorEntry and validates
 // it against the tapscript in the PSBT input. The entry contains the script and
 // witness data extracted from the Introspector Packet (OP_RETURN TLV).

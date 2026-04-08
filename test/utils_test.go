@@ -718,6 +718,15 @@ func executeArkadeScripts(t *testing.T, ptx *psbt.Packet, signerPublicKey *btcec
 	}
 	prevoutFetcher := txscript.NewMultiPrevOutFetcher(prevouts)
 
+	prevoutTxs, err := arkade.PrevoutTxsFromPSBT(ptx)
+	if err != nil {
+		return fmt.Errorf("failed to decode prev ark txs: %w", err)
+	}
+
+	if len(prevoutTxs) > 0 {
+		opts = append(opts, arkade.WithPrevoutTxs(prevoutTxs))
+	}
+
 	packet, err := arkade.FindIntrospectorPacket(ptx.UnsignedTx)
 	if err != nil {
 		return fmt.Errorf("failed to parse introspector packet: %w", err)

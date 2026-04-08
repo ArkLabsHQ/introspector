@@ -3319,13 +3319,13 @@ func opcodeInspectInputPacket(op *opcode, data []byte, vm *Engine) error {
 		return scriptError(txscript.ErrInvalidStackOperation, "packet type out of range")
 	}
 
-	if vm.prevArkTxs == nil {
+	if vm.prevoutTxs == nil {
 		vm.dstack.PushByteArray(nil)
 		vm.dstack.PushInt(0)
 		return nil
 	}
 
-	prevTx, ok := vm.prevArkTxs[int(index)]
+	prevTx, ok := vm.prevoutTxs[int(index)]
 	if !ok || prevTx == nil {
 		vm.dstack.PushByteArray(nil)
 		vm.dstack.PushInt(0)

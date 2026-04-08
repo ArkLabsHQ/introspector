@@ -25,6 +25,11 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 		return nil, fmt.Errorf("failed to create prevout fetcher: %w", err)
 	}
 
+	prevoutTxs, err := arkade.PrevoutTxsFromPSBT(ptx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode prev ark txs: %w", err)
+	}
+
 	// Parse IntrospectorPacket from the transaction's OP_RETURN output
 	packet, err := arkade.FindIntrospectorPacket(ptx.UnsignedTx)
 	if err != nil {
@@ -53,7 +58,12 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 			continue
 		}
 
-		if err := script.Execute(ptx.UnsignedTx, prevoutFetcher, inputIndex); err != nil {
+		if err := script.Execute(
+			ptx.UnsignedTx,
+			prevoutFetcher,
+			inputIndex,
+			arkade.WithPrevoutTxs(prevoutTxs),
+		); err != nil {
 			log.WithError(err).WithField("input_index", inputIndex).Error("arkade script execution failed")
 			return nil, fmt.Errorf("failed to execute arkade script at input %d: %w", inputIndex, err)
 		}

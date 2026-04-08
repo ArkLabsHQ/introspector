@@ -111,7 +111,7 @@ type Engine struct {
 	prevOutFetcher txscript.PrevOutputFetcher
 	assetPacket        asset.Packet
 	introspectorPacket IntrospectorPacket
-	prevArkTxs         map[int]*wire.MsgTx
+	prevoutTxs         map[int]*wire.MsgTx
 
 	// The following fields handle keeping track of the current execution state
 	// of the engine.
@@ -192,13 +192,13 @@ func (vm *Engine) SetIntrospectorPacket(packet IntrospectorPacket) {
 	vm.introspectorPacket = packet
 }
 
-// SetPrevArkTxs sets the previous ark transactions for input packet
+// SetPrevoutTxs sets the previous ark transactions for input packet
 // introspection. The map key is the input index of the currently executing
 // transaction; the value is the full previous ark transaction that the
 // input references. These are provided via a dedicated ark PSBT unknown
 // field (key 0xde "prevarktx") and are NOT the same as NonWitnessUtxo.
-func (vm *Engine) SetPrevArkTxs(txs map[int]*wire.MsgTx) {
-	vm.prevArkTxs = txs
+func (vm *Engine) SetPrevoutTxs(txs map[int]*wire.MsgTx) {
+	vm.prevoutTxs = txs
 }
 
 // isBranchExecuting returns whether or not the current conditional branch is

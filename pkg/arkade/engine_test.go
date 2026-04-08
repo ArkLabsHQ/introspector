@@ -2409,7 +2409,7 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 	}
 
 	// Previous ark transaction with extension for OP_INSPECTINPUTPACKET tests.
-	prevArkTx := makeTxWithExtension(t, testPacket)
+	prevoutTx := makeTxWithExtension(t, testPacket)
 
 	// Two-input transaction for OP_INSPECTINPUTPACKET tests.
 	twoInputTx := makeTxWithExtension(t, testPacket)
@@ -2417,7 +2417,7 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 		&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{}, Index: 1}},
 	)
 
-	runEngine := func(t *testing.T, script []byte, tx *wire.MsgTx, prevArkTxs map[int]*wire.MsgTx) error {
+	runEngine := func(t *testing.T, script []byte, tx *wire.MsgTx, prevoutTxs map[int]*wire.MsgTx) error {
 		t.Helper()
 		engine, err := NewEngine(
 			script, tx, 0,
@@ -2428,8 +2428,8 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewEngine: %v", err)
 		}
-		if prevArkTxs != nil {
-			engine.SetPrevArkTxs(prevArkTxs)
+		if prevoutTxs != nil {
+			engine.SetPrevoutTxs(prevoutTxs)
 		}
 		return engine.Execute()
 	}
@@ -2439,7 +2439,7 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 		valid      bool
 		script     []byte
 		tx         *wire.MsgTx
-		prevArkTxs map[int]*wire.MsgTx
+		prevoutTxs map[int]*wire.MsgTx
 		errText    string
 	}
 
@@ -2577,42 +2577,42 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 			valid:      true,
 			script:     inspectInputPacketCheck(t, OP_2, OP_0, testPayload),
 			tx:         twoInputTx,
-			prevArkTxs: map[int]*wire.MsgTx{0: prevArkTx},
+			prevoutTxs: map[int]*wire.MsgTx{0: prevoutTx},
 		},
 		{
 			name:       "inspect_input_packet_type_not_found",
 			valid:      true,
 			script:     inspectInputPacketNotFound(t, OP_9, OP_0),
 			tx:         twoInputTx,
-			prevArkTxs: map[int]*wire.MsgTx{0: prevArkTx},
+			prevoutTxs: map[int]*wire.MsgTx{0: prevoutTx},
 		},
 		{
 			name:       "inspect_input_packet_no_prev_tx_for_input",
 			valid:      true,
 			script:     inspectInputPacketNotFound(t, OP_2, OP_1),
 			tx:         twoInputTx,
-			prevArkTxs: map[int]*wire.MsgTx{0: prevArkTx}, // only input 0 has prev tx
+			prevoutTxs: map[int]*wire.MsgTx{0: prevoutTx}, // only input 0 has prev tx
 		},
 		{
 			name:   "inspect_input_packet_no_prev_ark_txs",
 			valid:  true,
 			script: inspectInputPacketNotFound(t, OP_2, OP_0),
 			tx:     twoInputTx,
-			// prevArkTxs is nil
+			// prevoutTxs is nil
 		},
 		{
 			name:       "inspect_input_packet_prev_tx_no_extension",
 			valid:      true,
 			script:     inspectInputPacketNotFound(t, OP_2, OP_0),
 			tx:         twoInputTx,
-			prevArkTxs: map[int]*wire.MsgTx{0: plainTx},
+			prevoutTxs: map[int]*wire.MsgTx{0: plainTx},
 		},
 		{
 			name:       "inspect_input_packet_negative_index",
 			valid:      false,
 			script:     buildScript(t, OP_2, OP_1NEGATE, OP_INSPECTINPUTPACKET),
 			tx:         twoInputTx,
-			prevArkTxs: map[int]*wire.MsgTx{0: prevArkTx},
+			prevoutTxs: map[int]*wire.MsgTx{0: prevoutTx},
 			errText:    "input index cannot be negative",
 		},
 		{
@@ -2620,7 +2620,7 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 			valid:      false,
 			script:     buildScript(t, OP_2, OP_5, OP_INSPECTINPUTPACKET),
 			tx:         twoInputTx,
-			prevArkTxs: map[int]*wire.MsgTx{0: prevArkTx},
+			prevoutTxs: map[int]*wire.MsgTx{0: prevoutTx},
 			errText:    "input index out of range",
 		},
 		{
@@ -2644,7 +2644,7 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 			valid:      false,
 			script:     buildScript(t, OP_4, OP_0, OP_INSPECTINPUTPACKET),
 			tx:         twoInputTx,
-			prevArkTxs: map[int]*wire.MsgTx{0: txWithLargePacket},
+			prevoutTxs: map[int]*wire.MsgTx{0: txWithLargePacket},
 			errText:    "packet content size 1000 exceeds max allowed size 520",
 		},
 	}
@@ -2653,7 +2653,7 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			err := runEngine(t, tt.script, tt.tx, tt.prevArkTxs)
+			err := runEngine(t, tt.script, tt.tx, tt.prevoutTxs)
 			if tt.valid && err != nil {
 				t.Errorf("expected success, got: %v", err)
 			}
