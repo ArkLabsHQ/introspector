@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ArkLabsHQ/introspector/internal/application"
 	"github.com/ArkLabsHQ/introspector/pkg/arkade"
 	introspectorclient "github.com/ArkLabsHQ/introspector/pkg/client"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
@@ -718,7 +719,7 @@ func executeArkadeScripts(t *testing.T, ptx *psbt.Packet, signerPublicKey *btcec
 	}
 	prevoutFetcher := txscript.NewMultiPrevOutFetcher(prevouts)
 
-	prevoutTxs, err := arkade.PrevoutTxsFromPSBT(ptx)
+	prevoutTxs, err := application.PrevoutTxsFromPSBT(ptx)
 	if err != nil {
 		return fmt.Errorf("failed to decode prev ark txs: %w", err)
 	}

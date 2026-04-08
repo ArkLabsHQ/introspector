@@ -25,7 +25,7 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 		return nil, fmt.Errorf("failed to create prevout fetcher: %w", err)
 	}
 
-	prevoutTxs, err := arkade.PrevoutTxsFromPSBT(ptx)
+	prevoutTxs, err := PrevoutTxsFromPSBT(ptx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode prev ark txs: %w", err)
 	}
