@@ -17,6 +17,7 @@ import (
 	"golang.org/x/crypto/ripemd160"
 	"modernc.org/mathutil"
 
+	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -303,8 +304,8 @@ const (
 	OP_INSPECTINASSETAT              = 0xf1 // 241
 	OP_INSPECTINASSETLOOKUP          = 0xf2 // 242
 	OP_TXID                          = 0xf3 // 243
-	OP_UNKNOWN244                    = 0xf4 // 244
-	OP_UNKNOWN245                    = 0xf5 // 245
+	OP_INSPECTPACKET                 = 0xf4 // 244
+	OP_INSPECTINPUTPACKET            = 0xf5 // 245
 	OP_UNKNOWN246                    = 0xf6 // 246
 	OP_UNKNOWN247                    = 0xf7 // 247
 	OP_UNKNOWN248                    = 0xf8 // 248
@@ -604,8 +605,8 @@ var opcodeArray = [256]opcode{
 	OP_INSPECTINASSETAT:              {OP_INSPECTINASSETAT, "OP_INSPECTINASSETAT", 1, opcodeInspectInAssetAt},
 	OP_INSPECTINASSETLOOKUP:          {OP_INSPECTINASSETLOOKUP, "OP_INSPECTINASSETLOOKUP", 1, opcodeInspectInAssetLookup},
 	OP_TXID:                          {OP_TXID, "OP_TXID", 1, opcodeTxId},
-	OP_UNKNOWN244:                    {OP_UNKNOWN244, "OP_UNKNOWN244", 1, opcodeInvalid},
-	OP_UNKNOWN245:                    {OP_UNKNOWN245, "OP_UNKNOWN245", 1, opcodeInvalid},
+	OP_INSPECTPACKET:                 {OP_INSPECTPACKET, "OP_INSPECTPACKET", 1, opcodeInspectPacket},
+	OP_INSPECTINPUTPACKET:            {OP_INSPECTINPUTPACKET, "OP_INSPECTINPUTPACKET", 1, opcodeInspectInputPacket},
 	OP_UNKNOWN246:                    {OP_UNKNOWN246, "OP_UNKNOWN246", 1, opcodeInvalid},
 	OP_UNKNOWN247:                    {OP_UNKNOWN247, "OP_UNKNOWN247", 1, opcodeInvalid},
 	OP_UNKNOWN248:                    {OP_UNKNOWN248, "OP_UNKNOWN248", 1, opcodeInvalid},
@@ -3228,6 +3229,128 @@ func opcodeMerkleBranchVerify(op *opcode, data []byte, vm *Engine) error {
 func opcodeTxId(op *opcode, data []byte, vm *Engine) error {
 	txHash := vm.tx.TxHash()
 	vm.dstack.PushByteArray(txHash[:])
+	return nil
+}
+
+// findPacketByType scans a transaction for an ark extension packet of the given
+// type and returns its serialized content. Returns nil if no extension is
+// present or the requested type is not found.
+func findPacketByType(tx *wire.MsgTx, packetType uint8) ([]byte, error) {
+	ext, err := extension.NewExtensionFromTx(tx)
+	if err != nil {
+		return nil, nil // no extension
+	}
+	for _, pkt := range ext {
+		if pkt.Type() != packetType {
+			continue
+		}
+		content, err := pkt.Serialize()
+		if err != nil {
+			return nil, fmt.Errorf("failed to serialize packet type %d: %w", packetType, err)
+		}
+		return content, nil
+	}
+	return nil, nil
+}
+
+// opcodeInspectPacket pops a packet type from the stack and searches the
+// currently executing transaction's extension for a packet of that type.
+// Found:     pushes the raw packet content, then 1.
+// Not found: pushes empty byte array, then 0.
+// Stack transformation: [... packet_type] -> [... content 1] or [... <empty> 0]
+func opcodeInspectPacket(op *opcode, data []byte, vm *Engine) error {
+	packetType, err := vm.dstack.PopInt()
+	if err != nil {
+		return err
+	}
+
+	if packetType < 0 || packetType > 255 {
+		return scriptError(txscript.ErrInvalidStackOperation, "packet type out of range")
+	}
+
+	content, err := findPacketByType(&vm.tx, uint8(packetType))
+	if err != nil {
+		return scriptError(txscript.ErrInvalidStackOperation, err.Error())
+	}
+
+	if content == nil {
+		vm.dstack.PushByteArray(nil)
+		vm.dstack.PushInt(0)
+		return nil
+	}
+
+	if len(content) > txscript.MaxScriptElementSize {
+		str := fmt.Sprintf("packet content size %d exceeds max allowed size %d",
+			len(content), txscript.MaxScriptElementSize)
+		return scriptError(txscript.ErrElementTooBig, str)
+	}
+
+	vm.dstack.PushByteArray(content)
+	vm.dstack.PushInt(1)
+	return nil
+}
+
+// opcodeInspectInputPacket pops an input index and a packet type from the
+// stack, then searches the previous ark transaction referenced by that input
+// for a packet of the given type.
+// Found:     pushes the raw packet content, then 1.
+// Not found: pushes 0.
+// Stack transformation: [... packet_type input_index] -> [... content 1] or [... <empty> 0]
+func opcodeInspectInputPacket(op *opcode, data []byte, vm *Engine) error {
+	index, err := vm.dstack.PopInt()
+	if err != nil {
+		return err
+	}
+
+	packetType, err := vm.dstack.PopInt()
+	if err != nil {
+		return err
+	}
+
+	if index < 0 {
+		return scriptError(txscript.ErrInvalidIndex, "input index cannot be negative")
+	}
+
+	if int(index) >= len(vm.tx.TxIn) {
+		return scriptError(txscript.ErrInvalidIndex, "input index out of range")
+	}
+
+	if packetType < 0 || packetType > 255 {
+		return scriptError(txscript.ErrInvalidStackOperation, "packet type out of range")
+	}
+
+	if vm.prevArkTxs == nil {
+		vm.dstack.PushByteArray(nil)
+		vm.dstack.PushInt(0)
+		return nil
+	}
+
+	prevTx, ok := vm.prevArkTxs[int(index)]
+	if !ok || prevTx == nil {
+		vm.dstack.PushByteArray(nil)
+		vm.dstack.PushInt(0)
+		return nil
+	}
+
+	content, err := findPacketByType(prevTx, uint8(packetType))
+	if err != nil {
+		return scriptError(txscript.ErrInvalidStackOperation, err.Error())
+	}
+
+	if content == nil {
+		vm.dstack.PushByteArray(nil)
+		vm.dstack.PushInt(0)
+		return nil
+	}
+
+	if len(content) > txscript.MaxScriptElementSize {
+		str := fmt.Sprintf("packet content size %d exceeds max allowed size %d",
+			len(content), txscript.MaxScriptElementSize)
+		return scriptError(txscript.ErrElementTooBig, str)
+	}
+
+	vm.dstack.PushByteArray(content)
+	vm.dstack.PushInt(1)
 	return nil
 }
 
