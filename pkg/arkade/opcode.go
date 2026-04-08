@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"crypto/sha256"
+	"errors"
 	"encoding/binary"
 	"encoding/gob"
 	"encoding/hex"
@@ -3238,7 +3239,10 @@ func opcodeTxId(op *opcode, data []byte, vm *Engine) error {
 func findPacketByType(tx *wire.MsgTx, packetType uint8) ([]byte, error) {
 	ext, err := extension.NewExtensionFromTx(tx)
 	if err != nil {
-		return nil, nil // no extension
+		if errors.Is(err, extension.ErrExtensionNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to parse extension: %w", err)
 	}
 	for _, pkt := range ext {
 		if pkt.Type() != packetType {
