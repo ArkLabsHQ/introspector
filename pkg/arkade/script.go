@@ -132,12 +132,13 @@ func (s *ArkadeScript) Execute(spendingTx *wire.MsgTx, prevoutFetcher txscript.P
 
 	// Parse asset packet from transaction extension if present
 	ext, err := extension.NewExtensionFromTx(spendingTx)
-	if err == nil {
-		if ap := ext.GetAssetPacket(); ap != nil {
-			engine.SetAssetPacket(ap)
+	if err != nil {
+		if !errors.Is(err, extension.ErrExtensionNotFound) {
+			return fmt.Errorf("failed to parse extension: %w", err)
 		}
+	} else if ap := ext.GetAssetPacket(); ap != nil {
+		engine.SetAssetPacket(ap)
 	}
-	// If error, extension is not present - this is okay, just don't set it
 
 	// Parse & set introspector packet from transaction outputs if present
 	packet, err := FindIntrospectorPacket(spendingTx)

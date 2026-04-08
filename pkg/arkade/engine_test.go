@@ -2354,6 +2354,21 @@ func makeTxWithExtension(t *testing.T, packets ...extension.Packet) *wire.MsgTx 
 	}
 }
 
+func makeTxWithMalformedExtension(t *testing.T, payload []byte) *wire.MsgTx {
+	t.Helper()
+
+	return &wire.MsgTx{
+		Version: 1,
+		TxIn: []*wire.TxIn{
+			{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{}, Index: 0}},
+		},
+		TxOut: []*wire.TxOut{{
+			Value:    0,
+			PkScript: append([]byte{txscript.OP_RETURN, byte(len(payload))}, payload...),
+		}},
+	}
+}
+
 func TestPacketIntrospectionOpcodes(t *testing.T) {
 	t.Parallel()
 
@@ -2385,6 +2400,10 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 	testPayload2 := []byte{0xca, 0xfe}
 	testPacket2 := extension.UnknownPacket{PacketType: testPacketType2, Data: testPayload2}
 
+	const maxPacketType = 255
+	maxPayload := []byte{0xff, 0x00, 0xff}
+	maxPacket := extension.UnknownPacket{PacketType: maxPacketType, Data: maxPayload}
+
 	// Large packet (> MaxScriptElementSize = 520 bytes) to test that
 	// introspection opcodes can push data beyond the normal push limit.
 	const largePacketType = 4
@@ -2397,6 +2416,9 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 	// Transaction with extension containing two packets.
 	txWithTwoPackets := makeTxWithExtension(t, testPacket, testPacket2)
 
+	// Transaction with extension containing max packet type.
+	txWithMaxPacket := makeTxWithExtension(t, maxPacket)
+
 	// Transaction with a large packet.
 	txWithLargePacket := makeTxWithExtension(t, largePacket)
 
@@ -2408,8 +2430,12 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 		},
 	}
 
+	// Malformed extension: magic prefix is present, but packet TLV data is truncated.
+	malformedExtensionTx := makeTxWithMalformedExtension(t, []byte{'A', 'R', 'K', testPacketType})
+
 	// Previous ark transaction with extension for OP_INSPECTINPUTPACKET tests.
 	prevoutTx := makeTxWithExtension(t, testPacket)
+	malformedPrevoutTx := makeTxWithMalformedExtension(t, []byte{'A', 'R', 'K', testPacketType})
 
 	// Two-input transaction for OP_INSPECTINPUTPACKET tests.
 	twoInputTx := makeTxWithExtension(t, testPacket)
@@ -2564,6 +2590,32 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 			tx:     txWithTwoPackets,
 		},
 		{
+			name:  "inspect_packet_max_type_value",
+			valid: true,
+			script: func() []byte {
+				s, err := txscript.NewScriptBuilder().
+					AddInt64(maxPacketType).
+					AddOp(OP_INSPECTPACKET).
+					AddOp(OP_1).
+					AddOp(OP_EQUALVERIFY).
+					AddData(maxPayload).
+					AddOp(OP_EQUAL).
+					Script()
+				if err != nil {
+					t.Fatalf("script build: %v", err)
+				}
+				return s
+			}(),
+			tx: txWithMaxPacket,
+		},
+		{
+			name:    "inspect_packet_malformed_extension",
+			valid:   false,
+			script:  buildScript(t, OP_2, OP_INSPECTPACKET),
+			tx:      malformedExtensionTx,
+			errText: "failed to parse extension",
+		},
+		{
 			name:    "inspect_packet_empty_stack",
 			valid:   false,
 			script:  buildScript(t, OP_INSPECTPACKET),
@@ -2608,6 +2660,14 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 			prevoutTxs: map[int]*wire.MsgTx{0: plainTx},
 		},
 		{
+			name:       "inspect_input_packet_malformed_prev_tx_extension",
+			valid:      false,
+			script:     buildScript(t, OP_2, OP_0, OP_INSPECTINPUTPACKET),
+			tx:         twoInputTx,
+			prevoutTxs: map[int]*wire.MsgTx{0: malformedPrevoutTx},
+			errText:    "failed to parse extension",
+		},
+		{
 			name:       "inspect_input_packet_negative_index",
 			valid:      false,
 			script:     buildScript(t, OP_2, OP_1NEGATE, OP_INSPECTINPUTPACKET),
@@ -2627,6 +2687,13 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 			name:    "inspect_input_packet_empty_stack",
 			valid:   false,
 			script:  buildScript(t, OP_INSPECTINPUTPACKET),
+			tx:      twoInputTx,
+			errText: "stack",
+		},
+		{
+			name:    "inspect_input_packet_single_stack_element",
+			valid:   false,
+			script:  buildScript(t, OP_2, OP_INSPECTINPUTPACKET),
 			tx:      twoInputTx,
 			errText: "stack",
 		},

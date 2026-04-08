@@ -53,10 +53,10 @@ func TestPrevoutTxField(t *testing.T) {
 
 		_, err := PrevoutTxsFromPSBT(ptx)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "prev ark tx hash mismatch")
+		require.Contains(t, err.Error(), "prevout tx hash mismatch")
 	})
 
-	t.Run("reject duplicate prev ark tx fields", func(t *testing.T) {
+	t.Run("reject duplicate prevout tx fields", func(t *testing.T) {
 		ptx := newTestPSBT(t, 1)
 		prevTx := newTestPrevoutTx(1)
 		ptx.UnsignedTx.TxIn[0].PreviousOutPoint.Hash = prevTx.TxHash()
@@ -66,7 +66,7 @@ func TestPrevoutTxField(t *testing.T) {
 
 		_, err := PrevoutTxsFromPSBT(ptx)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "multiple prev ark tx fields")
+		require.Contains(t, err.Error(), "multiple prevout tx fields")
 	})
 }
 
