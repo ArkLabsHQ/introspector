@@ -10,7 +10,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 )
 
-func PrevoutTxsForIntentFromPSBT(ptx *psbt.Packet) (map[int]*wire.MsgTx, error) {
+func prevoutTxsForIntentFromPSBT(ptx *psbt.Packet) (map[int]*wire.MsgTx, error) {
 	prevoutTxs, err := decodePrevoutTxsFromPSBT(ptx)
 	if err != nil {
 		return nil, err
@@ -26,7 +26,7 @@ func PrevoutTxsForIntentFromPSBT(ptx *psbt.Packet) (map[int]*wire.MsgTx, error) 
 	return prevoutTxs, nil
 }
 
-func PrevoutTxsForArkTxFromPSBT(
+func prevoutTxsForArkTxFromPSBT(
 	arkPtx *psbt.Packet, checkpoints []*psbt.Packet,
 ) (map[int]*wire.MsgTx, error) {
 	prevoutTxs, err := decodePrevoutTxsFromPSBT(arkPtx)

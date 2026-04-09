@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ArkLabsHQ/introspector/internal/application"
 	"github.com/ArkLabsHQ/introspector/pkg/arkade"
 	introspectorclient "github.com/ArkLabsHQ/introspector/pkg/client"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
@@ -719,9 +718,25 @@ func executeArkadeScripts(t *testing.T, ptx *psbt.Packet, signerPublicKey *btcec
 	}
 	prevoutFetcher := txscript.NewMultiPrevOutFetcher(prevouts)
 
-	prevoutTxs, err := application.PrevoutTxsForIntentFromPSBT(ptx)
-	if err != nil {
-		return fmt.Errorf("failed to decode prev ark txs: %w", err)
+	prevoutTxs := make(map[int]*wire.MsgTx)
+	for inputIndex := range ptx.Inputs {
+		fields, err := txutils.GetArkPsbtFields(ptx, inputIndex, arkade.PrevoutTxField)
+		if err != nil {
+			return fmt.Errorf("failed to decode prevout tx for input %d: %w", inputIndex, err)
+		}
+		if len(fields) == 0 {
+			continue
+		}
+		if len(fields) > 1 {
+			return fmt.Errorf("multiple prevout tx fields found for input %d", inputIndex)
+		}
+		prevTx := fields[0]
+		expectedHash := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint.Hash
+		if prevTx.TxHash() != expectedHash {
+			return fmt.Errorf("prevout tx hash mismatch for input %d", inputIndex)
+		}
+		prevTxCopy := prevTx
+		prevoutTxs[inputIndex] = &prevTxCopy
 	}
 
 	if len(prevoutTxs) > 0 {
