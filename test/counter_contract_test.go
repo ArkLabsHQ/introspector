@@ -169,7 +169,7 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 		{Vin: 0, Script: deployArkadeScript},
 	})
 	requireCounterPacket(t, deployTx.UnsignedTx, 0)
-	require.NoError(t, executeArkadeScripts(t, deployTx, introspectorPubKey))
+	require.NoError(t, executeArkadeScripts(t, deployTx, deployCheckpoints, introspectorPubKey))
 	submitAndFinalize(deployTx, deployCheckpoints)
 
 	firstCounterInput := vtxoInputFromScriptOutput(
@@ -191,7 +191,7 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 		deployTx.UnsignedTx,
 		0,
 	)
-	require.Error(t, executeArkadeScripts(t, invalidUnlockTx, introspectorPubKey))
+	require.Error(t, executeArkadeScripts(t, invalidUnlockTx, invalidUnlockCheckpoints, introspectorPubKey))
 	submitExpectIntrospectorFailure(invalidUnlockTx, invalidUnlockCheckpoints)
 
 	firstUnlockTx, firstUnlockCheckpoints := buildCounterUnlockTx(
@@ -205,7 +205,7 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 	)
 	requireCounterPacket(t, firstUnlockTx.UnsignedTx, 1)
 	require.Equal(t, firstCounterPkScript, firstUnlockTx.UnsignedTx.TxOut[0].PkScript)
-	require.NoError(t, executeArkadeScripts(t, firstUnlockTx, introspectorPubKey))
+	require.NoError(t, executeArkadeScripts(t, firstUnlockTx, firstUnlockCheckpoints, introspectorPubKey))
 	submitAndFinalize(firstUnlockTx, firstUnlockCheckpoints)
 
 	secondCounterInput := checkpointedCounterVtxoInput(
@@ -230,7 +230,7 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 	)
 	requireCounterPacket(t, secondUnlockTx.UnsignedTx, 2)
 	require.Equal(t, secondCounterPkScript, secondUnlockTx.UnsignedTx.TxOut[0].PkScript)
-	require.NoError(t, executeArkadeScripts(t, secondUnlockTx, introspectorPubKey))
+	require.NoError(t, executeArkadeScripts(t, secondUnlockTx, secondUnlockCheckpoints, introspectorPubKey))
 	submitAndFinalize(secondUnlockTx, secondUnlockCheckpoints)
 }
 
