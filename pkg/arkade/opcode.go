@@ -3324,16 +3324,14 @@ func opcodeInspectInputPacket(op *opcode, data []byte, vm *Engine) error {
 	}
 
 	if vm.prevoutTxs == nil {
-		vm.dstack.PushByteArray(nil)
-		vm.dstack.PushInt(0)
-		return nil
+		return scriptError(txscript.ErrInvalidStackOperation,
+			"prevout tx not available: no prevout txs were provided")
 	}
 
 	prevTx, ok := vm.prevoutTxs[int(index)]
 	if !ok || prevTx == nil {
-		vm.dstack.PushByteArray(nil)
-		vm.dstack.PushInt(0)
-		return nil
+		return scriptError(txscript.ErrInvalidStackOperation,
+			fmt.Sprintf("prevout tx not available for input %d", index))
 	}
 
 	content, err := findPacketByType(prevTx, uint8(packetType))

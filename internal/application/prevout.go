@@ -6,13 +6,66 @@ import (
 	"github.com/ArkLabsHQ/introspector/pkg/arkade"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/btcsuite/btcd/btcutil/psbt"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 )
 
-// PrevoutTxsFromPSBT extracts per-input prevout transactions from Ark PSBT
-// unknown fields and validates that each provided transaction matches the
-// prevout hash referenced by the corresponding input.
-func PrevoutTxsFromPSBT(ptx *psbt.Packet) (map[int]*wire.MsgTx, error) {
+func PrevoutTxsForIntentFromPSBT(ptx *psbt.Packet) (map[int]*wire.MsgTx, error) {
+	prevoutTxs, err := decodePrevoutTxsFromPSBT(ptx)
+	if err != nil {
+		return nil, err
+	}
+
+	for inputIndex, prevTx := range prevoutTxs {
+		expectedHash := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint.Hash
+		if err := validatePrevoutTx(inputIndex, prevTx, expectedHash); err != nil {
+			return nil, err
+		}
+	}
+
+	return prevoutTxs, nil
+}
+
+func PrevoutTxsForArkTxFromPSBT(
+	arkPtx *psbt.Packet, checkpoints []*psbt.Packet,
+) (map[int]*wire.MsgTx, error) {
+	prevoutTxs, err := decodePrevoutTxsFromPSBT(arkPtx)
+	if err != nil {
+		return nil, err
+	}
+
+	checkpointsByTxid := make(map[string]*psbt.Packet, len(checkpoints))
+	for _, checkpoint := range checkpoints {
+		checkpointsByTxid[checkpoint.UnsignedTx.TxID()] = checkpoint
+	}
+
+	for inputIndex, prevTx := range prevoutTxs {
+		checkpointTxid := arkPtx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint.Hash.String()
+		checkpoint, ok := checkpointsByTxid[checkpointTxid]
+		if !ok {
+			return nil, fmt.Errorf("checkpoint not found for input %d", inputIndex)
+		}
+		if len(checkpoint.UnsignedTx.TxIn) == 0 {
+			return nil, fmt.Errorf("checkpoint has no inputs for input %d", inputIndex)
+		}
+
+		checkpointInputPrevout := checkpoint.UnsignedTx.TxIn[0].PreviousOutPoint
+		if err := validatePrevoutTx(inputIndex, prevTx, checkpointInputPrevout.Hash); err != nil {
+			return nil, err
+		}
+
+		if checkpointInputPrevout.Index >= uint32(len(prevTx.TxOut)) {
+			return nil, fmt.Errorf(
+				"prevout tx output index out of range for input %d: index=%d outputs=%d",
+				inputIndex, checkpointInputPrevout.Index, len(prevTx.TxOut),
+			)
+		}
+	}
+
+	return prevoutTxs, nil
+}
+
+func decodePrevoutTxsFromPSBT(ptx *psbt.Packet) (map[int]*wire.MsgTx, error) {
 	if len(ptx.Inputs) != len(ptx.UnsignedTx.TxIn) {
 		return nil, fmt.Errorf("malformed psbt")
 	}
@@ -33,18 +86,21 @@ func PrevoutTxsFromPSBT(ptx *psbt.Packet) (map[int]*wire.MsgTx, error) {
 		}
 
 		prevTx := fields[0]
-		expectedHash := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint.Hash
-		actualHash := prevTx.TxHash()
-		if actualHash != expectedHash {
-			return nil, fmt.Errorf(
-				"prevout tx hash mismatch for input %d: got %s, expected %s",
-				inputIndex, actualHash, expectedHash,
-			)
-		}
-
 		prevTxCopy := prevTx
 		prevoutTxs[inputIndex] = &prevTxCopy
 	}
 
 	return prevoutTxs, nil
+}
+
+func validatePrevoutTx(inputIndex int, prevTx *wire.MsgTx, expectedHash chainhash.Hash) error {
+	actualHash := prevTx.TxHash()
+	if actualHash != expectedHash {
+		return fmt.Errorf(
+			"prevout tx hash mismatch for input %d: got %s, expected %s",
+			inputIndex, actualHash, expectedHash,
+		)
+	}
+
+	return nil
 }

@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPrevoutTxsFromPSBT(t *testing.T) {
-	t.Run("extract prevout txs from psbt", func(t *testing.T) {
+func TestPrevoutTxsForIntentFromPSBT(t *testing.T) {
+	t.Run("extract direct prevout txs from psbt", func(t *testing.T) {
 		ptx := newTestPSBT(t, 2)
 		prevTx0 := newTestPrevoutTx(1)
 		prevTx1 := newTestPrevoutTx(2)
@@ -24,7 +24,7 @@ func TestPrevoutTxsFromPSBT(t *testing.T) {
 		require.NoError(t, txutils.SetArkPsbtField(ptx, 0, arkade.PrevoutTxField, *prevTx0))
 		require.NoError(t, txutils.SetArkPsbtField(ptx, 1, arkade.PrevoutTxField, *prevTx1))
 
-		prevoutTxs, err := PrevoutTxsFromPSBT(ptx)
+		prevoutTxs, err := PrevoutTxsForIntentFromPSBT(ptx)
 		require.NoError(t, err)
 		require.Len(t, prevoutTxs, 2)
 		require.Equal(t, prevTx0.TxHash(), prevoutTxs[0].TxHash())
@@ -38,7 +38,7 @@ func TestPrevoutTxsFromPSBT(t *testing.T) {
 
 		require.NoError(t, txutils.SetArkPsbtField(ptx, 0, arkade.PrevoutTxField, *prevTx))
 
-		_, err := PrevoutTxsFromPSBT(ptx)
+		_, err := PrevoutTxsForIntentFromPSBT(ptx)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "prevout tx hash mismatch")
 	})
@@ -51,9 +51,52 @@ func TestPrevoutTxsFromPSBT(t *testing.T) {
 		require.NoError(t, txutils.SetArkPsbtField(ptx, 0, arkade.PrevoutTxField, *prevTx))
 		require.NoError(t, txutils.SetArkPsbtField(ptx, 0, arkade.PrevoutTxField, *prevTx))
 
-		_, err := PrevoutTxsFromPSBT(ptx)
+		_, err := PrevoutTxsForIntentFromPSBT(ptx)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "multiple prevout tx fields")
+	})
+}
+
+func TestPrevoutTxsForArkTxFromPSBT(t *testing.T) {
+	t.Run("validates through checkpoint input", func(t *testing.T) {
+		sourceTx := newTestPrevoutTx(1)
+		checkpoint := newTestCheckpointPSBT(t, sourceTx.TxHash(), 0)
+		arkPtx := newTestPSBT(t, 1)
+		arkPtx.UnsignedTx.TxIn[0].PreviousOutPoint.Hash = checkpoint.UnsignedTx.TxHash()
+
+		require.NoError(t, txutils.SetArkPsbtField(arkPtx, 0, arkade.PrevoutTxField, *sourceTx))
+
+		prevoutTxs, err := PrevoutTxsForArkTxFromPSBT(arkPtx, []*psbt.Packet{checkpoint})
+		require.NoError(t, err)
+		require.Len(t, prevoutTxs, 1)
+		require.Equal(t, sourceTx.TxHash(), prevoutTxs[0].TxHash())
+	})
+
+	t.Run("rejects source tx that does not match checkpoint input", func(t *testing.T) {
+		sourceTx := newTestPrevoutTx(1)
+		wrongSourceTx := newTestPrevoutTx(2)
+		checkpoint := newTestCheckpointPSBT(t, sourceTx.TxHash(), 0)
+		arkPtx := newTestPSBT(t, 1)
+		arkPtx.UnsignedTx.TxIn[0].PreviousOutPoint.Hash = checkpoint.UnsignedTx.TxHash()
+
+		require.NoError(t, txutils.SetArkPsbtField(arkPtx, 0, arkade.PrevoutTxField, *wrongSourceTx))
+
+		_, err := PrevoutTxsForArkTxFromPSBT(arkPtx, []*psbt.Packet{checkpoint})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "prevout tx hash mismatch")
+	})
+
+	t.Run("rejects checkpoint input output index out of source tx range", func(t *testing.T) {
+		sourceTx := newTestPrevoutTx(1)
+		checkpoint := newTestCheckpointPSBT(t, sourceTx.TxHash(), 42)
+		arkPtx := newTestPSBT(t, 1)
+		arkPtx.UnsignedTx.TxIn[0].PreviousOutPoint.Hash = checkpoint.UnsignedTx.TxHash()
+
+		require.NoError(t, txutils.SetArkPsbtField(arkPtx, 0, arkade.PrevoutTxField, *sourceTx))
+
+		_, err := PrevoutTxsForArkTxFromPSBT(arkPtx, []*psbt.Packet{checkpoint})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "prevout tx output index out of range")
 	})
 }
 
@@ -92,4 +135,20 @@ func newTestPrevoutTx(tag byte) *wire.MsgTx {
 		PkScript: []byte{txscript.OP_TRUE},
 	})
 	return tx
+}
+
+func newTestCheckpointPSBT(t *testing.T, sourceTxHash chainhash.Hash, sourceTxOutputIndex uint32) *psbt.Packet {
+	t.Helper()
+
+	ptx := newTestPSBT(t, 1)
+	ptx.UnsignedTx.TxIn[0].PreviousOutPoint = wire.OutPoint{
+		Hash:  sourceTxHash,
+		Index: sourceTxOutputIndex,
+	}
+	ptx.UnsignedTx.AddTxOut(&wire.TxOut{
+		Value:    1,
+		PkScript: []byte{txscript.OP_TRUE},
+	})
+
+	return ptx
 }

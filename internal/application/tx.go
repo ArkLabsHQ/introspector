@@ -31,7 +31,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		return nil, fmt.Errorf("failed to create prevout fetcher: %w", err)
 	}
 
-	prevoutTxs, err := PrevoutTxsFromPSBT(arkPtx)
+	prevoutTxs, err := PrevoutTxsForArkTxFromPSBT(arkPtx, tx.Checkpoints)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode prev ark txs: %w", err)
 	}

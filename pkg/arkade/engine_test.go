@@ -2640,16 +2640,18 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 		},
 		{
 			name:       "inspect_input_packet_no_prev_tx_for_input",
-			valid:      true,
-			script:     inspectInputPacketNotFound(t, OP_2, OP_1),
+			valid:      false,
+			script:     buildScript(t, OP_2, OP_1, OP_INSPECTINPUTPACKET),
 			tx:         twoInputTx,
 			prevoutTxs: map[int]*wire.MsgTx{0: prevoutTx}, // only input 0 has prev tx
+			errText:    "prevout tx not available for input",
 		},
 		{
-			name:   "inspect_input_packet_no_prev_ark_txs",
-			valid:  true,
-			script: inspectInputPacketNotFound(t, OP_2, OP_0),
-			tx:     twoInputTx,
+			name:    "inspect_input_packet_no_prev_ark_txs",
+			valid:   false,
+			script:  buildScript(t, OP_2, OP_0, OP_INSPECTINPUTPACKET),
+			tx:      twoInputTx,
+			errText: "no prevout txs were provided",
 			// prevoutTxs is nil
 		},
 		{

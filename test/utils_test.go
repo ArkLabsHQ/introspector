@@ -719,7 +719,7 @@ func executeArkadeScripts(t *testing.T, ptx *psbt.Packet, signerPublicKey *btcec
 	}
 	prevoutFetcher := txscript.NewMultiPrevOutFetcher(prevouts)
 
-	prevoutTxs, err := application.PrevoutTxsFromPSBT(ptx)
+	prevoutTxs, err := application.PrevoutTxsForIntentFromPSBT(ptx)
 	if err != nil {
 		return fmt.Errorf("failed to decode prev ark txs: %w", err)
 	}
