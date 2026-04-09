@@ -36,7 +36,7 @@ func WithDebugCallback(callback func(*StepInfo, *Engine) error) ExecuteOption {
 
 func WithPrevoutTxs(prevoutTxs map[int]*wire.MsgTx) ExecuteOption {
 	return func(engine *Engine) {
-		engine.SetPrevoutTxs(prevoutTxs)
+		engine.prevoutTxs = prevoutTxs
 	}
 }
 

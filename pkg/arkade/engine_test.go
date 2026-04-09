@@ -2455,7 +2455,7 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 			t.Fatalf("NewEngine: %v", err)
 		}
 		if prevoutTxs != nil {
-			engine.SetPrevoutTxs(prevoutTxs)
+			WithPrevoutTxs(prevoutTxs)(engine)
 		}
 		return engine.Execute()
 	}

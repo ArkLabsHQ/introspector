@@ -103,12 +103,12 @@ type Engine struct {
 	// prevOutFetcher is used to look up all the previous output of
 	// taproot transactions, as that information is hashed into the
 	// sighash digest for such inputs.
-	tx             wire.MsgTx
-	txIdx          int
-	version        uint16
-	sigCache       *txscript.SigCache
-	hashCache      *txscript.TxSigHashes
-	prevOutFetcher txscript.PrevOutputFetcher
+	tx                 wire.MsgTx
+	txIdx              int
+	version            uint16
+	sigCache           *txscript.SigCache
+	hashCache          *txscript.TxSigHashes
+	prevOutFetcher     txscript.PrevOutputFetcher
 	assetPacket        asset.Packet
 	introspectorPacket IntrospectorPacket
 	prevoutTxs         map[int]*wire.MsgTx
@@ -190,15 +190,6 @@ func (vm *Engine) SetAssetPacket(packet asset.Packet) {
 // cross-input Arkade script/witness introspection.
 func (vm *Engine) SetIntrospectorPacket(packet IntrospectorPacket) {
 	vm.introspectorPacket = packet
-}
-
-// SetPrevoutTxs sets the previous ark transactions for input packet
-// introspection. The map key is the input index of the currently executing
-// transaction; the value is the full previous ark transaction that the
-// input references. These are provided via a dedicated ark PSBT unknown
-// field (key 0xde "prevarktx") and are NOT the same as NonWitnessUtxo.
-func (vm *Engine) SetPrevoutTxs(txs map[int]*wire.MsgTx) {
-	vm.prevoutTxs = txs
 }
 
 // isBranchExecuting returns whether or not the current conditional branch is
