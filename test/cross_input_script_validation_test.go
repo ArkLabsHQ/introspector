@@ -74,7 +74,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			{Vin: 1, Script: scriptOne},
 		})
 
-		require.NoError(t, executeArkadeScripts(t, candidateTx, checkpoints, env.introspectorPubKey))
+		require.NoError(t, executeArkadeScripts(t, candidateTx, env.introspectorPubKey))
 		env.submitAndFinalize(t, candidateTx, checkpoints)
 	})
 
@@ -118,7 +118,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			{Vin: 1, Script: witnessAwareScript, Witness: validWitness},
 		})
 
-		require.NoError(t, executeArkadeScripts(t, candidateTx, checkpoints, env.introspectorPubKey))
+		require.NoError(t, executeArkadeScripts(t, candidateTx, env.introspectorPubKey))
 		env.submitAndFinalize(t, candidateTx, checkpoints)
 	})
 
@@ -135,7 +135,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: inspectPacketType, Data: inspectPacketPayload},
 		)
 
-		require.NoError(t, executeArkadeScripts(t, candidateTx, checkpoints, env.introspectorPubKey))
+		require.NoError(t, executeArkadeScripts(t, candidateTx, env.introspectorPubKey))
 		env.submitAndFinalize(t, candidateTx, checkpoints)
 	})
 
@@ -148,7 +148,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: inspectPacketType, Data: inspectPacketPayload},
 		)
 
-		require.NoError(t, executeArkadeScripts(t, candidateTx, checkpoints, env.introspectorPubKey))
+		require.NoError(t, executeArkadeScripts(t, candidateTx, env.introspectorPubKey))
 		env.submitAndFinalize(t, candidateTx, checkpoints)
 	})
 
@@ -205,7 +205,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: packetType, Data: expectedPayload},
 		)
 
-		require.NoError(t, executeArkadeScripts(t, candidateTx, checkpoints, env.introspectorPubKey))
+		require.NoError(t, executeArkadeScripts(t, candidateTx, env.introspectorPubKey))
 		env.submitAndFinalize(t, candidateTx, checkpoints)
 	})
 
@@ -772,7 +772,7 @@ func (env *crossInputTestEnv) buildFinalizedPacketChain(
 	addCrossInputExtensionPacket(t, previousArkTx, packet)
 	addIntrospectorPacket(t, previousArkTx, []arkade.IntrospectorEntry{{Vin: 0, Script: baseScriptA}, {Vin: 1, Script: baseScriptB}})
 
-	require.NoError(t, executeArkadeScripts(t, previousArkTx, previousCheckpoints, env.introspectorPubKey))
+	require.NoError(t, executeArkadeScripts(t, previousArkTx, env.introspectorPubKey))
 	finalize(t, previousArkTx, previousCheckpoints)
 
 	prevOutputA, prevIndexA := findOutputForTemplate(t, previousArkTx, previousTemplateA)
@@ -936,7 +936,7 @@ func executeAndExpectFailure(
 ) {
 	t.Helper()
 
-	err := executeArkadeScripts(t, candidateTx, checkpoints, introspectorPubKey)
+	err := executeArkadeScripts(t, candidateTx, introspectorPubKey)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), expectedErr)
 }

@@ -702,7 +702,7 @@ func checkpointInputPkScript(vtxoInput offchain.VtxoInput, checkpointScriptBytes
 	return script.P2TRScript(tapKey)
 }
 
-func executeArkadeScripts(t *testing.T, ptx *psbt.Packet, checkpoints []*psbt.Packet, signerPublicKey *btcec.PublicKey, opts ...arkade.ExecuteOption) error {
+func executeArkadeScripts(t *testing.T, ptx *psbt.Packet, signerPublicKey *btcec.PublicKey, opts ...arkade.ExecuteOption) error {
 	t.Helper()
 
 	if len(ptx.Inputs) != len(ptx.UnsignedTx.TxIn) {
@@ -738,55 +738,6 @@ func executeArkadeScripts(t *testing.T, ptx *psbt.Packet, checkpoints []*psbt.Pa
 		prevTx := fields[0]
 		prevTxCopy := prevTx
 		prevoutTxs[inputIndex] = &prevTxCopy
-	}
-
-	if checkpoints == nil {
-		for inputIndex, prevTx := range prevoutTxs {
-			expectedHash := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint.Hash
-			if prevTx.TxHash() != expectedHash {
-				return fmt.Errorf(
-					"prevout tx hash mismatch for input %d: got %s, expected %s",
-					inputIndex,
-					prevTx.TxHash(),
-					expectedHash,
-				)
-			}
-		}
-	} else {
-		checkpointsByTxid := make(map[string]*psbt.Packet, len(checkpoints))
-		for _, checkpoint := range checkpoints {
-			checkpointsByTxid[checkpoint.UnsignedTx.TxID()] = checkpoint
-		}
-
-		for inputIndex, prevTx := range prevoutTxs {
-			checkpointTxid := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint.Hash.String()
-			checkpoint, ok := checkpointsByTxid[checkpointTxid]
-			if !ok {
-				return fmt.Errorf("checkpoint not found for input %d", inputIndex)
-			}
-			if len(checkpoint.UnsignedTx.TxIn) == 0 {
-				return fmt.Errorf("checkpoint has no inputs for input %d", inputIndex)
-			}
-
-			checkpointInputPrevout := checkpoint.UnsignedTx.TxIn[0].PreviousOutPoint
-			if prevTx.TxHash() != checkpointInputPrevout.Hash {
-				return fmt.Errorf(
-					"prevout tx hash mismatch for input %d: got %s, expected %s",
-					inputIndex,
-					prevTx.TxHash(),
-					checkpointInputPrevout.Hash,
-				)
-			}
-
-			if checkpointInputPrevout.Index >= uint32(len(prevTx.TxOut)) {
-				return fmt.Errorf(
-					"prevout tx output index out of range for input %d: index=%d outputs=%d",
-					inputIndex,
-					checkpointInputPrevout.Index,
-					len(prevTx.TxOut),
-				)
-			}
-		}
 	}
 
 	opts = append(opts, arkade.WithPrevoutTxs(prevoutTxs))
