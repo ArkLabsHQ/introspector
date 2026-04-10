@@ -3323,13 +3323,8 @@ func opcodeInspectInputPacket(op *opcode, data []byte, vm *Engine) error {
 		return scriptError(txscript.ErrInvalidStackOperation, "packet type out of range")
 	}
 
-	if vm.arkPrevOutFetcher == nil {
-		return scriptError(txscript.ErrInvalidStackOperation,
-			"prevout tx not available: no ark prevout fetcher was provided")
-	}
-
 	outpoint := vm.tx.TxIn[int(index)].PreviousOutPoint
-	prevTx := vm.arkPrevOutFetcher.FetchPrevOutArkTx(outpoint)
+	prevTx := vm.prevOutFetcher.FetchPrevOutArkTx(outpoint)
 	if prevTx == nil {
 		return scriptError(txscript.ErrInvalidStackOperation,
 			fmt.Sprintf("prevout tx not available for input %d", index))

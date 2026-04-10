@@ -34,18 +34,34 @@ func WithDebugCallback(callback func(*StepInfo, *Engine) error) ExecuteOption {
 	}
 }
 
-// ArkPrevOutFetcher looks up previous ark transactions by outpoint.
+// ArkPrevOutFetcher extends txscript.PrevOutputFetcher with the ability to
+// look up previous ark transactions by outpoint. Both methods are keyed by
+// the spending input's outpoint but serve different purposes:
+//
+//   - FetchPrevOutput returns the TxOut being spent (used for sighash
+//     computation). This is the direct previous output — an ark tx output
+//     for intents or a checkpoint output for ark transactions.
+//
+//   - FetchPrevOutArkTx returns the full previous ark transaction. This is
+//     always the ark transaction, regardless of whether a checkpoint sits in between.
 type ArkPrevOutFetcher interface {
+	txscript.PrevOutputFetcher
 	FetchPrevOutArkTx(wire.OutPoint) *wire.MsgTx
 }
 
 // MapArkPrevOutFetcher is a map-based implementation of ArkPrevOutFetcher.
+// It embeds a base txscript.PrevOutputFetcher for prev-output lookups and
+// uses a separate map for ark transaction lookups.
 type MapArkPrevOutFetcher struct {
+	txscript.PrevOutputFetcher
 	m map[wire.OutPoint]*wire.MsgTx
 }
 
-func NewMapArkPrevOutFetcher(prevOutArkTxs map[wire.OutPoint]*wire.MsgTx) *MapArkPrevOutFetcher {
-	return &MapArkPrevOutFetcher{m: prevOutArkTxs}
+func NewMapArkPrevOutFetcher(base txscript.PrevOutputFetcher, arkTxs map[wire.OutPoint]*wire.MsgTx) *MapArkPrevOutFetcher {
+	return &MapArkPrevOutFetcher{
+		PrevOutputFetcher: base,
+		m:                 arkTxs,
+	}
 }
 
 func (f *MapArkPrevOutFetcher) FetchPrevOutArkTx(op wire.OutPoint) *wire.MsgTx {
@@ -121,8 +137,8 @@ func ReadArkadeScript(ptx *psbt.Packet, signerPublicKey *btcec.PublicKey, entry 
 	}, nil
 }
 
-func (s *ArkadeScript) Execute(spendingTx *wire.MsgTx, prevoutFetcher txscript.PrevOutputFetcher, arkPrevOutFetcher ArkPrevOutFetcher, inputIndex int, opts ...ExecuteOption) error {
-	prevOut := prevoutFetcher.FetchPrevOutput(spendingTx.TxIn[inputIndex].PreviousOutPoint)
+func (s *ArkadeScript) Execute(spendingTx *wire.MsgTx, prevOutFetcher ArkPrevOutFetcher, inputIndex int, opts ...ExecuteOption) error {
+	prevOut := prevOutFetcher.FetchPrevOutput(spendingTx.TxIn[inputIndex].PreviousOutPoint)
 	inputAmount := int64(0)
 	if prevOut != nil {
 		inputAmount = prevOut.Value
@@ -133,15 +149,13 @@ func (s *ArkadeScript) Execute(spendingTx *wire.MsgTx, prevoutFetcher txscript.P
 		spendingTx,
 		inputIndex,
 		txscript.NewSigCache(100),
-		txscript.NewTxSigHashes(spendingTx, prevoutFetcher),
+		txscript.NewTxSigHashes(spendingTx, prevOutFetcher),
 		inputAmount,
-		prevoutFetcher,
+		prevOutFetcher,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create engine: %w", err)
 	}
-
-	engine.arkPrevOutFetcher = arkPrevOutFetcher
 
 	for _, opt := range opts {
 		opt(engine)

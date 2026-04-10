@@ -108,10 +108,9 @@ type Engine struct {
 	version            uint16
 	sigCache           *txscript.SigCache
 	hashCache          *txscript.TxSigHashes
-	prevOutFetcher     txscript.PrevOutputFetcher
+	prevOutFetcher     ArkPrevOutFetcher
 	assetPacket        asset.Packet
 	introspectorPacket IntrospectorPacket
-	arkPrevOutFetcher  ArkPrevOutFetcher
 
 	// The following fields handle keeping track of the current execution state
 	// of the engine.
@@ -786,7 +785,7 @@ func (vm *Engine) SetAltStack(data [][]byte) {
 // execution.
 func NewEngine(scriptPubKey []byte, tx *wire.MsgTx, txIdx int,
 	sigCache *txscript.SigCache, hashCache *txscript.TxSigHashes, inputAmount int64,
-	prevOutFetcher txscript.PrevOutputFetcher) (*Engine, error) {
+	prevOutFetcher ArkPrevOutFetcher) (*Engine, error) {
 
 	const scriptVersion = 0
 
@@ -885,7 +884,7 @@ func NewEngine(scriptPubKey []byte, tx *wire.MsgTx, txIdx int,
 // This is useful for debugging script execution.
 func NewDebugEngine(scriptPubKey []byte, tx *wire.MsgTx, txIdx int,
 	sigCache *txscript.SigCache, hashCache *txscript.TxSigHashes,
-	inputAmount int64, prevOutFetcher txscript.PrevOutputFetcher,
+	inputAmount int64, prevOutFetcher ArkPrevOutFetcher,
 	stepCallback func(*StepInfo) error) (*Engine, error) {
 
 	vm, err := NewEngine(

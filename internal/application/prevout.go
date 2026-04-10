@@ -7,10 +7,16 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 )
 
-func arkPrevOutFetcherForIntentFromPSBT(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher, error) {
+func prevOutFetcherForIntentFromPSBT(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher, error) {
+	baseFetcher, err := computePrevoutFetcher(ptx)
+	if err != nil {
+		return nil, err
+	}
+
 	prevoutTxs, err := decodePrevoutTxsFromPSBT(ptx)
 	if err != nil {
 		return nil, err
@@ -25,12 +31,17 @@ func arkPrevOutFetcherForIntentFromPSBT(ptx *psbt.Packet) (arkade.ArkPrevOutFetc
 		prevOutArkTxs[outpoint] = prevTx
 	}
 
-	return arkade.NewMapArkPrevOutFetcher(prevOutArkTxs), nil
+	return arkade.NewMapArkPrevOutFetcher(baseFetcher, prevOutArkTxs), nil
 }
 
-func arkPrevOutFetcherForArkTxFromPSBT(
+func prevOutFetcherForArkTxFromPSBT(
 	arkPtx *psbt.Packet, checkpoints []*psbt.Packet,
 ) (arkade.ArkPrevOutFetcher, error) {
+	baseFetcher, err := computePrevoutFetcher(arkPtx)
+	if err != nil {
+		return nil, err
+	}
+
 	prevoutTxs, err := decodePrevoutTxsFromPSBT(arkPtx)
 	if err != nil {
 		return nil, err
@@ -68,7 +79,7 @@ func arkPrevOutFetcherForArkTxFromPSBT(
 		prevOutArkTxs[outpoint] = prevTx
 	}
 
-	return arkade.NewMapArkPrevOutFetcher(prevOutArkTxs), nil
+	return arkade.NewMapArkPrevOutFetcher(baseFetcher, prevOutArkTxs), nil
 }
 
 func decodePrevoutTxsFromPSBT(ptx *psbt.Packet) (map[int]*wire.MsgTx, error) {
@@ -109,4 +120,24 @@ func validatePrevoutTx(inputIndex int, prevTx *wire.MsgTx, expectedHash chainhas
 	}
 
 	return nil
+}
+
+// TODO : do not rely on witness utxo to compute the prevout fetcher
+func computePrevoutFetcher(ptx *psbt.Packet) (txscript.PrevOutputFetcher, error) {
+	prevouts := make(map[wire.OutPoint]*wire.TxOut)
+
+	for index, input := range ptx.Inputs {
+		if input.WitnessUtxo == nil {
+			return nil, fmt.Errorf("witness utxo is nil")
+		}
+
+		if len(ptx.UnsignedTx.TxIn) <= index {
+			return nil, fmt.Errorf("input index out of range")
+		}
+
+		outpoint := ptx.UnsignedTx.TxIn[index].PreviousOutPoint
+		prevouts[outpoint] = input.WitnessUtxo
+	}
+
+	return txscript.NewMultiPrevOutFetcher(prevouts), nil
 }
