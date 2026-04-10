@@ -111,7 +111,7 @@ type Engine struct {
 	prevOutFetcher     txscript.PrevOutputFetcher
 	assetPacket        asset.Packet
 	introspectorPacket IntrospectorPacket
-	prevoutTxs         map[int]*wire.MsgTx
+	arkPrevOutFetcher  ArkPrevOutFetcher
 
 	// The following fields handle keeping track of the current execution state
 	// of the engine.

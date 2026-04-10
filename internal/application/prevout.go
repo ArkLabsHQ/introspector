@@ -10,25 +10,27 @@ import (
 	"github.com/btcsuite/btcd/wire"
 )
 
-func prevoutTxsForIntentFromPSBT(ptx *psbt.Packet) (map[int]*wire.MsgTx, error) {
+func arkPrevOutFetcherForIntentFromPSBT(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher, error) {
 	prevoutTxs, err := decodePrevoutTxsFromPSBT(ptx)
 	if err != nil {
 		return nil, err
 	}
 
+	prevOutArkTxs := make(map[wire.OutPoint]*wire.MsgTx, len(prevoutTxs))
 	for inputIndex, prevTx := range prevoutTxs {
-		expectedHash := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint.Hash
-		if err := validatePrevoutTx(inputIndex, prevTx, expectedHash); err != nil {
+		outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
+		if err := validatePrevoutTx(inputIndex, prevTx, outpoint.Hash); err != nil {
 			return nil, err
 		}
+		prevOutArkTxs[outpoint] = prevTx
 	}
 
-	return prevoutTxs, nil
+	return arkade.NewMapArkPrevOutFetcher(prevOutArkTxs), nil
 }
 
-func prevoutTxsForArkTxFromPSBT(
+func arkPrevOutFetcherForArkTxFromPSBT(
 	arkPtx *psbt.Packet, checkpoints []*psbt.Packet,
-) (map[int]*wire.MsgTx, error) {
+) (arkade.ArkPrevOutFetcher, error) {
 	prevoutTxs, err := decodePrevoutTxsFromPSBT(arkPtx)
 	if err != nil {
 		return nil, err
@@ -39,8 +41,10 @@ func prevoutTxsForArkTxFromPSBT(
 		checkpointsByTxid[checkpoint.UnsignedTx.TxID()] = checkpoint
 	}
 
+	prevOutArkTxs := make(map[wire.OutPoint]*wire.MsgTx, len(prevoutTxs))
 	for inputIndex, prevTx := range prevoutTxs {
-		checkpointTxid := arkPtx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint.Hash.String()
+		outpoint := arkPtx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
+		checkpointTxid := outpoint.Hash.String()
 		checkpoint, ok := checkpointsByTxid[checkpointTxid]
 		if !ok {
 			return nil, fmt.Errorf("checkpoint not found for input %d", inputIndex)
@@ -60,9 +64,11 @@ func prevoutTxsForArkTxFromPSBT(
 				inputIndex, checkpointInputPrevout.Index, len(prevTx.TxOut),
 			)
 		}
+
+		prevOutArkTxs[outpoint] = prevTx
 	}
 
-	return prevoutTxs, nil
+	return arkade.NewMapArkPrevOutFetcher(prevOutArkTxs), nil
 }
 
 func decodePrevoutTxsFromPSBT(ptx *psbt.Packet) (map[int]*wire.MsgTx, error) {

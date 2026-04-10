@@ -31,7 +31,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		return nil, fmt.Errorf("failed to create prevout fetcher: %w", err)
 	}
 
-	prevoutTxs, err := prevoutTxsForArkTxFromPSBT(arkPtx, tx.Checkpoints)
+	arkPrevOutFetcher, err := arkPrevOutFetcherForArkTxFromPSBT(arkPtx, tx.Checkpoints)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode prev ark txs: %w", err)
 	}
@@ -64,8 +64,8 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		if err := script.Execute(
 			arkPtx.UnsignedTx,
 			prevoutFetcher,
+			arkPrevOutFetcher,
 			inputIndex,
-			arkade.WithPrevoutTxs(prevoutTxs),
 		); err != nil {
 			return nil, fmt.Errorf("failed to execute arkade script: %w vin=%d", err, inputIndex)
 		}

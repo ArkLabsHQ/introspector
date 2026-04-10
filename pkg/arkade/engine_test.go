@@ -2443,6 +2443,19 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 		&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{}, Index: 1}},
 	)
 
+	// makeArkPrevOutFetcher builds an ArkPrevOutFetcher from a map of input
+	// indices to previous ark transactions, using the spending tx's outpoints.
+	makeArkPrevOutFetcher := func(tx *wire.MsgTx, byIndex map[int]*wire.MsgTx) ArkPrevOutFetcher {
+		if byIndex == nil {
+			return nil
+		}
+		m := make(map[wire.OutPoint]*wire.MsgTx, len(byIndex))
+		for idx, prevTx := range byIndex {
+			m[tx.TxIn[idx].PreviousOutPoint] = prevTx
+		}
+		return NewMapArkPrevOutFetcher(m)
+	}
+
 	runEngine := func(t *testing.T, script []byte, tx *wire.MsgTx, prevoutTxs map[int]*wire.MsgTx) error {
 		t.Helper()
 		engine, err := NewEngine(
@@ -2454,9 +2467,7 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewEngine: %v", err)
 		}
-		if prevoutTxs != nil {
-			WithPrevoutTxs(prevoutTxs)(engine)
-		}
+		engine.arkPrevOutFetcher = makeArkPrevOutFetcher(tx, prevoutTxs)
 		return engine.Execute()
 	}
 
@@ -2651,7 +2662,7 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 			valid:   false,
 			script:  buildScript(t, OP_2, OP_0, OP_INSPECTINPUTPACKET),
 			tx:      twoInputTx,
-			errText: "no prevout txs were provided",
+			errText: "no ark prevout fetcher was provided",
 			// prevoutTxs is nil
 		},
 		{

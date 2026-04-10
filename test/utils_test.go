@@ -718,7 +718,10 @@ func executeArkadeScripts(t *testing.T, ptx *psbt.Packet, signerPublicKey *btcec
 	}
 	prevoutFetcher := txscript.NewMultiPrevOutFetcher(prevouts)
 
-	prevoutTxs := make(map[int]*wire.MsgTx)
+	// Build an ArkPrevOutFetcher from prevout tx PSBT fields.
+	// For intent proofs it is the direct prevout tx; for Ark txs it is the source Ark tx spent by the input checkpoint.
+	// SubmitTx validates that checkpoint/source relationship with the accompanying checkpoints.
+	prevOutArkTxs := make(map[wire.OutPoint]*wire.MsgTx)
 	for inputIndex := range ptx.Inputs {
 		fields, err := txutils.GetArkPsbtFields(ptx, inputIndex, arkade.PrevoutTxField)
 		if err != nil {
@@ -731,16 +734,12 @@ func executeArkadeScripts(t *testing.T, ptx *psbt.Packet, signerPublicKey *btcec
 			return fmt.Errorf("multiple prevout tx fields found for input %d", inputIndex)
 		}
 
-		// The field supplies OP_INSPECTINPUTPACKET context. For intent
-		// proofs it is the direct prevout tx; for Ark txs it is the source
-		// Ark tx spent by the input checkpoint. SubmitTx validates that
-		// checkpoint/source relationship with the accompanying checkpoints.
 		prevTx := fields[0]
 		prevTxCopy := prevTx
-		prevoutTxs[inputIndex] = &prevTxCopy
+		outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
+		prevOutArkTxs[outpoint] = &prevTxCopy
 	}
-
-	opts = append(opts, arkade.WithPrevoutTxs(prevoutTxs))
+	arkPrevOutFetcher := arkade.NewMapArkPrevOutFetcher(prevOutArkTxs)
 
 	packet, err := arkade.FindIntrospectorPacket(ptx.UnsignedTx)
 	if err != nil {
@@ -757,7 +756,7 @@ func executeArkadeScripts(t *testing.T, ptx *psbt.Packet, signerPublicKey *btcec
 			return fmt.Errorf("failed to read arkade script at input %d: %w", inputIndex, err)
 		}
 
-		err = script.Execute(ptx.UnsignedTx, prevoutFetcher, inputIndex, opts...)
+		err = script.Execute(ptx.UnsignedTx, prevoutFetcher, arkPrevOutFetcher, inputIndex, opts...)
 		if err != nil {
 			return fmt.Errorf("failed to execute arkade script at input %d: %w", inputIndex, err)
 		}
