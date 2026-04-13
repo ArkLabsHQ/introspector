@@ -328,16 +328,15 @@ func TestCrossInputScriptValidation(t *testing.T) {
 		fundingPtx, err := psbt.NewFromRawBytes(strings.NewReader(fundingTxs.Txs[0]), true)
 		require.NoError(t, err)
 
-		aliceOutput, aliceOutputIndex := findOutputForTemplate(t, fundingPtx, inspectorTemplate)
-		require.NotNil(t, aliceOutput)
-		bobOutput, bobOutputIndex := findOutputForTemplate(t, fundingPtx, bobTemplate)
-		require.NotNil(t, bobOutput)
-		require.NotZero(t, bobOutputIndex)
+		aliceOutput := fundingPtx.UnsignedTx.TxOut[0]
+		bobOutput := fundingPtx.UnsignedTx.TxOut[1]
+		require.Equal(t, inspectorTemplate.pkScript, aliceOutput.PkScript)
+		require.Equal(t, bobTemplate.pkScript, bobOutput.PkScript)
 
 		candidateTx, checkpoints, err := offchain.BuildTxs(
 			[]offchain.VtxoInput{
-				buildVtxoInput(fundingPtx, aliceOutput, aliceOutputIndex, inspectorTemplate),
-				buildVtxoInput(fundingPtx, bobOutput, bobOutputIndex, bobTemplate),
+				buildVtxoInput(fundingPtx, aliceOutput, 0, inspectorTemplate),
+				buildVtxoInput(fundingPtx, bobOutput, 1, bobTemplate),
 			},
 			[]*wire.TxOut{{Value: aliceOutput.Value + bobOutput.Value, PkScript: bobPkScript}},
 			env.checkpointScriptBytes,
@@ -736,19 +735,6 @@ func addCrossInputExtensionPacket(t *testing.T, ptx *psbt.Packet, packet extensi
 	ptx.Outputs = append(ptx.Outputs, psbt.POutput{})
 }
 
-// findOutputForTemplate locates the output whose script matches the template.
-func findOutputForTemplate(t *testing.T, ptx *psbt.Packet, template spendTemplate) (*wire.TxOut, uint32) {
-	t.Helper()
-
-	for i, out := range ptx.UnsignedTx.TxOut {
-		if bytes.Equal(out.PkScript, template.pkScript) {
-			return out, uint32(i)
-		}
-	}
-
-	return nil, 0
-}
-
 // buildVtxoInput converts a funded output and template into an offchain spend input.
 func buildVtxoInput(prevTx *psbt.Packet, out *wire.TxOut, outIndex uint32, template spendTemplate) offchain.VtxoInput {
 	return offchain.VtxoInput{
@@ -820,10 +806,10 @@ func (env *crossInputTestEnv) buildFinalizedPacketChain(
 	fundingPtx, err := psbt.NewFromRawBytes(strings.NewReader(fundingTxs.Txs[0]), true)
 	require.NoError(t, err)
 
-	fundingOutputA, fundingIndexA := findOutputForTemplate(t, fundingPtx, baseTemplateA)
-	require.NotNil(t, fundingOutputA)
-	fundingOutputB, fundingIndexB := findOutputForTemplate(t, fundingPtx, baseTemplateB)
-	require.NotNil(t, fundingOutputB)
+	fundingOutputA := fundingPtx.UnsignedTx.TxOut[0]
+	fundingOutputB := fundingPtx.UnsignedTx.TxOut[1]
+	require.Equal(t, baseTemplateA.pkScript, fundingOutputA.PkScript)
+	require.Equal(t, baseTemplateB.pkScript, fundingOutputB.PkScript)
 
 	// Step 2: Build and finalize the previous ark tx that carries the packet.
 	previousTemplateA := env.buildSpendTemplate(t, scriptA)
@@ -831,8 +817,8 @@ func (env *crossInputTestEnv) buildFinalizedPacketChain(
 
 	previousArkTx, previousCheckpoints, err := offchain.BuildTxs(
 		[]offchain.VtxoInput{
-			buildVtxoInput(fundingPtx, fundingOutputA, fundingIndexA, baseTemplateA),
-			buildVtxoInput(fundingPtx, fundingOutputB, fundingIndexB, baseTemplateB),
+			buildVtxoInput(fundingPtx, fundingOutputA, 0, baseTemplateA),
+			buildVtxoInput(fundingPtx, fundingOutputB, 1, baseTemplateB),
 		},
 		[]*wire.TxOut{{Value: fundingOutputA.Value, PkScript: previousTemplateA.pkScript}, {Value: fundingOutputB.Value, PkScript: previousTemplateB.pkScript}},
 		env.checkpointScriptBytes,
@@ -845,16 +831,16 @@ func (env *crossInputTestEnv) buildFinalizedPacketChain(
 	require.NoError(t, executeArkadeScripts(t, previousArkTx, previousCheckpoints, env.introspectorPubKey))
 	finalize(t, previousArkTx, previousCheckpoints)
 
-	prevOutputA, prevIndexA := findOutputForTemplate(t, previousArkTx, previousTemplateA)
-	require.NotNil(t, prevOutputA)
-	prevOutputB, prevIndexB := findOutputForTemplate(t, previousArkTx, previousTemplateB)
-	require.NotNil(t, prevOutputB)
+	prevOutputA := previousArkTx.UnsignedTx.TxOut[0]
+	prevOutputB := previousArkTx.UnsignedTx.TxOut[1]
+	require.Equal(t, previousTemplateA.pkScript, prevOutputA.PkScript)
+	require.Equal(t, previousTemplateB.pkScript, prevOutputB.PkScript)
 
 	// Step 3: Build the candidate tx that spends outputs from the finalized tx.
 	candidateTx, checkpoints, err := offchain.BuildTxs(
 		[]offchain.VtxoInput{
-			buildVtxoInput(previousArkTx, prevOutputA, prevIndexA, previousTemplateA),
-			buildVtxoInput(previousArkTx, prevOutputB, prevIndexB, previousTemplateB),
+			buildVtxoInput(previousArkTx, prevOutputA, 0, previousTemplateA),
+			buildVtxoInput(previousArkTx, prevOutputB, 1, previousTemplateB),
 		},
 		[]*wire.TxOut{{Value: prevOutputA.Value + prevOutputB.Value, PkScript: env.recipientPkScript}},
 		env.checkpointScriptBytes,
@@ -894,11 +880,9 @@ func (env *crossInputTestEnv) buildTwoInputSpend(
 		[]types.Receiver{{To: addressAStr, Amount: uint64(inputAmount)}, {To: addressBStr, Amount: uint64(inputAmount)}},
 	)
 	require.NoError(t, err)
-	require.NotEmpty(t, fundingTxid)
 
 	fundingTxs, err := env.indexerSvc.GetVirtualTxs(env.ctx, []string{fundingTxid})
 	require.NoError(t, err)
-	require.NotEmpty(t, fundingTxs)
 	require.Len(t, fundingTxs.Txs, 1)
 
 	fundingPtx, err := psbt.NewFromRawBytes(strings.NewReader(fundingTxs.Txs[0]), true)
@@ -910,16 +894,16 @@ func (env *crossInputTestEnv) buildTwoInputSpend(
 	}
 
 	// Step 3: Locate the funded outputs that correspond to the requested scripts.
-	outputA, outputIndexA := findOutputForTemplate(t, fundingPtx, templateA)
-	require.NotNil(t, outputA)
-	outputB, outputIndexB := findOutputForTemplate(t, fundingPtx, templateB)
-	require.NotNil(t, outputB)
+	outputA := fundingPtx.UnsignedTx.TxOut[0]
+	outputB := fundingPtx.UnsignedTx.TxOut[1]
+	require.Equal(t, templateA.pkScript, outputA.PkScript)
+	require.Equal(t, templateB.pkScript, outputB.PkScript)
 
 	// Step 4: Build the two-input candidate tx that spends both outputs.
 	candidateTx, checkpoints, err := offchain.BuildTxs(
 		[]offchain.VtxoInput{
-			buildVtxoInput(fundingPtx, outputA, outputIndexA, templateA),
-			buildVtxoInput(fundingPtx, outputB, outputIndexB, templateB),
+			buildVtxoInput(fundingPtx, outputA, 0, templateA),
+			buildVtxoInput(fundingPtx, outputB, 1, templateB),
 		},
 		[]*wire.TxOut{{Value: outputA.Value + outputB.Value, PkScript: env.recipientPkScript}},
 		env.checkpointScriptBytes,

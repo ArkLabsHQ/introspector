@@ -17,7 +17,6 @@ import (
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
-	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
@@ -673,33 +672,6 @@ func uint64LE(v uint64) []byte {
 	b := make([]byte, 8)
 	binary.LittleEndian.PutUint64(b, v)
 	return b
-}
-
-func checkpointInputPkScript(vtxoInput offchain.VtxoInput, checkpointScriptBytes []byte) ([]byte, error) {
-	signerUnrollScriptClosure := &script.CSVMultisigClosure{}
-	valid, err := signerUnrollScriptClosure.Decode(checkpointScriptBytes)
-	if err != nil {
-		return nil, err
-	}
-	if !valid {
-		return nil, fmt.Errorf("invalid signer unroll script")
-	}
-
-	collaborativeClosure, err := script.DecodeClosure(vtxoInput.Tapscript.RevealedScript)
-	if err != nil {
-		return nil, err
-	}
-
-	checkpointVtxoScript := script.TapscriptsVtxoScript{
-		Closures: []script.Closure{signerUnrollScriptClosure, collaborativeClosure},
-	}
-
-	tapKey, _, err := checkpointVtxoScript.TapTree()
-	if err != nil {
-		return nil, err
-	}
-
-	return script.P2TRScript(tapKey)
 }
 
 type testArkPrevOutFetcher struct {
