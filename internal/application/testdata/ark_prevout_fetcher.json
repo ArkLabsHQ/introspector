@@ -1,0 +1,34 @@
+{
+  "valid": [
+    {
+      "name": "intent psbt",
+      "packet": "intent_psbt"
+    },
+    {
+      "name": "ark tx psbt",
+      "packet": "ark_tx_psbt"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "mismatched prevout hash",
+      "packet": "mismatched_prevout_hash",
+      "expectedErr": "prevout tx hash mismatch"
+    },
+    {
+      "name": "duplicate prevout psbt fields",
+      "packet": "duplicate_prevout_psbt_fields",
+      "decodeErrorContains": "duplicate key"
+    },
+    {
+      "name": "checkpoint source tx mismatch",
+      "packet": "checkpoint_source_tx_mismatch",
+      "expectedErr": "prevout tx hash mismatch"
+    },
+    {
+      "name": "checkpoint prevout output index out of range",
+      "packet": "checkpoint_prevout_output_index_out_of_range",
+      "expectedErr": "prevout tx output index out of range"
+    }
+  ]
+}
