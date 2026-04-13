@@ -789,6 +789,10 @@ func debugScriptExecution(t *testing.T) arkade.ExecuteOption {
 
 		hexItems := make([]string, len(items))
 		for i := range items {
+			if len(items[i]) == 0 {
+				hexItems[i] = "0"
+				continue
+			}
 			hexItems[i] = hex.EncodeToString(items[i])
 		}
 
