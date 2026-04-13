@@ -49,27 +49,6 @@ type ArkPrevOutFetcher interface {
 	FetchPrevOutArkTx(wire.OutPoint) *wire.MsgTx
 }
 
-// MapArkPrevOutFetcher is a map-based implementation of ArkPrevOutFetcher.
-// It embeds a base txscript.PrevOutputFetcher for prev-output lookups and
-// uses a separate map for ark transaction lookups.
-type MapArkPrevOutFetcher struct {
-	txscript.PrevOutputFetcher
-	m map[wire.OutPoint]*wire.MsgTx
-}
-
-func NewMapArkPrevOutFetcher(base txscript.PrevOutputFetcher, arkTxs map[wire.OutPoint]*wire.MsgTx) *MapArkPrevOutFetcher {
-	return &MapArkPrevOutFetcher{
-		PrevOutputFetcher: base,
-		m:                 arkTxs,
-	}
-}
-
-func (f *MapArkPrevOutFetcher) FetchPrevOutArkTx(op wire.OutPoint) *wire.MsgTx {
-	if f.m == nil {
-		return nil
-	}
-	return f.m[op]
-}
 
 // ReadArkadeScript reads an arkade script from an IntrospectorEntry and validates
 // it against the tapscript in the PSBT input. The entry contains the script and

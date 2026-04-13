@@ -123,7 +123,7 @@ func TestAssetOpcodes(t *testing.T) {
 	// Compute expected metadata hash.
 	expectedMetadataHash, _ := computeMetadataMerkleRoot(metadataPacket[0].Metadata)
 
-	prevoutFetcher := NewMapArkPrevOutFetcher(
+	prevoutFetcher := newTestArkPrevOutFetcher(
 		txscript.NewMultiPrevOutFetcher(map[wire.OutPoint]*wire.TxOut{
 			{Hash: chainhash.Hash{}, Index: 0}: {
 				Value: 1000000000,

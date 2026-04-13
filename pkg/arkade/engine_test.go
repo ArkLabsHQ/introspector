@@ -36,7 +36,7 @@ func TestNewOpcodes(t *testing.T) {
 		cases  []testCase
 	}
 
-	prevoutFetcher := NewMapArkPrevOutFetcher(
+	prevoutFetcher := newTestArkPrevOutFetcher(
 		txscript.NewMultiPrevOutFetcher(map[wire.OutPoint]*wire.TxOut{
 			{
 				Hash:  chainhash.Hash{},
@@ -1687,7 +1687,7 @@ func TestNewOpcodes(t *testing.T) {
 func TestMerkleBranchVerify(t *testing.T) {
 	t.Parallel()
 
-	prevoutFetcher := NewMapArkPrevOutFetcher(
+	prevoutFetcher := newTestArkPrevOutFetcher(
 		txscript.NewMultiPrevOutFetcher(map[wire.OutPoint]*wire.TxOut{
 			{
 				Hash:  chainhash.Hash{},
@@ -2113,7 +2113,7 @@ func TestMerkleBranchVerify(t *testing.T) {
 func TestIntrospectorPacketOpcodes(t *testing.T) {
 	t.Parallel()
 
-	prevoutFetcher := NewMapArkPrevOutFetcher(
+	prevoutFetcher := newTestArkPrevOutFetcher(
 		txscript.NewMultiPrevOutFetcher(map[wire.OutPoint]*wire.TxOut{
 			{Hash: chainhash.Hash{}, Index: 0}: {Value: 1000, PkScript: []byte{
 				OP_1, OP_DATA_32,
@@ -2378,7 +2378,7 @@ func makeTxWithMalformedExtension(t *testing.T, payload []byte) *wire.MsgTx {
 func TestPacketIntrospectionOpcodes(t *testing.T) {
 	t.Parallel()
 
-	prevoutFetcher := NewMapArkPrevOutFetcher(
+	prevoutFetcher := newTestArkPrevOutFetcher(
 		txscript.NewMultiPrevOutFetcher(map[wire.OutPoint]*wire.TxOut{
 			{Hash: chainhash.Hash{}, Index: 0}: {Value: 1000, PkScript: []byte{
 				OP_1, OP_DATA_32,
@@ -2461,7 +2461,7 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 				arkTxs[tx.TxIn[idx].PreviousOutPoint] = prevTx
 			}
 		}
-		return NewMapArkPrevOutFetcher(prevoutFetcher, arkTxs)
+		return newTestArkPrevOutFetcher(prevoutFetcher, arkTxs)
 	}
 
 	runEngine := func(t *testing.T, script []byte, tx *wire.MsgTx, prevoutTxs map[int]*wire.MsgTx) error {

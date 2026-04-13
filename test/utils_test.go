@@ -702,6 +702,18 @@ func checkpointInputPkScript(vtxoInput offchain.VtxoInput, checkpointScriptBytes
 	return script.P2TRScript(tapKey)
 }
 
+type testArkPrevOutFetcher struct {
+	txscript.PrevOutputFetcher
+	arkTxs map[wire.OutPoint]*wire.MsgTx
+}
+
+func (f *testArkPrevOutFetcher) FetchPrevOutArkTx(op wire.OutPoint) *wire.MsgTx {
+	if f.arkTxs == nil {
+		return nil
+	}
+	return f.arkTxs[op]
+}
+
 func executeArkadeScripts(t *testing.T, ptx *psbt.Packet, signerPublicKey *btcec.PublicKey, opts ...arkade.ExecuteOption) error {
 	t.Helper()
 
@@ -740,7 +752,7 @@ func executeArkadeScripts(t *testing.T, ptx *psbt.Packet, signerPublicKey *btcec
 		outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
 		prevOutArkTxs[outpoint] = &prevTxCopy
 	}
-	prevOutFetcher := arkade.NewMapArkPrevOutFetcher(baseFetcher, prevOutArkTxs)
+	prevOutFetcher := &testArkPrevOutFetcher{PrevOutputFetcher: baseFetcher, arkTxs: prevOutArkTxs}
 
 	packet, err := arkade.FindIntrospectorPacket(ptx.UnsignedTx)
 	if err != nil {

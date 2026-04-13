@@ -31,7 +31,7 @@ func prevOutFetcherForIntentFromPSBT(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher
 		prevOutArkTxs[outpoint] = prevTx
 	}
 
-	return arkade.NewMapArkPrevOutFetcher(baseFetcher, prevOutArkTxs), nil
+	return newMapArkPrevOutFetcher(baseFetcher, prevOutArkTxs), nil
 }
 
 func prevOutFetcherForArkTxFromPSBT(
@@ -79,7 +79,7 @@ func prevOutFetcherForArkTxFromPSBT(
 		prevOutArkTxs[outpoint] = prevTx
 	}
 
-	return arkade.NewMapArkPrevOutFetcher(baseFetcher, prevOutArkTxs), nil
+	return newMapArkPrevOutFetcher(baseFetcher, prevOutArkTxs), nil
 }
 
 func decodePrevoutTxsFromPSBT(ptx *psbt.Packet) (map[int]*wire.MsgTx, error) {
@@ -108,6 +108,25 @@ func decodePrevoutTxsFromPSBT(ptx *psbt.Packet) (map[int]*wire.MsgTx, error) {
 	}
 
 	return prevoutTxs, nil
+}
+
+type mapArkPrevOutFetcher struct {
+	txscript.PrevOutputFetcher
+	arkTxs map[wire.OutPoint]*wire.MsgTx
+}
+
+func newMapArkPrevOutFetcher(base txscript.PrevOutputFetcher, arkTxs map[wire.OutPoint]*wire.MsgTx) *mapArkPrevOutFetcher {
+	return &mapArkPrevOutFetcher{
+		PrevOutputFetcher: base,
+		arkTxs:            arkTxs,
+	}
+}
+
+func (f *mapArkPrevOutFetcher) FetchPrevOutArkTx(op wire.OutPoint) *wire.MsgTx {
+	if f.arkTxs == nil {
+		return nil
+	}
+	return f.arkTxs[op]
 }
 
 func validatePrevoutTx(inputIndex int, prevTx *wire.MsgTx, expectedHash chainhash.Hash) error {
