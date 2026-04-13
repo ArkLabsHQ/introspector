@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"crypto/sha256"
-	"errors"
 	"encoding/binary"
 	"encoding/gob"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
 	"math"
@@ -2132,12 +2132,12 @@ func opcodeInspectInputScriptPubkey(op *opcode, data []byte, vm *Engine) error {
 		return scriptError(txscript.ErrInvalidIndex, "previous output fetcher not set")
 	}
 
-	prevOut := vm.prevOutFetcher.FetchPrevOutput(vm.tx.TxIn[index].PreviousOutPoint)
-	if prevOut == nil {
+	script := vm.prevOutFetcher.FetchPrevOutPkScript(vm.tx.TxIn[index].PreviousOutPoint)
+	if script == nil {
 		return scriptError(txscript.ErrInvalidIndex, "previous output not found")
 	}
 
-	return pushScriptPubKey(prevOut.PkScript, vm)
+	return pushScriptPubKey(script, vm)
 }
 
 // opcodeInspectInputSequence pops the input index from the stack and pushes the sequence number of the current input onto the stack.

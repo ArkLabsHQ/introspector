@@ -704,7 +704,8 @@ func checkpointInputPkScript(vtxoInput offchain.VtxoInput, checkpointScriptBytes
 
 type testArkPrevOutFetcher struct {
 	txscript.PrevOutputFetcher
-	arkTxs map[wire.OutPoint]*wire.MsgTx
+	arkTxs      map[wire.OutPoint]*wire.MsgTx
+	prevoutIdxs map[wire.OutPoint]uint32
 }
 
 func (f *testArkPrevOutFetcher) FetchPrevOutArkTx(op wire.OutPoint) *wire.MsgTx {
@@ -714,45 +715,75 @@ func (f *testArkPrevOutFetcher) FetchPrevOutArkTx(op wire.OutPoint) *wire.MsgTx 
 	return f.arkTxs[op]
 }
 
-func executeArkadeScripts(t *testing.T, ptx *psbt.Packet, signerPublicKey *btcec.PublicKey, opts ...arkade.ExecuteOption) error {
+func (f *testArkPrevOutFetcher) FetchPrevOutPkScript(op wire.OutPoint) []byte {
+	if f.arkTxs == nil || f.prevoutIdxs == nil {
+		return nil
+	}
+
+	idx, foundIdx := f.prevoutIdxs[op]
+	arkTx, foundTx := f.arkTxs[op]
+
+	if !foundIdx || !foundTx {
+		return nil
+	}
+
+	if idx >= uint32(len(arkTx.TxOut)) {
+		return nil
+	}
+
+	return arkTx.TxOut[idx].PkScript
+}
+
+func executeArkadeScripts(t *testing.T, ptx *psbt.Packet, checkpoints []*psbt.Packet, signerPublicKey *btcec.PublicKey, opts ...arkade.ExecuteOption) error {
 	t.Helper()
 
 	if len(ptx.Inputs) != len(ptx.UnsignedTx.TxIn) {
 		return fmt.Errorf("malformed psbt")
 	}
 
-	prevouts := make(map[wire.OutPoint]*wire.TxOut)
-	for index, input := range ptx.Inputs {
-		if input.WitnessUtxo == nil {
-			return fmt.Errorf("witness utxo is nil at input %d", index)
+	var checkpointsByTxid map[string]*psbt.Packet
+	if len(checkpoints) > 0 {
+		checkpointsByTxid = make(map[string]*psbt.Packet, len(checkpoints))
+		for _, checkpoint := range checkpoints {
+			checkpointsByTxid[checkpoint.UnsignedTx.TxID()] = checkpoint
 		}
-		prevouts[ptx.UnsignedTx.TxIn[index].PreviousOutPoint] = input.WitnessUtxo
 	}
-	baseFetcher := txscript.NewMultiPrevOutFetcher(prevouts)
 
-	// Build an ArkPrevOutFetcher from prevout tx PSBT fields. For intent proofs it is the
-	// direct prevout tx; for Ark txs it is the source Ark tx spent by the
-	// input checkpoint. SubmitTx validates that checkpoint/source
-	// relationship with the accompanying checkpoints.
-	prevOutArkTxs := make(map[wire.OutPoint]*wire.MsgTx)
-	for inputIndex := range ptx.Inputs {
+	prevouts := make(map[wire.OutPoint]*wire.TxOut, len(ptx.Inputs))
+	arkTxs := make(map[wire.OutPoint]*wire.MsgTx)
+	prevoutIdxs := make(map[wire.OutPoint]uint32)
+
+	for inputIndex, input := range ptx.Inputs {
+		outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
+		prevouts[outpoint] = input.WitnessUtxo
+
 		fields, err := txutils.GetArkPsbtFields(ptx, inputIndex, arkade.PrevoutTxField)
-		if err != nil {
-			return fmt.Errorf("failed to decode prevout tx for input %d: %w", inputIndex, err)
-		}
+		require.NoError(t, err)
+
 		if len(fields) == 0 {
 			continue
-		}
-		if len(fields) > 1 {
-			return fmt.Errorf("multiple prevout tx fields found for input %d", inputIndex)
 		}
 
 		prevTx := fields[0]
 		prevTxCopy := prevTx
-		outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
-		prevOutArkTxs[outpoint] = &prevTxCopy
+
+		if checkpointsByTxid == nil {
+			arkTxs[outpoint] = &prevTxCopy
+			prevoutIdxs[outpoint] = outpoint.Index
+			continue
+		}
+
+		checkpoint := checkpointsByTxid[outpoint.Hash.String()]
+		checkpointInputPrevout := checkpoint.UnsignedTx.TxIn[0].PreviousOutPoint
+		arkTxs[outpoint] = &prevTxCopy
+		prevoutIdxs[outpoint] = checkpointInputPrevout.Index
 	}
-	prevOutFetcher := &testArkPrevOutFetcher{PrevOutputFetcher: baseFetcher, arkTxs: prevOutArkTxs}
+
+	prevOutFetcher := &testArkPrevOutFetcher{
+		PrevOutputFetcher: txscript.NewMultiPrevOutFetcher(prevouts),
+		arkTxs:            arkTxs,
+		prevoutIdxs:       prevoutIdxs,
+	}
 
 	packet, err := arkade.FindIntrospectorPacket(ptx.UnsignedTx)
 	if err != nil {
