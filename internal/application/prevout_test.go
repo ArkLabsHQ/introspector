@@ -3,6 +3,7 @@ package application
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/ArkLabsHQ/introspector/pkg/arkade"
@@ -12,15 +13,13 @@ import (
 )
 
 func TestArkPrevOutFetcher(t *testing.T) {
-	psbtFixtures := readPSBTFixtures(t)
 	fix := readPrevOutFixtures(t)
 
 	t.Run("valid", func(t *testing.T) {
 		for _, f := range fix.Valid {
 			t.Run(f.Name, func(t *testing.T) {
-				packet := psbtFixtureByName(t, psbtFixtures, f.Packet)
-				ptx := decodePSBT(t, packet.Psbt)
-				checkpoints := decodePSBTs(t, packet.Checkpoints)
+				ptx := decodePSBT(t, f.Psbt)
+				checkpoints := decodePSBTs(t, f.Checkpoints)
 
 				fetcher, err := newPrevOutFetcher(ptx, checkpoints)
 				require.NoError(t, err)
@@ -48,21 +47,23 @@ func TestArkPrevOutFetcher(t *testing.T) {
 	t.Run("invalid", func(t *testing.T) {
 		for _, f := range fix.Invalid {
 			t.Run(f.Name, func(t *testing.T) {
-				packet := psbtFixtureByName(t, psbtFixtures, f.Packet)
-
-				if f.DecodeErrorContains != "" {
-					_, err := parsePSBT(packet.Psbt)
+				ptx, err := parsePSBT(f.Psbt)
+				if err != nil {
 					require.Error(t, err)
-					require.Contains(t, err.Error(), f.DecodeErrorContains)
+					require.Contains(t, err.Error(), f.ErrorContains)
 					return
 				}
 
-				ptx := decodePSBT(t, packet.Psbt)
-				checkpoints := decodePSBTs(t, packet.Checkpoints)
+				checkpoints, err := parsePSBTs(f.Checkpoints)
+				if err != nil {
+					require.Error(t, err)
+					require.Contains(t, err.Error(), f.ErrorContains)
+					return
+				}
 
-				_, err := newPrevOutFetcher(ptx, checkpoints)
+				_, err = newPrevOutFetcher(ptx, checkpoints)
 				require.Error(t, err)
-				require.Contains(t, err.Error(), f.ExpectedErr)
+				require.Contains(t, err.Error(), f.ErrorContains)
 			})
 		}
 	})
@@ -74,15 +75,16 @@ type fixtures struct {
 }
 
 type validFixture struct {
-	Name   string `json:"name"`
-	Packet string `json:"packet"`
+	Name        string   `json:"name"`
+	Psbt        string   `json:"psbt"`
+	Checkpoints []string `json:"checkpoints"`
 }
 
 type invalidFixture struct {
-	Name                string `json:"name"`
-	Packet              string `json:"packet"`
-	ExpectedErr         string `json:"expectedErr"`
-	DecodeErrorContains string `json:"decodeErrorContains"`
+	Name          string   `json:"name"`
+	Psbt          string   `json:"psbt"`
+	Checkpoints   []string `json:"checkpoints"`
+	ErrorContains string   `json:"errorContains"`
 }
 
 func readPrevOutFixtures(t testing.TB) fixtures {
@@ -105,4 +107,39 @@ func newPrevOutFetcher(
 	}
 
 	return prevOutFetcherForArkTxFromPSBT(ptx, checkpoints)
+}
+
+func decodePSBT(t testing.TB, b64 string) *psbt.Packet {
+	t.Helper()
+
+	ptx, err := parsePSBT(b64)
+	require.NoError(t, err)
+
+	return ptx
+}
+
+func decodePSBTs(t testing.TB, b64Packets []string) []*psbt.Packet {
+	t.Helper()
+
+	packets, err := parsePSBTs(b64Packets)
+	require.NoError(t, err)
+
+	return packets
+}
+
+func parsePSBT(b64 string) (*psbt.Packet, error) {
+	return psbt.NewFromRawBytes(strings.NewReader(b64), true)
+}
+
+func parsePSBTs(b64Packets []string) ([]*psbt.Packet, error) {
+	packets := make([]*psbt.Packet, 0, len(b64Packets))
+	for _, b64 := range b64Packets {
+		packet, err := parsePSBT(b64)
+		if err != nil {
+			return nil, err
+		}
+		packets = append(packets, packet)
+	}
+
+	return packets, nil
 }
