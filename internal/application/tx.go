@@ -26,7 +26,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		orderedCheckpointTxids = append(orderedCheckpointTxids, checkpoint.UnsignedTx.TxID())
 	}
 
-	prevoutFetcher, err := computePrevoutFetcher(arkPtx)
+	prevOutFetcher, err := prevOutFetcherForArkTxFromPSBT(arkPtx, tx.Checkpoints)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create prevout fetcher: %w", err)
 	}
@@ -56,12 +56,16 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		}
 
 		log.Debugf("executing arkade script: %x", script.Script())
-		if err := script.Execute(arkPtx.UnsignedTx, prevoutFetcher, inputIndex); err != nil {
+		if err := script.Execute(
+			arkPtx.UnsignedTx,
+			prevOutFetcher,
+			inputIndex,
+		); err != nil {
 			return nil, fmt.Errorf("failed to execute arkade script: %w vin=%d", err, inputIndex)
 		}
 		log.Debugf("execution of %x succeeded", script.Script())
 
-		if err := s.signer.signInput(arkPtx, inputIndex, script.Hash(), prevoutFetcher); err != nil {
+		if err := s.signer.signInput(arkPtx, inputIndex, script.Hash(), prevOutFetcher); err != nil {
 			return nil, fmt.Errorf("failed to sign input %d: %w", inputIndex, err)
 		}
 

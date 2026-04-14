@@ -123,14 +123,14 @@ func TestOpcodeDisasm(t *testing.T) {
 				expectedStr = "OP_NOP" + strconv.Itoa(int(val))
 			}
 
-		// Asset introspection opcodes (0xe5-0xf2).
-		case opcodeVal >= 0xe5 && opcodeVal <= 0xf2:
+		// Asset and packet introspection opcodes (0xe5-0xf5).
+		case opcodeVal >= 0xe5 && opcodeVal <= 0xf5:
 			expectedStr = opcodeArray[opcodeVal].name
 
 		// OP_UNKNOWN#.
 		case (opcodeVal >= 0xbb && opcodeVal <= 0xc3) || // Unknown range before SHA256 ops
 (opcodeVal == 0xd0) || // Unknown between output ops
-			(opcodeVal >= 0xf4 && opcodeVal <= 0xf9) || // Unknown range after new ops
+			(opcodeVal >= 0xf6 && opcodeVal <= 0xf9) || // Unknown range after new ops
 			opcodeVal == 0xfc:
 			expectedStr = "OP_UNKNOWN" + strconv.Itoa(opcodeVal)
 		}
@@ -200,14 +200,14 @@ func TestOpcodeDisasm(t *testing.T) {
 				expectedStr = "OP_NOP" + strconv.Itoa(int(val))
 			}
 
-		// Asset introspection opcodes (0xe5-0xf2).
-		case opcodeVal >= 0xe5 && opcodeVal <= 0xf2:
+		// Asset and packet introspection opcodes (0xe5-0xf5).
+		case opcodeVal >= 0xe5 && opcodeVal <= 0xf5:
 			expectedStr = opcodeArray[opcodeVal].name
 
 		// OP_UNKNOWN#.
 		case (opcodeVal >= 0xbb && opcodeVal <= 0xc3) || // Unknown range before SHA256 ops
 (opcodeVal == 0xd0) || // Unknown between output ops
-			(opcodeVal >= 0xf4 && opcodeVal <= 0xf9) || // Unknown range after new ops
+			(opcodeVal >= 0xf6 && opcodeVal <= 0xf9) || // Unknown range after new ops
 			opcodeVal == 0xfc:
 			expectedStr = "OP_UNKNOWN" + strconv.Itoa(opcodeVal)
 		}

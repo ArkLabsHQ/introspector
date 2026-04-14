@@ -34,6 +34,22 @@ func WithDebugCallback(callback func(*StepInfo, *Engine) error) ExecuteOption {
 	}
 }
 
+// ArkPrevOutFetcher extends txscript.PrevOutputFetcher with the ability to
+// look up previous ark transactions by outpoint. Both methods are keyed by
+// the spending input's outpoint but serve different purposes:
+//
+//   - FetchPrevOutput returns the TxOut being spent (used for sighash
+//     computation). This is the direct previous output — an ark tx output
+//     for intents or a checkpoint output for ark transactions.
+//
+//   - FetchPrevOutArkTx returns the full previous ark transaction. This is
+//     always the ark transaction, regardless of whether a checkpoint sits in between.
+type ArkPrevOutFetcher interface {
+	txscript.PrevOutputFetcher
+	FetchPrevOutArkTx(wire.OutPoint) *wire.MsgTx
+}
+
+
 // ReadArkadeScript reads an arkade script from an IntrospectorEntry and validates
 // it against the tapscript in the PSBT input. The entry contains the script and
 // witness data extracted from the Introspector Packet (OP_RETURN TLV).
@@ -100,8 +116,8 @@ func ReadArkadeScript(ptx *psbt.Packet, signerPublicKey *btcec.PublicKey, entry 
 	}, nil
 }
 
-func (s *ArkadeScript) Execute(spendingTx *wire.MsgTx, prevoutFetcher txscript.PrevOutputFetcher, inputIndex int, opts ...ExecuteOption) error {
-	prevOut := prevoutFetcher.FetchPrevOutput(spendingTx.TxIn[inputIndex].PreviousOutPoint)
+func (s *ArkadeScript) Execute(spendingTx *wire.MsgTx, prevOutFetcher ArkPrevOutFetcher, inputIndex int, opts ...ExecuteOption) error {
+	prevOut := prevOutFetcher.FetchPrevOutput(spendingTx.TxIn[inputIndex].PreviousOutPoint)
 	inputAmount := int64(0)
 	if prevOut != nil {
 		inputAmount = prevOut.Value
@@ -112,9 +128,9 @@ func (s *ArkadeScript) Execute(spendingTx *wire.MsgTx, prevoutFetcher txscript.P
 		spendingTx,
 		inputIndex,
 		txscript.NewSigCache(100),
-		txscript.NewTxSigHashes(spendingTx, prevoutFetcher),
+		txscript.NewTxSigHashes(spendingTx, prevOutFetcher),
 		inputAmount,
-		prevoutFetcher,
+		prevOutFetcher,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create engine: %w", err)
@@ -126,12 +142,13 @@ func (s *ArkadeScript) Execute(spendingTx *wire.MsgTx, prevoutFetcher txscript.P
 
 	// Parse asset packet from transaction extension if present
 	ext, err := extension.NewExtensionFromTx(spendingTx)
-	if err == nil {
-		if ap := ext.GetAssetPacket(); ap != nil {
-			engine.SetAssetPacket(ap)
+	if err != nil {
+		if !errors.Is(err, extension.ErrExtensionNotFound) {
+			return fmt.Errorf("failed to parse extension: %w", err)
 		}
+	} else if ap := ext.GetAssetPacket(); ap != nil {
+		engine.SetAssetPacket(ap)
 	}
-	// If error, extension is not present - this is okay, just don't set it
 
 	// Parse & set introspector packet from transaction outputs if present
 	packet, err := FindIntrospectorPacket(spendingTx)

@@ -2,6 +2,7 @@ package arkade
 
 import (
 	"bytes"
+	"errors"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -178,7 +179,10 @@ func DeserializeIntrospectorPacket(data []byte) (IntrospectorPacket, error) {
 func FindIntrospectorPacket(tx *wire.MsgTx) (IntrospectorPacket, error) {
 	ext, err := extension.NewExtensionFromTx(tx)
 	if err != nil {
-		return nil, nil // no packet
+		if errors.Is(err, extension.ErrExtensionNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to parse extension: %w", err)
 	}
 	for _, pkt := range ext {
 		if pkt.Type() != PacketType {

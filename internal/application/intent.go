@@ -20,7 +20,7 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 
 	ptx := &intent.Proof.Packet
 
-	prevoutFetcher, err := computePrevoutFetcher(ptx)
+	prevOutFetcher, err := prevOutFetcherForIntentFromPSBT(ptx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create prevout fetcher: %w", err)
 	}
@@ -53,18 +53,22 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 			continue
 		}
 
-		if err := script.Execute(ptx.UnsignedTx, prevoutFetcher, inputIndex); err != nil {
+		if err := script.Execute(
+			ptx.UnsignedTx,
+			prevOutFetcher,
+			inputIndex,
+		); err != nil {
 			log.WithError(err).WithField("input_index", inputIndex).Error("arkade script execution failed")
 			return nil, fmt.Errorf("failed to execute arkade script at input %d: %w", inputIndex, err)
 		}
 
-		if err := s.signer.signInput(ptx, inputIndex, script.Hash(), prevoutFetcher); err != nil {
+		if err := s.signer.signInput(ptx, inputIndex, script.Hash(), prevOutFetcher); err != nil {
 			return nil, fmt.Errorf("failed to sign input %d: %w", inputIndex, err)
 		}
 
 		// if input index 1 is valid and signed, we can also sign the intent message input (index 0)
 		if inputIndex == 1 {
-			if err := s.signer.signInput(ptx, 0, script.Hash(), prevoutFetcher); err != nil {
+			if err := s.signer.signInput(ptx, 0, script.Hash(), prevOutFetcher); err != nil {
 				return nil, fmt.Errorf("failed to sign fake message input: %w", err)
 			}
 		}

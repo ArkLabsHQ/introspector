@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
@@ -35,21 +36,23 @@ func TestNewOpcodes(t *testing.T) {
 		cases  []testCase
 	}
 
-	prevoutFetcher := txscript.NewMultiPrevOutFetcher(map[wire.OutPoint]*wire.TxOut{
-		{
-			Hash:  chainhash.Hash{},
-			Index: 0,
-		}: {
-			Value: 1000000000,
-			PkScript: []byte{
-				OP_1, OP_DATA_32,
-				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	prevoutFetcher := newTestArkPrevOutFetcher(
+		txscript.NewMultiPrevOutFetcher(map[wire.OutPoint]*wire.TxOut{
+			{
+				Hash:  chainhash.Hash{},
+				Index: 0,
+			}: {
+				Value: 1000000000,
+				PkScript: []byte{
+					OP_1, OP_DATA_32,
+					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				},
 			},
-		},
-	})
+		}), nil,
+	)
 
 	// Pre-compute the expected tx hash for OP_TXID tests
 	txForHash := &wire.MsgTx{
@@ -1684,21 +1687,23 @@ func TestNewOpcodes(t *testing.T) {
 func TestMerkleBranchVerify(t *testing.T) {
 	t.Parallel()
 
-	prevoutFetcher := txscript.NewMultiPrevOutFetcher(map[wire.OutPoint]*wire.TxOut{
-		{
-			Hash:  chainhash.Hash{},
-			Index: 0,
-		}: {
-			Value: 1000000000,
-			PkScript: []byte{
-				OP_1, OP_DATA_32,
-				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	prevoutFetcher := newTestArkPrevOutFetcher(
+		txscript.NewMultiPrevOutFetcher(map[wire.OutPoint]*wire.TxOut{
+			{
+				Hash:  chainhash.Hash{},
+				Index: 0,
+			}: {
+				Value: 1000000000,
+				PkScript: []byte{
+					OP_1, OP_DATA_32,
+					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				},
 			},
-		},
-	})
+		}), nil,
+	)
 
 	simpleTx := &wire.MsgTx{
 		Version: 1,
@@ -2108,22 +2113,24 @@ func TestMerkleBranchVerify(t *testing.T) {
 func TestIntrospectorPacketOpcodes(t *testing.T) {
 	t.Parallel()
 
-	prevoutFetcher := txscript.NewMultiPrevOutFetcher(map[wire.OutPoint]*wire.TxOut{
-		{Hash: chainhash.Hash{}, Index: 0}: {Value: 1000, PkScript: []byte{
-			OP_1, OP_DATA_32,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		}},
-		{Hash: chainhash.Hash{}, Index: 1}: {Value: 2000, PkScript: []byte{
-			OP_1, OP_DATA_32,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		}},
-	})
+	prevoutFetcher := newTestArkPrevOutFetcher(
+		txscript.NewMultiPrevOutFetcher(map[wire.OutPoint]*wire.TxOut{
+			{Hash: chainhash.Hash{}, Index: 0}: {Value: 1000, PkScript: []byte{
+				OP_1, OP_DATA_32,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			}},
+			{Hash: chainhash.Hash{}, Index: 1}: {Value: 2000, PkScript: []byte{
+				OP_1, OP_DATA_32,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			}},
+		}), nil,
+	)
 
 	twoInputTx := &wire.MsgTx{
 		Version: 1,
@@ -2321,6 +2328,420 @@ func TestIntrospectorPacketOpcodes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			err := runEngine(t, tt.script, tt.tx, tt.pkt, tt.stack)
+			if tt.valid && err != nil {
+				t.Errorf("expected success, got: %v", err)
+			}
+			if !tt.valid {
+				if err == nil {
+					t.Error("expected failure, got success")
+				} else if tt.errText != "" && !strings.Contains(err.Error(), tt.errText) {
+					t.Errorf("expected error containing %q, got: %v", tt.errText, err)
+				}
+			}
+		})
+	}
+}
+
+// makeTxWithExtension builds a wire.MsgTx that has an OP_RETURN output
+// containing an ark extension with the given packets.
+func makeTxWithExtension(t *testing.T, packets ...extension.Packet) *wire.MsgTx {
+	t.Helper()
+	ext := extension.Extension(packets)
+	txOut, err := ext.TxOut()
+	if err != nil {
+		t.Fatalf("Extension.TxOut: %v", err)
+	}
+	return &wire.MsgTx{
+		Version: 1,
+		TxIn: []*wire.TxIn{
+			{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{}, Index: 0}},
+		},
+		TxOut: []*wire.TxOut{txOut},
+	}
+}
+
+func makeTxWithMalformedExtension(t *testing.T, payload []byte) *wire.MsgTx {
+	t.Helper()
+
+	return &wire.MsgTx{
+		Version: 1,
+		TxIn: []*wire.TxIn{
+			{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{}, Index: 0}},
+		},
+		TxOut: []*wire.TxOut{{
+			Value:    0,
+			PkScript: append([]byte{txscript.OP_RETURN, byte(len(payload))}, payload...),
+		}},
+	}
+}
+
+func TestPacketIntrospectionOpcodes(t *testing.T) {
+	t.Parallel()
+
+	prevoutFetcher := newTestArkPrevOutFetcher(
+		txscript.NewMultiPrevOutFetcher(map[wire.OutPoint]*wire.TxOut{
+			{Hash: chainhash.Hash{}, Index: 0}: {Value: 1000, PkScript: []byte{
+				OP_1, OP_DATA_32,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			}},
+			{Hash: chainhash.Hash{}, Index: 1}: {Value: 2000, PkScript: []byte{
+				OP_1, OP_DATA_32,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			}},
+		}), nil,
+	)
+
+	// Custom packet types for testing. We use small values (2, 3) that
+	// can be pushed with OP_2, OP_3 opcodes. Type 0 is asset.Packet
+	// and type 1 is IntrospectorPacket, so 2+ are free.
+	const testPacketType = 2
+	testPayload := []byte{0xde, 0xad, 0xbe, 0xef}
+	testPacket := extension.UnknownPacket{PacketType: testPacketType, Data: testPayload}
+
+	const testPacketType2 = 3
+	testPayload2 := []byte{0xca, 0xfe}
+	testPacket2 := extension.UnknownPacket{PacketType: testPacketType2, Data: testPayload2}
+
+	const maxPacketType = 255
+	maxPayload := []byte{0xff, 0x00, 0xff}
+	maxPacket := extension.UnknownPacket{PacketType: maxPacketType, Data: maxPayload}
+
+	// Large packet (> MaxScriptElementSize = 520 bytes) to test that
+	// introspection opcodes can push data beyond the normal push limit.
+	const largePacketType = 4
+	largePayload := bytes.Repeat([]byte{0xab}, 1000)
+	largePacket := extension.UnknownPacket{PacketType: largePacketType, Data: largePayload}
+
+	// Transaction with extension containing testPacket.
+	txWithPacket := makeTxWithExtension(t, testPacket)
+
+	// Transaction with extension containing two packets.
+	txWithTwoPackets := makeTxWithExtension(t, testPacket, testPacket2)
+
+	// Transaction with extension containing max packet type.
+	txWithMaxPacket := makeTxWithExtension(t, maxPacket)
+
+	// Transaction with a large packet.
+	txWithLargePacket := makeTxWithExtension(t, largePacket)
+
+	// Plain transaction without extension.
+	plainTx := &wire.MsgTx{
+		Version: 1,
+		TxIn: []*wire.TxIn{
+			{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{}, Index: 0}},
+		},
+	}
+
+	// Malformed extension: magic prefix is present, but packet TLV data is truncated.
+	malformedExtensionTx := makeTxWithMalformedExtension(t, []byte{'A', 'R', 'K', testPacketType})
+
+	// Previous ark transaction with extension for OP_INSPECTINPUTPACKET tests.
+	prevoutTx := makeTxWithExtension(t, testPacket)
+	malformedPrevoutTx := makeTxWithMalformedExtension(t, []byte{'A', 'R', 'K', testPacketType})
+
+	// Two-input transaction for OP_INSPECTINPUTPACKET tests.
+	twoInputTx := makeTxWithExtension(t, testPacket)
+	twoInputTx.TxIn = append(twoInputTx.TxIn,
+		&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{}, Index: 1}},
+	)
+
+	// makeArkPrevOutFetcher builds an ArkPrevOutFetcher from a map of input
+	// indices to previous ark transactions, using the spending tx's outpoints.
+	makeArkPrevOutFetcher := func(tx *wire.MsgTx, byIndex map[int]*wire.MsgTx) ArkPrevOutFetcher {
+		var arkTxs map[wire.OutPoint]*wire.MsgTx
+		if byIndex != nil {
+			arkTxs = make(map[wire.OutPoint]*wire.MsgTx, len(byIndex))
+			for idx, prevTx := range byIndex {
+				arkTxs[tx.TxIn[idx].PreviousOutPoint] = prevTx
+			}
+		}
+		return newTestArkPrevOutFetcher(prevoutFetcher, arkTxs)
+	}
+
+	runEngine := func(t *testing.T, script []byte, tx *wire.MsgTx, prevoutTxs map[int]*wire.MsgTx) error {
+		t.Helper()
+		fetcher := makeArkPrevOutFetcher(tx, prevoutTxs)
+		engine, err := NewEngine(
+			script, tx, 0,
+			txscript.NewSigCache(100),
+			txscript.NewTxSigHashes(tx, fetcher),
+			1000, fetcher,
+		)
+		if err != nil {
+			t.Fatalf("NewEngine: %v", err)
+		}
+		return engine.Execute()
+	}
+
+	type tc struct {
+		name       string
+		valid      bool
+		script     []byte
+		tx         *wire.MsgTx
+		prevoutTxs map[int]*wire.MsgTx
+		errText    string
+	}
+
+	buildScript := func(t *testing.T, ops ...byte) []byte {
+		t.Helper()
+		b := txscript.NewScriptBuilder()
+		for _, op := range ops {
+			b.AddOp(op)
+		}
+		s, err := b.Script()
+		if err != nil {
+			t.Fatalf("script build: %v", err)
+		}
+		return s
+	}
+
+	// Script: <packet_type> OP_INSPECTPACKET OP_1 OP_EQUALVERIFY <expected_data> OP_EQUAL
+	// Verifies found flag is 1 and content matches expected data.
+	inspectPacketCheck := func(t *testing.T, packetTypeOp byte, expectedData []byte) []byte {
+		t.Helper()
+		s, err := txscript.NewScriptBuilder().
+			AddOp(packetTypeOp). // e.g. OP_2 pushes 2
+			AddOp(OP_INSPECTPACKET).
+			// stack: [content, 1]
+			AddOp(OP_1).
+			AddOp(OP_EQUALVERIFY). // verify flag == 1
+			AddData(expectedData).
+			AddOp(OP_EQUAL). // verify content
+			Script()
+		if err != nil {
+			t.Fatalf("script build: %v", err)
+		}
+		return s
+	}
+
+	// Script: <packet_type> OP_INSPECTPACKET OP_0 OP_EQUALVERIFY OP_0 OP_EQUAL
+	// Verifies the not-found case: flag == 0, content == empty.
+	inspectPacketNotFound := func(t *testing.T, packetTypeOp byte) []byte {
+		t.Helper()
+		s, err := txscript.NewScriptBuilder().
+			AddOp(packetTypeOp).
+			AddOp(OP_INSPECTPACKET).
+			// stack: [<empty>, 0]
+			AddOp(OP_0).
+			AddOp(OP_EQUALVERIFY). // verify flag == 0
+			AddOp(OP_0).
+			AddOp(OP_EQUAL). // verify content == empty (OP_0 pushes empty bytes)
+			Script()
+		if err != nil {
+			t.Fatalf("script build: %v", err)
+		}
+		return s
+	}
+
+	// Script: <packet_type> <input_index> OP_INSPECTINPUTPACKET OP_1 OP_EQUALVERIFY <expected_data> OP_EQUAL
+	inspectInputPacketCheck := func(t *testing.T, packetTypeOp, inputIndexOp byte, expectedData []byte) []byte {
+		t.Helper()
+		s, err := txscript.NewScriptBuilder().
+			AddOp(packetTypeOp).
+			AddOp(inputIndexOp).
+			AddOp(OP_INSPECTINPUTPACKET).
+			AddOp(OP_1).
+			AddOp(OP_EQUALVERIFY).
+			AddData(expectedData).
+			AddOp(OP_EQUAL).
+			Script()
+		if err != nil {
+			t.Fatalf("script build: %v", err)
+		}
+		return s
+	}
+
+	// Script: <packet_type> <input_index> OP_INSPECTINPUTPACKET OP_0 OP_EQUALVERIFY OP_0 OP_EQUAL
+	inspectInputPacketNotFound := func(t *testing.T, packetTypeOp, inputIndexOp byte) []byte {
+		t.Helper()
+		s, err := txscript.NewScriptBuilder().
+			AddOp(packetTypeOp).
+			AddOp(inputIndexOp).
+			AddOp(OP_INSPECTINPUTPACKET).
+			// stack: [<empty>, 0]
+			AddOp(OP_0).
+			AddOp(OP_EQUALVERIFY). // verify flag == 0
+			AddOp(OP_0).
+			AddOp(OP_EQUAL). // verify content == empty
+			Script()
+		if err != nil {
+			t.Fatalf("script build: %v", err)
+		}
+		return s
+	}
+
+	tests := []tc{
+		// ── OP_INSPECTPACKET ──────────────────────────────────────
+		{
+			name:   "inspect_packet_found",
+			valid:  true,
+			script: inspectPacketCheck(t, OP_2, testPayload), // type 2
+			tx:     txWithPacket,
+		},
+		{
+			name:   "inspect_packet_type_not_found",
+			valid:  true,
+			script: inspectPacketNotFound(t, OP_9), // type 9 not in extension
+			tx:     txWithPacket,
+		},
+		{
+			name:   "inspect_packet_no_extension",
+			valid:  true,
+			script: inspectPacketNotFound(t, OP_2),
+			tx:     plainTx,
+		},
+		{
+			name:   "inspect_packet_second_type",
+			valid:  true,
+			script: inspectPacketCheck(t, OP_3, testPayload2), // type 3
+			tx:     txWithTwoPackets,
+		},
+		{
+			name:   "inspect_packet_first_of_two",
+			valid:  true,
+			script: inspectPacketCheck(t, OP_2, testPayload), // type 2
+			tx:     txWithTwoPackets,
+		},
+		{
+			name:  "inspect_packet_max_type_value",
+			valid: true,
+			script: func() []byte {
+				s, err := txscript.NewScriptBuilder().
+					AddInt64(maxPacketType).
+					AddOp(OP_INSPECTPACKET).
+					AddOp(OP_1).
+					AddOp(OP_EQUALVERIFY).
+					AddData(maxPayload).
+					AddOp(OP_EQUAL).
+					Script()
+				if err != nil {
+					t.Fatalf("script build: %v", err)
+				}
+				return s
+			}(),
+			tx: txWithMaxPacket,
+		},
+		{
+			name:    "inspect_packet_malformed_extension",
+			valid:   false,
+			script:  buildScript(t, OP_2, OP_INSPECTPACKET),
+			tx:      malformedExtensionTx,
+			errText: "failed to parse extension",
+		},
+		{
+			name:    "inspect_packet_empty_stack",
+			valid:   false,
+			script:  buildScript(t, OP_INSPECTPACKET),
+			tx:      txWithPacket,
+			errText: "stack",
+		},
+
+		// ── OP_INSPECTINPUTPACKET ─────────────────────────────────
+		{
+			name:       "inspect_input_packet_found",
+			valid:      true,
+			script:     inspectInputPacketCheck(t, OP_2, OP_0, testPayload),
+			tx:         twoInputTx,
+			prevoutTxs: map[int]*wire.MsgTx{0: prevoutTx},
+		},
+		{
+			name:       "inspect_input_packet_type_not_found",
+			valid:      true,
+			script:     inspectInputPacketNotFound(t, OP_9, OP_0),
+			tx:         twoInputTx,
+			prevoutTxs: map[int]*wire.MsgTx{0: prevoutTx},
+		},
+		{
+			name:       "inspect_input_packet_no_prev_tx_for_input",
+			valid:      false,
+			script:     buildScript(t, OP_2, OP_1, OP_INSPECTINPUTPACKET),
+			tx:         twoInputTx,
+			prevoutTxs: map[int]*wire.MsgTx{0: prevoutTx}, // only input 0 has prev tx
+			errText:    "prevout tx not available for input",
+		},
+		{
+			name:    "inspect_input_packet_no_prev_ark_txs",
+			valid:   false,
+			script:  buildScript(t, OP_2, OP_0, OP_INSPECTINPUTPACKET),
+			tx:      twoInputTx,
+			errText: "prevout tx not available for input",
+			// prevoutTxs is nil
+		},
+		{
+			name:       "inspect_input_packet_prev_tx_no_extension",
+			valid:      true,
+			script:     inspectInputPacketNotFound(t, OP_2, OP_0),
+			tx:         twoInputTx,
+			prevoutTxs: map[int]*wire.MsgTx{0: plainTx},
+		},
+		{
+			name:       "inspect_input_packet_malformed_prev_tx_extension",
+			valid:      false,
+			script:     buildScript(t, OP_2, OP_0, OP_INSPECTINPUTPACKET),
+			tx:         twoInputTx,
+			prevoutTxs: map[int]*wire.MsgTx{0: malformedPrevoutTx},
+			errText:    "failed to parse extension",
+		},
+		{
+			name:       "inspect_input_packet_negative_index",
+			valid:      false,
+			script:     buildScript(t, OP_2, OP_1NEGATE, OP_INSPECTINPUTPACKET),
+			tx:         twoInputTx,
+			prevoutTxs: map[int]*wire.MsgTx{0: prevoutTx},
+			errText:    "input index cannot be negative",
+		},
+		{
+			name:       "inspect_input_packet_index_out_of_range",
+			valid:      false,
+			script:     buildScript(t, OP_2, OP_5, OP_INSPECTINPUTPACKET),
+			tx:         twoInputTx,
+			prevoutTxs: map[int]*wire.MsgTx{0: prevoutTx},
+			errText:    "input index out of range",
+		},
+		{
+			name:    "inspect_input_packet_empty_stack",
+			valid:   false,
+			script:  buildScript(t, OP_INSPECTINPUTPACKET),
+			tx:      twoInputTx,
+			errText: "stack",
+		},
+		{
+			name:    "inspect_input_packet_single_stack_element",
+			valid:   false,
+			script:  buildScript(t, OP_2, OP_INSPECTINPUTPACKET),
+			tx:      twoInputTx,
+			errText: "stack",
+		},
+
+		// ── Large packet (> 520 byte MaxScriptElementSize) ────────
+		{
+			name:    "inspect_packet_large_content_rejected",
+			valid:   false,
+			script:  buildScript(t, OP_4, OP_INSPECTPACKET),
+			tx:      txWithLargePacket,
+			errText: "packet content size 1000 exceeds max allowed size 520",
+		},
+		{
+			name:       "inspect_input_packet_large_content_rejected",
+			valid:      false,
+			script:     buildScript(t, OP_4, OP_0, OP_INSPECTINPUTPACKET),
+			tx:         twoInputTx,
+			prevoutTxs: map[int]*wire.MsgTx{0: txWithLargePacket},
+			errText:    "packet content size 1000 exceeds max allowed size 520",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := runEngine(t, tt.script, tt.tx, tt.prevoutTxs)
 			if tt.valid && err != nil {
 				t.Errorf("expected success, got: %v", err)
 			}

@@ -103,13 +103,13 @@ type Engine struct {
 	// prevOutFetcher is used to look up all the previous output of
 	// taproot transactions, as that information is hashed into the
 	// sighash digest for such inputs.
-	tx             wire.MsgTx
-	txIdx          int
-	version        uint16
-	sigCache       *txscript.SigCache
-	hashCache      *txscript.TxSigHashes
-	prevOutFetcher txscript.PrevOutputFetcher
-	assetPacket    asset.Packet
+	tx                 wire.MsgTx
+	txIdx              int
+	version            uint16
+	sigCache           *txscript.SigCache
+	hashCache          *txscript.TxSigHashes
+	prevOutFetcher     ArkPrevOutFetcher
+	assetPacket        asset.Packet
 	introspectorPacket IntrospectorPacket
 
 	// The following fields handle keeping track of the current execution state
@@ -785,7 +785,7 @@ func (vm *Engine) SetAltStack(data [][]byte) {
 // execution.
 func NewEngine(scriptPubKey []byte, tx *wire.MsgTx, txIdx int,
 	sigCache *txscript.SigCache, hashCache *txscript.TxSigHashes, inputAmount int64,
-	prevOutFetcher txscript.PrevOutputFetcher) (*Engine, error) {
+	prevOutFetcher ArkPrevOutFetcher) (*Engine, error) {
 
 	const scriptVersion = 0
 
@@ -884,7 +884,7 @@ func NewEngine(scriptPubKey []byte, tx *wire.MsgTx, txIdx int,
 // This is useful for debugging script execution.
 func NewDebugEngine(scriptPubKey []byte, tx *wire.MsgTx, txIdx int,
 	sigCache *txscript.SigCache, hashCache *txscript.TxSigHashes,
-	inputAmount int64, prevOutFetcher txscript.PrevOutputFetcher,
+	inputAmount int64, prevOutFetcher ArkPrevOutFetcher,
 	stepCallback func(*StepInfo) error) (*Engine, error) {
 
 	vm, err := NewEngine(

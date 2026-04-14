@@ -3,14 +3,11 @@ package application
 import (
 	"context"
 	"encoding/hex"
-	"fmt"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
 )
 
 type Info struct {
@@ -58,24 +55,4 @@ func New(secretKey *btcec.PrivateKey) Service {
 
 func (s *service) GetInfo(ctx context.Context) (*Info, error) {
 	return &Info{SignerPublicKey: s.publicKey}, nil
-}
-
-// TODO : do not rely on witness utxo to compute the prevout fetcher
-func computePrevoutFetcher(ptx *psbt.Packet) (txscript.PrevOutputFetcher, error) {
-	prevouts := make(map[wire.OutPoint]*wire.TxOut)
-
-	for index, input := range ptx.Inputs {
-		if input.WitnessUtxo == nil {
-			return nil, fmt.Errorf("witness utxo is nil")
-		}
-
-		if len(ptx.UnsignedTx.TxIn) <= index {
-			return nil, fmt.Errorf("input index out of range")
-		}
-
-		outpoint := ptx.UnsignedTx.TxIn[index].PreviousOutPoint
-		prevouts[outpoint] = input.WitnessUtxo
-	}
-
-	return txscript.NewMultiPrevOutFetcher(prevouts), nil
 }
