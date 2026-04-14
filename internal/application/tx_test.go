@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/ArkLabsHQ/introspector/pkg/arkade"
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
@@ -411,12 +410,16 @@ func (m *mockArkdClient) FinalizeTx(_ context.Context, txid string, checkpoints 
 func (m *mockArkdClient) Close() {}
 
 func TestRetryFinalize(t *testing.T) {
+	originalCfg := finalizeRetryConfig
+	finalizeRetryConfig.MinAttempts = 3
+	finalizeRetryConfig.InitialDelay = 0
+	finalizeRetryConfig.Jitter = 0
+	t.Cleanup(func() {
+		finalizeRetryConfig = originalCfg
+	})
+
 	t.Run("success after retries", func(t *testing.T) {
-		svc := &service{
-			retryPolicy: FinalizeRetryPolicy{
-				MaxRetries: 2,
-			},
-		}
+		svc := &service{}
 		client := &mockArkdClient{
 			finalizeErrs: []error{
 				fmt.Errorf("retry 1"),
@@ -428,7 +431,6 @@ func TestRetryFinalize(t *testing.T) {
 		err := svc.retryFinalize(
 			context.Background(),
 			client,
-			func(_, _ int) time.Duration { return 0 },
 			"txid-123",
 			checkpoints,
 		)
@@ -441,27 +443,26 @@ func TestRetryFinalize(t *testing.T) {
 			{"checkpoint-a", "checkpoint-b"},
 		}, client.finalizePayloads)
 	})
-	t.Run("exhausts retries", func(t *testing.T) {
-		svc := &service{
-			retryPolicy: FinalizeRetryPolicy{
-				MaxRetries: 2,
-			},
-		}
+	t.Run("exhausts minimum retries", func(t *testing.T) {
+		svc := &service{}
+		ctx, cancel := context.WithCancel(context.Background())
+		// simulates client hangup
+		cancel()
 		client := &mockArkdClient{
 			finalizeErrs: []error{
 				fmt.Errorf("retry 1"),
 				fmt.Errorf("retry 2"),
 				fmt.Errorf("retry 3"),
+				fmt.Errorf("retry 4"),
 			},
 		}
 		err := svc.retryFinalize(
-			context.Background(),
+			ctx,
 			client,
-			func(_, _ int) time.Duration { return 0 },
 			"txid-123",
 			[]string{"checkpoint-a"},
 		)
-		require.ErrorContains(t, err, "failed to finalize tx on arkd")
+		require.ErrorContains(t, err, "context canceled")
 		require.Equal(t, 3, client.finalizeCalls)
 		require.Equal(t, []string{"txid-123", "txid-123", "txid-123"}, client.finalizeTxids)
 		require.Equal(t, [][]string{

@@ -203,7 +203,8 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 
 	log.WithField("txid", txid).WithFields(log.Fields(logCheckpoints)).Info("finalizing tx")
 
-	if err := s.retryFinalize(ctx, arkdClient, randomRetryDelay, txid, finalEncodedCheckpoints); err != nil {
+	// TODO: if retry fails, persist retry task in background queue
+	if err := s.retryFinalize(ctx, arkdClient, txid, finalEncodedCheckpoints); err != nil {
 		return nil, err
 	}
 
@@ -423,59 +424,70 @@ func verifyNonArkdCheckpointSignatures(checkpoints []*psbt.Packet, arkdPubKey *b
 	return nil
 }
 
+var finalizeRetryConfig = struct {
+	MinAttempts  int
+	InitialDelay time.Duration
+	MaxDelay     time.Duration
+	Multiplier   float64
+	Jitter       float64
+}{
+	MinAttempts:  10,
+	InitialDelay: 1 * time.Second,
+	MaxDelay:     10 * time.Second,
+	Multiplier:   2.0,
+	Jitter:       0.2, // + or - 20% randomness
+}
+
 func (s *service) retryFinalize(
 	ctx context.Context,
 	client arkdClient,
-	retryDelay func(minMs, maxMs int) time.Duration,
 	txid string,
 	checkpoints []string,
 ) error {
-	var lastErr error
-	for attempt := 0; attempt <= s.retryPolicy.MaxRetries; attempt++ {
+	// copy global to local for this retry run
+	retryConfig := finalizeRetryConfig
+	backoffDelay := retryConfig.InitialDelay
+	attempt := 0
+
+	for {
+		attempt++
+
 		if err := client.FinalizeTx(ctx, txid, checkpoints); err == nil {
 			return nil
 		} else {
-			lastErr = err
+			log.WithField("txid", txid).WithField("attempt", attempt).Errorf("finalizing tx failed: %s", err)
 		}
 
-		if attempt == s.retryPolicy.MaxRetries {
-			break
-		}
+		delay := applyJitter(backoffDelay, retryConfig.Jitter)
+		backoffDelay = max(retryConfig.MaxDelay, backoffDelay*time.Duration(retryConfig.Multiplier))
 
-		delay := retryDelay(
-			s.retryPolicy.MinDelayMilliseconds,
-			s.retryPolicy.MaxDelayMilliseconds,
-		)
-		log.WithError(lastErr).Warnf(
-			"arkd finalize retry %d/%d in %s",
-			attempt+1,
-			s.retryPolicy.MaxRetries,
-			delay,
-		)
-
-		if delay > 0 {
+		// try a minimum number of times before respecting ctx.Done
+		if attempt < retryConfig.MinAttempts {
 			time.Sleep(delay)
+			continue
+		}
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("finalize retry cancelled after attempt %d: %w", attempt, ctx.Err())
+		case <-time.After(delay):
 		}
 	}
-
-	return fmt.Errorf("failed to finalize tx on arkd: %w", lastErr)
 }
 
-func randomRetryDelay(minMs, maxMs int) time.Duration {
-	if maxMs < minMs {
-		maxMs = minMs
+// applyJitter adds ±jitter randomness to a duration.
+// with jitter = 0.2, d get + or - 20%
+func applyJitter(d time.Duration, jitter float64) time.Duration {
+	if jitter <= 0 {
+		return d
 	}
-	if minMs < 0 {
-		minMs = 0
+	if jitter >= 1.0 {
+		jitter = 0.999
 	}
-	if maxMs < 0 {
-		maxMs = 0
-	}
-	if minMs == maxMs {
-		return time.Duration(minMs) * time.Millisecond
-	}
-	n := rand.Intn(maxMs-minMs+1) + minMs
-	return time.Duration(n) * time.Millisecond
+
+	randomFactor := 2.0*rand.Float64() - 1.0 // [-1, +1] factor
+	jitterFactor := 1.0 + jitter*randomFactor
+	return time.Duration(float64(d) * jitterFactor)
 }
 
 func arkdInfoSignerPubKey(info *sdkclient.Info) (*btcec.PublicKey, error) {

@@ -36,12 +36,6 @@ type SignedBatchFinalization struct {
 	CommitmentTx *psbt.Packet
 }
 
-type FinalizeRetryPolicy struct {
-	MaxRetries           int
-	MinDelayMilliseconds int
-	MaxDelayMilliseconds int
-}
-
 type Service interface {
 	GetInfo(context.Context) (*Info, error)
 	SubmitTx(context.Context, OffchainTx) (*OffchainTx, error)
@@ -50,19 +44,17 @@ type Service interface {
 }
 
 type service struct {
-	signer      signer
-	publicKey   string
-	arkdURL     string
-	retryPolicy FinalizeRetryPolicy
+	signer    signer
+	publicKey string
+	arkdURL   string
 }
 
-func New(secretKey *btcec.PrivateKey, arkdURL string, retryPolicy FinalizeRetryPolicy) Service {
+func New(secretKey *btcec.PrivateKey, arkdURL string) Service {
 	publicKey := hex.EncodeToString(secretKey.PubKey().SerializeCompressed())
 	return &service{
-		signer:      signer{secretKey},
-		publicKey:   publicKey,
-		arkdURL:     arkdURL,
-		retryPolicy: retryPolicy,
+		signer:    signer{secretKey},
+		publicKey: publicKey,
+		arkdURL:   arkdURL,
 	}
 }
 
