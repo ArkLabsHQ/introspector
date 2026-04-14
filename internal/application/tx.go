@@ -14,8 +14,6 @@ import (
 	"github.com/ArkLabsHQ/introspector/pkg/arkade"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
-	sdkclient "github.com/arkade-os/go-sdk/client"
-	grpcclient "github.com/arkade-os/go-sdk/client/grpc"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil/psbt"
@@ -23,13 +21,6 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	log "github.com/sirupsen/logrus"
 )
-
-type arkdClient interface {
-	GetInfo(ctx context.Context) (*sdkclient.Info, error)
-	SubmitTx(ctx context.Context, signedArkTx string, checkpointTxs []string) (arkTxid, finalArkTx string, signedCheckpointTxs []string, err error)
-	FinalizeTx(ctx context.Context, arkTxid string, finalCheckpointTxs []string) error
-	Close()
-}
 
 // SubmitTx aims to execute arkade scripts on offchain ark transactions
 // execution of the script runs only on ark tx, if valid, the associated checkpoint tx
@@ -64,22 +55,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 
 	signerPublicKey := s.signer.secretKey.PubKey()
 
-	arkdClient, err := grpcclient.NewClient(s.arkdURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create arkd client: %w", err)
-	}
-	defer arkdClient.Close()
-
-	arkdInfo, err := arkdClient.GetInfo(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch arkd info: %w", err)
-	}
-	arkdPubKey, err := arkdInfoSignerPubKey(arkdInfo)
-	if err != nil {
-		return nil, err
-	}
-
-	finalizerAcc := newFinalizerAccumulator(arkdPubKey)
+	finalizerAcc := newFinalizerAccumulator(s.arkdPubKey)
 
 	var nSigned = 0
 	for _, entry := range packet {
@@ -153,7 +129,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 
 	// we must verify that we have all the required checkpoint signatures before submitting to arkd
 	// otherwise, finalizing with arkd will fail later
-	if err = verifyNonArkdCheckpointSignatures(signedCheckpointTxs, arkdPubKey); err != nil {
+	if err = verifyNonArkdCheckpointSignatures(signedCheckpointTxs, s.arkdPubKey); err != nil {
 		return nil, fmt.Errorf("failed to verify non-arkd signatures on checkpoints: %w", err)
 	}
 
@@ -171,7 +147,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		return nil, fmt.Errorf("failed to encode ark tx for finalization: %w", err)
 	}
 
-	txid, finalArkTx, arkdCheckpointTxs, err := arkdClient.SubmitTx(ctx, arkTx, encodedCheckpoints)
+	txid, finalArkTx, arkdCheckpointTxs, err := s.arkdClient.SubmitTx(ctx, arkTx, encodedCheckpoints)
 	if err != nil {
 		return nil, fmt.Errorf("failed to submit tx on arkd: %w", err)
 	}
@@ -204,7 +180,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 	log.WithField("txid", txid).WithFields(log.Fields(logCheckpoints)).Info("finalizing tx")
 
 	// TODO: if retry fails, persist retry task in background queue
-	if err := s.retryFinalize(ctx, arkdClient, txid, finalEncodedCheckpoints); err != nil {
+	if err := s.retryFinalize(ctx, txid, finalEncodedCheckpoints); err != nil {
 		return nil, err
 	}
 
@@ -438,12 +414,7 @@ var finalizeRetryConfig = struct {
 	Jitter:       0.2, // + or - 20% randomness
 }
 
-func (s *service) retryFinalize(
-	ctx context.Context,
-	client arkdClient,
-	txid string,
-	checkpoints []string,
-) error {
+func (s *service) retryFinalize(ctx context.Context, txid string, checkpoints []string) error {
 	// copy global to local for this retry run
 	retryConfig := finalizeRetryConfig
 	backoffDelay := retryConfig.InitialDelay
@@ -452,7 +423,7 @@ func (s *service) retryFinalize(
 	for {
 		attempt++
 
-		if err := client.FinalizeTx(ctx, txid, checkpoints); err == nil {
+		if err := s.arkdClient.FinalizeTx(ctx, txid, checkpoints); err == nil {
 			return nil
 		} else {
 			log.WithField("txid", txid).WithField("attempt", attempt).Errorf("finalizing tx failed: %s", err)
@@ -488,25 +459,4 @@ func applyJitter(d time.Duration, jitter float64) time.Duration {
 	randomFactor := 2.0*rand.Float64() - 1.0 // [-1, +1] factor
 	jitterFactor := 1.0 + jitter*randomFactor
 	return time.Duration(float64(d) * jitterFactor)
-}
-
-func arkdInfoSignerPubKey(info *sdkclient.Info) (*btcec.PublicKey, error) {
-	if info == nil {
-		return nil, fmt.Errorf("arkd info is required")
-	}
-	if info.SignerPubKey == "" {
-		return nil, fmt.Errorf("arkd info does not include signer pubkey")
-	}
-
-	decodedKey, err := hex.DecodeString(info.SignerPubKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode arkd signer pubkey: %w", err)
-	}
-
-	pubKey, err := btcec.ParsePubKey(decodedKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse arkd signer pubkey: %w", err)
-	}
-
-	return pubKey, nil
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/ArkLabsHQ/introspector/pkg/arkade"
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	arkscript "github.com/arkade-os/arkd/pkg/ark-lib/script"
+	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	sdkclient "github.com/arkade-os/go-sdk/client"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
@@ -393,6 +394,30 @@ type mockArkdClient struct {
 func (m *mockArkdClient) GetInfo(context.Context) (*sdkclient.Info, error) {
 	panic("unexpected call to GetInfo")
 }
+func (m *mockArkdClient) RegisterIntent(context.Context, string, string) (string, error) {
+	return "", fmt.Errorf("not implemented")
+}
+func (m *mockArkdClient) DeleteIntent(context.Context, string, string) error {
+	return fmt.Errorf("not implemented")
+}
+func (m *mockArkdClient) EstimateIntentFee(context.Context, string, string) (int64, error) {
+	return 0, fmt.Errorf("not implemented")
+}
+func (m *mockArkdClient) ConfirmRegistration(context.Context, string) error {
+	return fmt.Errorf("not implemented")
+}
+func (m *mockArkdClient) SubmitTreeNonces(context.Context, string, string, tree.TreeNonces) error {
+	return fmt.Errorf("not implemented")
+}
+func (m *mockArkdClient) SubmitTreeSignatures(context.Context, string, string, tree.TreePartialSigs) error {
+	return fmt.Errorf("not implemented")
+}
+func (m *mockArkdClient) SubmitSignedForfeitTxs(context.Context, []string, string) error {
+	return fmt.Errorf("not implemented")
+}
+func (m *mockArkdClient) GetEventStream(context.Context, []string) (<-chan sdkclient.BatchEventChannel, func(), error) {
+	return nil, func() {}, fmt.Errorf("not implemented")
+}
 func (m *mockArkdClient) SubmitTx(context.Context, string, []string) (string, string, []string, error) {
 	panic("unexpected call to SubmitTx")
 }
@@ -407,6 +432,18 @@ func (m *mockArkdClient) FinalizeTx(_ context.Context, txid string, checkpoints 
 	m.finalizeErrs = m.finalizeErrs[1:]
 	return err
 }
+func (m *mockArkdClient) GetPendingTx(context.Context, string, string) ([]sdkclient.AcceptedOffchainTx, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (m *mockArkdClient) GetTransactionsStream(context.Context) (<-chan sdkclient.TransactionEvent, func(), error) {
+	return nil, func() {}, fmt.Errorf("not implemented")
+}
+func (m *mockArkdClient) ModifyStreamTopics(context.Context, []string, []string) ([]string, []string, []string, error) {
+	return nil, nil, nil, fmt.Errorf("not implemented")
+}
+func (m *mockArkdClient) OverwriteStreamTopics(context.Context, []string) ([]string, []string, []string, error) {
+	return nil, nil, nil, fmt.Errorf("not implemented")
+}
 func (m *mockArkdClient) Close() {}
 
 func TestRetryFinalize(t *testing.T) {
@@ -419,7 +456,6 @@ func TestRetryFinalize(t *testing.T) {
 	})
 
 	t.Run("success after retries", func(t *testing.T) {
-		svc := &service{}
 		client := &mockArkdClient{
 			finalizeErrs: []error{
 				fmt.Errorf("retry 1"),
@@ -427,10 +463,10 @@ func TestRetryFinalize(t *testing.T) {
 				nil,
 			},
 		}
+		svc := &service{arkdClient: client}
 		checkpoints := []string{"checkpoint-a", "checkpoint-b"}
 		err := svc.retryFinalize(
 			context.Background(),
-			client,
 			"txid-123",
 			checkpoints,
 		)
@@ -444,10 +480,6 @@ func TestRetryFinalize(t *testing.T) {
 		}, client.finalizePayloads)
 	})
 	t.Run("exhausts minimum retries", func(t *testing.T) {
-		svc := &service{}
-		ctx, cancel := context.WithCancel(context.Background())
-		// simulates client hangup
-		cancel()
 		client := &mockArkdClient{
 			finalizeErrs: []error{
 				fmt.Errorf("retry 1"),
@@ -456,9 +488,12 @@ func TestRetryFinalize(t *testing.T) {
 				fmt.Errorf("retry 4"),
 			},
 		}
+		svc := &service{arkdClient: client}
+		ctx, cancel := context.WithCancel(context.Background())
+		// simulates client hangup
+		cancel()
 		err := svc.retryFinalize(
 			ctx,
-			client,
 			"txid-123",
 			[]string{"checkpoint-a"},
 		)

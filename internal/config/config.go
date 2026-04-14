@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 
@@ -80,6 +81,6 @@ func LoadConfig() (*Config, error) {
 	return cfg, nil
 }
 
-func (c *Config) AppService() (application.Service, error) {
-	return application.New(c.SecretKey, c.ArkdURL), nil
+func (c *Config) AppService(ctx context.Context) (application.Service, error) {
+	return application.New(ctx, c.SecretKey, c.ArkdURL)
 }
