@@ -15,6 +15,7 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
+	"github.com/arkade-os/go-sdk/indexer"
 	inmemorystoreconfig "github.com/arkade-os/go-sdk/store/inmemory"
 	"github.com/arkade-os/go-sdk/types"
 	singlekeywallet "github.com/arkade-os/go-sdk/wallet/singlekey"
@@ -261,7 +262,9 @@ func TestPayToTwoOutputs(t *testing.T) {
 	for _, cp := range invalidAddrCheckpoints {
 		encoded, err := cp.B64Encode()
 		require.NoError(t, err)
-		encodedInvalidAddrCheckpoints = append(encodedInvalidAddrCheckpoints, encoded)
+		signed, err := bobWallet.SignTransaction(ctx, explorer, encoded)
+		require.NoError(t, err)
+		encodedInvalidAddrCheckpoints = append(encodedInvalidAddrCheckpoints, signed)
 	}
 
 	_, _, err = introspectorClient.SubmitTx(ctx, signedInvalidAddrTx, encodedInvalidAddrCheckpoints)
@@ -295,7 +298,9 @@ func TestPayToTwoOutputs(t *testing.T) {
 	for _, cp := range invalidAmtCheckpoints {
 		encoded, err := cp.B64Encode()
 		require.NoError(t, err)
-		encodedInvalidAmtCheckpoints = append(encodedInvalidAmtCheckpoints, encoded)
+		signed, err := bobWallet.SignTransaction(ctx, explorer, encoded)
+		require.NoError(t, err)
+		encodedInvalidAmtCheckpoints = append(encodedInvalidAmtCheckpoints, signed)
 	}
 
 	_, _, err = introspectorClient.SubmitTx(ctx, signedInvalidAmtTx, encodedInvalidAmtCheckpoints)
@@ -329,37 +334,26 @@ func TestPayToTwoOutputs(t *testing.T) {
 	for _, cp := range validCheckpoints {
 		encoded, err := cp.B64Encode()
 		require.NoError(t, err)
-		encodedValidCheckpoints = append(encodedValidCheckpoints, encoded)
+		signed, err := bobWallet.SignTransaction(ctx, explorer, encoded)
+		require.NoError(t, err)
+		encodedValidCheckpoints = append(encodedValidCheckpoints, signed)
 	}
 
-	signedTx, signedByIntrospectorCheckpoints, err := introspectorClient.SubmitTx(ctx, signedTx, encodedValidCheckpoints)
+	_, _, err = introspectorClient.SubmitTx(ctx, signedTx, encodedValidCheckpoints)
 	require.NoError(t, err)
 
-	txid, _, signedByServerCheckpoints, err := grpcAlice.SubmitTx(ctx, signedTx, encodedValidCheckpoints)
+	indexerOpts := setupIndexer(t)
+	opts := indexer.GetVtxosRequestOption{}
+	err = opts.WithOutpoints([]types.Outpoint{
+		{Txid: validTx.UnsignedTx.TxID(), VOut: 0},
+		{Txid: validTx.UnsignedTx.TxID(), VOut: 1},
+	})
 	require.NoError(t, err)
-
-	finalCheckpoints := make([]string, 0, len(signedByServerCheckpoints))
-	for i, checkpoint := range signedByServerCheckpoints {
-		finalCheckpoint, err := bobWallet.SignTransaction(ctx, explorer, checkpoint)
-		require.NoError(t, err)
-
-		byInterceptorCheckpointPtx, err := psbt.NewFromRawBytes(strings.NewReader(signedByIntrospectorCheckpoints[i]), true)
-		require.NoError(t, err)
-
-		checkpointPtx, err := psbt.NewFromRawBytes(strings.NewReader(finalCheckpoint), true)
-		require.NoError(t, err)
-
-		checkpointPtx.Inputs[0].TaprootScriptSpendSig = append(
-			checkpointPtx.Inputs[0].TaprootScriptSpendSig,
-			byInterceptorCheckpointPtx.Inputs[0].TaprootScriptSpendSig...,
-		)
-
-		finalCheckpoint, err = checkpointPtx.B64Encode()
-		require.NoError(t, err)
-
-		finalCheckpoints = append(finalCheckpoints, finalCheckpoint)
+	vtxos, err := indexerOpts.GetVtxos(ctx, opts)
+	require.NoError(t, err)
+	require.Len(t, vtxos.Vtxos, 2)
+	for _, vtxo := range vtxos.Vtxos {
+		require.True(t, vtxo.Preconfirmed)
+		require.False(t, vtxo.Spent)
 	}
-
-	err = grpcAlice.FinalizeTx(ctx, txid, finalCheckpoints)
-	require.NoError(t, err)
 }

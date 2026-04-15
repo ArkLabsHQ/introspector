@@ -80,7 +80,7 @@ tx.Outputs = append(tx.Outputs, psbt.POutput{})
 
 ### 4. Submit to the introspector
 
-The introspector [decodes the tapscript](internal/application/utils.go), verifies it is a `MultisigClosure` containing the expected tweaked key, [executes the Arkade script](internal/application/tx.go) against the transaction, and signs if it passes:
+The introspector [decodes the tapscript](internal/application/utils.go), verifies it is a `MultisigClosure` containing the expected tweaked key, [executes the Arkade script](internal/application/tx.go) against the Ark transaction, and signs both the matching Ark input and checkpoint if it passes. If it is the last required non-`arkd` signer for all owned inputs matched by the introspector packet, it then submits the transaction set to `arkd`, merges `arkd`'s checkpoint signatures, and finalizes the transaction:
 
 ```go
 signedTx, signedCheckpoints, _ := introspectorClient.SubmitTx(ctx, encodedTx, encodedCheckpoints)
@@ -104,7 +104,9 @@ Returns service metadata including the signer's public key. The public key shoul
 
 ### SubmitTx
 
-Signs an Ark transaction and its associated checkpoint transactions by executing Arkade scripts on the Ark transaction inputs. The scripts are executed only on the Ark transaction, not on checkpoints.
+Validates and signs the Ark transaction inputs owned by this introspector, and signs their matching checkpoint transactions. Arkade scripts are executed only on the Ark transaction, not on checkpoints.
+
+If this introspector is the last required non-`arkd` signer for all owned inputs matched by the introspector packet, each checkpoint PSBT must already include any other required non-`arkd` signatures; otherwise the request fails. In that case, the introspector submits the signed transaction set to `arkd`, merges `arkd`'s checkpoint signatures, finalizes the transaction, and returns the finalized Ark PSBT plus updated checkpoint PSBTs. Otherwise it returns only this introspector's added signatures without calling `arkd`.
 
 **Endpoint**: `POST /v1/tx`
 
@@ -123,6 +125,8 @@ Signs an Ark transaction and its associated checkpoint transactions by executing
   "signed_checkpoint_txs": ["base64_encoded_signed_checkpoint_psbt1", "..."]
 }
 ```
+
+`signed_ark_tx` may be either partially signed or finalized, depending on whether this introspector is the last required non-`arkd` signer for all owned inputs matched by the introspector packet.
 
 ### SubmitIntent
 
@@ -196,6 +200,7 @@ The service can be configured using environment variables:
 | `INTROSPECTOR_TLS_EXTRA_IPS` | Additional IPs for TLS cert | [] |
 | `INTROSPECTOR_TLS_EXTRA_DOMAINS` | Additional domains for TLS cert | [] |
 | `INTROSPECTOR_LOG_LEVEL` | Log level (0-6) | 4 (Debug) |
+| `INTROSPECTOR_ARKD_URL` | URL of the `arkd` instance used for attempted finalization in [`SubmitTx`](#submittx) | Required |
 
 ## Development
 
