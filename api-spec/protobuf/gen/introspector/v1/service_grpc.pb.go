@@ -23,6 +23,7 @@ const (
 	IntrospectorService_SubmitTx_FullMethodName           = "/introspector.v1.IntrospectorService/SubmitTx"
 	IntrospectorService_SubmitIntent_FullMethodName       = "/introspector.v1.IntrospectorService/SubmitIntent"
 	IntrospectorService_SubmitFinalization_FullMethodName = "/introspector.v1.IntrospectorService/SubmitFinalization"
+	IntrospectorService_SubmitOnchainTx_FullMethodName    = "/introspector.v1.IntrospectorService/SubmitOnchainTx"
 )
 
 // IntrospectorServiceClient is the client API for IntrospectorService service.
@@ -46,6 +47,9 @@ type IntrospectorServiceClient interface {
 	// 1. SubmitIntent before intent registration.
 	// 2. SubmitFinalization during batch finalization.
 	SubmitFinalization(ctx context.Context, in *SubmitFinalizationRequest, opts ...grpc.CallOption) (*SubmitFinalizationResponse, error)
+	// SubmitOnchainTx signs a Bitcoin transaction by executing Arkade scripts
+	// on each input whose tapscript contains the introspector's tweaked key.
+	SubmitOnchainTx(ctx context.Context, in *SubmitOnchainTxRequest, opts ...grpc.CallOption) (*SubmitOnchainTxResponse, error)
 }
 
 type introspectorServiceClient struct {
@@ -96,6 +100,16 @@ func (c *introspectorServiceClient) SubmitFinalization(ctx context.Context, in *
 	return out, nil
 }
 
+func (c *introspectorServiceClient) SubmitOnchainTx(ctx context.Context, in *SubmitOnchainTxRequest, opts ...grpc.CallOption) (*SubmitOnchainTxResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SubmitOnchainTxResponse)
+	err := c.cc.Invoke(ctx, IntrospectorService_SubmitOnchainTx_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // IntrospectorServiceServer is the server API for IntrospectorService service.
 // All implementations should embed UnimplementedIntrospectorServiceServer
 // for forward compatibility.
@@ -117,6 +131,9 @@ type IntrospectorServiceServer interface {
 	// 1. SubmitIntent before intent registration.
 	// 2. SubmitFinalization during batch finalization.
 	SubmitFinalization(context.Context, *SubmitFinalizationRequest) (*SubmitFinalizationResponse, error)
+	// SubmitOnchainTx signs a Bitcoin transaction by executing Arkade scripts
+	// on each input whose tapscript contains the introspector's tweaked key.
+	SubmitOnchainTx(context.Context, *SubmitOnchainTxRequest) (*SubmitOnchainTxResponse, error)
 }
 
 // UnimplementedIntrospectorServiceServer should be embedded to have
@@ -137,6 +154,9 @@ func (UnimplementedIntrospectorServiceServer) SubmitIntent(context.Context, *Sub
 }
 func (UnimplementedIntrospectorServiceServer) SubmitFinalization(context.Context, *SubmitFinalizationRequest) (*SubmitFinalizationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SubmitFinalization not implemented")
+}
+func (UnimplementedIntrospectorServiceServer) SubmitOnchainTx(context.Context, *SubmitOnchainTxRequest) (*SubmitOnchainTxResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SubmitOnchainTx not implemented")
 }
 func (UnimplementedIntrospectorServiceServer) testEmbeddedByValue() {}
 
@@ -230,6 +250,24 @@ func _IntrospectorService_SubmitFinalization_Handler(srv interface{}, ctx contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _IntrospectorService_SubmitOnchainTx_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SubmitOnchainTxRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(IntrospectorServiceServer).SubmitOnchainTx(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: IntrospectorService_SubmitOnchainTx_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(IntrospectorServiceServer).SubmitOnchainTx(ctx, req.(*SubmitOnchainTxRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // IntrospectorService_ServiceDesc is the grpc.ServiceDesc for IntrospectorService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -252,6 +290,10 @@ var IntrospectorService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SubmitFinalization",
 			Handler:    _IntrospectorService_SubmitFinalization_Handler,
+		},
+		{
+			MethodName: "SubmitOnchainTx",
+			Handler:    _IntrospectorService_SubmitOnchainTx_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

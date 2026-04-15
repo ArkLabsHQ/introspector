@@ -44,6 +44,15 @@ service IntrospectorService {
       body: "*"
     };
   }
+
+  // SubmitOnchainTx signs a Bitcoin transaction by executing Arkade scripts
+  // on each input whose tapscript contains the introspector's tweaked key.
+  rpc SubmitOnchainTx(SubmitOnchainTxRequest) returns (SubmitOnchainTxResponse) {
+    option (meshapi.gateway.http) = {
+      post: "/v1/onchain-tx"
+      body: "*"
+    };
+  }
 }
 
 message GetInfoRequest {}
@@ -91,4 +100,12 @@ message TxTreeNode {
 message Intent {
   string proof = 1;
   string message = 2;
+}
+
+message SubmitOnchainTxRequest {
+  // base64 psbt
+  string tx = 1;
+}
+message SubmitOnchainTxResponse {
+  string signed_tx = 1;
 }

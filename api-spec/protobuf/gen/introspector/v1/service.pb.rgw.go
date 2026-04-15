@@ -67,6 +67,19 @@ func request_IntrospectorService_SubmitFinalization_0(ctx context.Context, marsh
 
 }
 
+func request_IntrospectorService_SubmitOnchainTx_0(ctx context.Context, marshaler gateway.Marshaler, mux *gateway.ServeMux, client IntrospectorServiceClient, req *http.Request, pathParams gateway.Params) (proto.Message, gateway.ServerMetadata, error) {
+	var protoReq SubmitOnchainTxRequest
+	var metadata gateway.ServerMetadata
+
+	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && err != io.EOF {
+		return nil, metadata, gateway.ErrMarshal{Err: err, Inbound: true}
+	}
+
+	msg, err := client.SubmitOnchainTx(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+
+}
+
 // RegisterIntrospectorServiceHandlerFromEndpoint is same as RegisterIntrospectorServiceHandler but
 // automatically dials to "endpoint" and closes the connection when "ctx" gets done.
 func RegisterIntrospectorServiceHandlerFromEndpoint(ctx context.Context, mux *gateway.ServeMux, endpoint string, opts []grpc.DialOption) error {
@@ -185,6 +198,28 @@ func RegisterIntrospectorServiceHandlerClient(ctx context.Context, mux *gateway.
 		}
 
 		resp, md, err := request_IntrospectorService_SubmitFinalization_0(annotatedContext, inboundMarshaler, mux, client, req, pathParams)
+		annotatedContext = gateway.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			mux.HTTPError(annotatedContext, outboundMarshaler, w, req, err)
+			return
+		}
+
+		mux.ForwardResponseMessage(annotatedContext, outboundMarshaler, w, req, resp)
+	})
+
+	mux.HandleWithParams("POST", "/v1/onchain-tx", func(w http.ResponseWriter, req *http.Request, pathParams gateway.Params) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := mux.MarshalerForRequest(req)
+		var err error
+		var annotatedContext context.Context
+		annotatedContext, err = gateway.AnnotateContext(ctx, mux, req, "/introspector.v1.IntrospectorService/SubmitOnchainTx", gateway.WithHTTPPathPattern("/v1/onchain-tx"))
+		if err != nil {
+			mux.HTTPError(ctx, outboundMarshaler, w, req, err)
+			return
+		}
+
+		resp, md, err := request_IntrospectorService_SubmitOnchainTx_0(annotatedContext, inboundMarshaler, mux, client, req, pathParams)
 		annotatedContext = gateway.NewServerMetadataContext(annotatedContext, md)
 		if err != nil {
 			mux.HTTPError(annotatedContext, outboundMarshaler, w, req, err)

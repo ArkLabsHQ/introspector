@@ -118,6 +118,47 @@
         }
       }
     },
+    "/v1/onchain-tx": {
+      "post": {
+        "tags": [
+          "IntrospectorService"
+        ],
+        "description": "SubmitOnchainTx signs a Bitcoin transaction by executing Arkade scripts\non each input whose tapscript contains the introspector's tweaked key.",
+        "operationId": "IntrospectorService_SubmitOnchainTx",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitOnchainTxRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "a successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmitOnchainTxResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/tx": {
       "post": {
         "tags": [
@@ -273,6 +314,25 @@
         "type": "object",
         "properties": {
           "signedProof": {
+            "type": "string"
+          }
+        }
+      },
+      "SubmitOnchainTxRequest": {
+        "title": "SubmitOnchainTxRequest",
+        "type": "object",
+        "properties": {
+          "tx": {
+            "type": "string",
+            "description": "base64 psbt"
+          }
+        }
+      },
+      "SubmitOnchainTxResponse": {
+        "title": "SubmitOnchainTxResponse",
+        "type": "object",
+        "properties": {
+          "signedTx": {
             "type": "string"
           }
         }
