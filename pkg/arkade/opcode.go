@@ -2132,7 +2132,7 @@ func opcodeInspectInputScriptPubkey(op *opcode, data []byte, vm *Engine) error {
 		return scriptError(txscript.ErrInvalidIndex, "previous output fetcher not set")
 	}
 
-	script := vm.prevOutFetcher.FetchPrevOutPkScript(vm.tx.TxIn[index].PreviousOutPoint)
+	script := vm.prevOutFetcher.FetchVtxoPrevOutPkScript(vm.tx.TxIn[index].PreviousOutPoint)
 	if script == nil {
 		return scriptError(txscript.ErrInvalidIndex, "previous output not found")
 	}

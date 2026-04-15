@@ -687,7 +687,7 @@ func (f *testArkPrevOutFetcher) FetchPrevOutArkTx(op wire.OutPoint) *wire.MsgTx 
 	return f.arkTxs[op]
 }
 
-func (f *testArkPrevOutFetcher) FetchPrevOutPkScript(op wire.OutPoint) []byte {
+func (f *testArkPrevOutFetcher) FetchVtxoPrevOutPkScript(op wire.OutPoint) []byte {
 	if f.arkTxs == nil || f.prevoutIdxs == nil {
 		return nil
 	}

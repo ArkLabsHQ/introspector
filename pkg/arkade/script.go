@@ -46,13 +46,13 @@ func WithDebugCallback(callback func(*StepInfo, *Engine) error) ExecuteOption {
 //   - FetchPrevOutArkTx returns the full previous ark transaction. This is
 //     always the ark transaction, regardless of whether a checkpoint sits in between.
 //
-//   - FetchPrevOutPkScript returns the previous output script. This is
+//   - FetchVtxoPrevOutPkScript returns the previous output script. This is
 //     always the ark transaction, regardless of whether a checkpoint sits in between.
 type ArkPrevOutFetcher interface {
 	txscript.PrevOutputFetcher
 	FetchPrevOutArkTx(wire.OutPoint) *wire.MsgTx
 
-	FetchPrevOutPkScript(wire.OutPoint) []byte
+	FetchVtxoPrevOutPkScript(wire.OutPoint) []byte
 }
 
 // ReadArkadeScript reads an arkade script from an IntrospectorEntry and validates

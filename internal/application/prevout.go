@@ -23,17 +23,17 @@ func prevOutFetcherForIntentFromPSBT(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher
 	}
 
 	prevOutArkTxs := make(map[wire.OutPoint]*wire.MsgTx, len(prevoutTxs))
-	prevOutIndexs := make(map[wire.OutPoint]uint32, len(prevoutTxs))
+	prevOutIdxs := make(map[wire.OutPoint]uint32, len(prevoutTxs))
 	for inputIndex, prevTx := range prevoutTxs {
 		outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
 		if err := validatePrevoutTx(inputIndex, prevTx, outpoint.Hash); err != nil {
 			return nil, err
 		}
 		prevOutArkTxs[outpoint] = prevTx
-		prevOutIndexs[outpoint] = outpoint.Index
+		prevOutIdxs[outpoint] = outpoint.Index
 	}
 
-	return newMapArkPrevOutFetcher(baseFetcher, prevOutArkTxs, prevOutIndexs), nil
+	return newMapArkPrevOutFetcher(baseFetcher, prevOutArkTxs, prevOutIdxs), nil
 }
 
 func prevOutFetcherForArkTxFromPSBT(
@@ -117,18 +117,18 @@ func decodePrevoutTxsFromPSBT(ptx *psbt.Packet) (map[int]*wire.MsgTx, error) {
 type mapArkPrevOutFetcher struct {
 	txscript.PrevOutputFetcher
 	arkTxs      map[wire.OutPoint]*wire.MsgTx
-	prevoutIdxs map[wire.OutPoint]uint32
+	prevOutIdxs map[wire.OutPoint]uint32
 }
 
 func newMapArkPrevOutFetcher(
 	base txscript.PrevOutputFetcher,
 	arkTxs map[wire.OutPoint]*wire.MsgTx,
-	prevoutIdxs map[wire.OutPoint]uint32,
+	prevOutIdxs map[wire.OutPoint]uint32,
 ) *mapArkPrevOutFetcher {
 	return &mapArkPrevOutFetcher{
 		PrevOutputFetcher: base,
 		arkTxs:            arkTxs,
-		prevoutIdxs:       prevoutIdxs,
+		prevOutIdxs:       prevOutIdxs,
 	}
 }
 
@@ -139,12 +139,12 @@ func (f *mapArkPrevOutFetcher) FetchPrevOutArkTx(op wire.OutPoint) *wire.MsgTx {
 	return f.arkTxs[op]
 }
 
-func (f *mapArkPrevOutFetcher) FetchPrevOutPkScript(op wire.OutPoint) []byte {
-	if f.arkTxs == nil || f.prevoutIdxs == nil {
+func (f *mapArkPrevOutFetcher) FetchVtxoPrevOutPkScript(op wire.OutPoint) []byte {
+	if f.arkTxs == nil || f.prevOutIdxs == nil {
 		return nil
 	}
 
-	idx, foundIdx := f.prevoutIdxs[op]
+	idx, foundIdx := f.prevOutIdxs[op]
 	arkTx, foundTx := f.arkTxs[op]
 
 	if !foundIdx || !foundTx {
