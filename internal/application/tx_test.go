@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/ArkLabsHQ/introspector/pkg/arkade"
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
@@ -451,8 +452,9 @@ func (m *mockArkdClient) Close() {}
 func TestRetryFinalize(t *testing.T) {
 	originalCfg := finalizeRetryConfig
 	finalizeRetryConfig.MinAttempts = 3
-	finalizeRetryConfig.InitialDelay = 0
+	finalizeRetryConfig.InitialDelay = 10 * time.Millisecond
 	finalizeRetryConfig.Jitter = 0
+	finalizeRetryConfig.Multiplier = 1
 	t.Cleanup(func() {
 		finalizeRetryConfig = originalCfg
 	})
