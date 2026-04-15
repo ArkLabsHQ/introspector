@@ -13,6 +13,7 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
+	"github.com/arkade-os/go-sdk/indexer"
 	"github.com/arkade-os/go-sdk/types"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
@@ -210,43 +211,32 @@ func TestRecursivePolicy(t *testing.T) {
 		signedTx, err := bobWallet.SignTransaction(ctx, explorer, encodedTx)
 		require.NoError(t, err)
 
-		encodedCheckpoints := make([]string, 0, len(checkpoints))
+		signedCheckpoints := make([]string, 0, len(checkpoints))
 		for _, cp := range checkpoints {
 			encoded, err := cp.B64Encode()
 			require.NoError(t, err)
-			encodedCheckpoints = append(encodedCheckpoints, encoded)
+
+			signed, err := bobWallet.SignTransaction(ctx, explorer, encoded)
+			require.NoError(t, err)
+			signedCheckpoints = append(signedCheckpoints, signed)
 		}
 
-		signedTx, signedByIntrospectorCheckpoints, err := introspectorClient.SubmitTx(ctx, signedTx, encodedCheckpoints)
+		_, _, err = introspectorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
 		require.NoError(t, err)
-
-		txid, _, signedByServerCheckpoints, err := grpcBob.SubmitTx(ctx, signedTx, encodedCheckpoints)
+		indexerOpts := setupIndexer(t)
+		opts := indexer.GetVtxosRequestOption{}
+		err = opts.WithOutpoints([]types.Outpoint{
+			{Txid: candidateTx.UnsignedTx.TxID(), VOut: 0},
+			{Txid: candidateTx.UnsignedTx.TxID(), VOut: 1},
+		})
 		require.NoError(t, err)
-
-		finalCheckpoints := make([]string, 0, len(signedByServerCheckpoints))
-		for i, checkpoint := range signedByServerCheckpoints {
-			finalCheckpoint, err := bobWallet.SignTransaction(ctx, explorer, checkpoint)
-			require.NoError(t, err)
-
-			introspectorCheckpointPtx, err := psbt.NewFromRawBytes(strings.NewReader(signedByIntrospectorCheckpoints[i]), true)
-			require.NoError(t, err)
-
-			checkpointPtx, err := psbt.NewFromRawBytes(strings.NewReader(finalCheckpoint), true)
-			require.NoError(t, err)
-
-			checkpointPtx.Inputs[0].TaprootScriptSpendSig = append(
-				checkpointPtx.Inputs[0].TaprootScriptSpendSig,
-				introspectorCheckpointPtx.Inputs[0].TaprootScriptSpendSig...,
-			)
-
-			finalCheckpoint, err = checkpointPtx.B64Encode()
-			require.NoError(t, err)
-
-			finalCheckpoints = append(finalCheckpoints, finalCheckpoint)
+		vtxos, err := indexerOpts.GetVtxos(ctx, opts)
+		require.NoError(t, err)
+		require.Len(t, vtxos.Vtxos, 2)
+		for _, vtxo := range vtxos.Vtxos {
+			require.True(t, vtxo.Preconfirmed)
+			require.False(t, vtxo.Spent)
 		}
-
-		err = grpcBob.FinalizeTx(ctx, txid, finalCheckpoints)
-		require.NoError(t, err)
 	}
 
 	vtxoInputFromOutput := func(prevTx *wire.MsgTx, outIndex uint32) offchain.VtxoInput {
@@ -308,14 +298,17 @@ func TestRecursivePolicy(t *testing.T) {
 		signedTx, err := bobWallet.SignTransaction(ctx, explorer, encodedTx)
 		require.NoError(t, err)
 
-		encodedCheckpoints := make([]string, 0, len(checkpoints))
+		signedCheckpoints := make([]string, 0, len(checkpoints))
 		for _, cp := range checkpoints {
 			encoded, err := cp.B64Encode()
 			require.NoError(t, err)
-			encodedCheckpoints = append(encodedCheckpoints, encoded)
+
+			signed, err := bobWallet.SignTransaction(ctx, explorer, encoded)
+			require.NoError(t, err)
+			signedCheckpoints = append(signedCheckpoints, signed)
 		}
 
-		_, _, err = introspectorClient.SubmitTx(ctx, signedTx, encodedCheckpoints)
+		_, _, err = introspectorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to process transaction")
 	}

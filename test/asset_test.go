@@ -20,6 +20,7 @@ import (
 	arksdk "github.com/arkade-os/go-sdk"
 	"github.com/arkade-os/go-sdk/client"
 	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
+	"github.com/arkade-os/go-sdk/indexer"
 	"github.com/arkade-os/go-sdk/types"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
@@ -45,7 +46,7 @@ func TestOffchainTxWithAsset(t *testing.T) {
 		assetAmount = 1000
 	)
 
-	bobWallet, _, bobPubKey := setupBobWallet(t, ctx)
+	bobWallet, _, bobPubKey := setupWallet(t, ctx)
 	aliceAddr := fundAndSettleAlice(t, ctx, alice, sendAmount)
 
 	alicePkScript, err := script.P2TRScript(aliceAddr.VtxoTapKey)
@@ -172,48 +173,31 @@ func TestOffchainTxWithAsset(t *testing.T) {
 	for _, checkpoint := range validCheckpoints {
 		encoded, err := checkpoint.B64Encode()
 		require.NoError(t, err)
-		encodedValidCheckpoints = append(encodedValidCheckpoints, encoded)
+
+		signed, err := bobWallet.SignTransaction(
+			ctx,
+			explorer,
+			encoded,
+		)
+		require.NoError(t, err)
+
+		encodedValidCheckpoints = append(encodedValidCheckpoints, signed)
 	}
 
 	// Submit to introspector - should succeed as the asset introspection opcodes will validate correctly
-	signedTx, signedByIntrospectorCheckpoints, err := introspectorClient.SubmitTx(ctx, signedTx, encodedValidCheckpoints)
-	require.NoError(t, err)
-	require.NotEmpty(t, signedTx)
-	require.NotEmpty(t, signedByIntrospectorCheckpoints)
-
-	// Also submit to server
-	txid, _, signedByServerCheckpoints, err := grpcAlice.SubmitTx(ctx, signedTx, encodedValidCheckpoints)
+	_, _, err = introspectorClient.SubmitTx(ctx, signedTx, encodedValidCheckpoints)
 	require.NoError(t, err)
 
-	finalCheckpoints := make([]string, 0, len(signedByIntrospectorCheckpoints))
-	for i, checkpoint := range signedByServerCheckpoints {
-		finalCheckpoint, err := bobWallet.SignTransaction(
-			ctx,
-			explorer,
-			checkpoint,
-		)
-		require.NoError(t, err)
+	idxr := setupIndexer(t)
 
-		// Combine server and introspector checkpoints
-		byInterceptorCheckpointPtx, err := psbt.NewFromRawBytes(strings.NewReader(signedByIntrospectorCheckpoints[i]), true)
-		require.NoError(t, err)
-
-		checkpointPtx, err := psbt.NewFromRawBytes(strings.NewReader(finalCheckpoint), true)
-		require.NoError(t, err)
-
-		checkpointPtx.Inputs[0].TaprootScriptSpendSig = append(
-			checkpointPtx.Inputs[0].TaprootScriptSpendSig,
-			byInterceptorCheckpointPtx.Inputs[0].TaprootScriptSpendSig...,
-		)
-
-		finalCheckpoint, err = checkpointPtx.B64Encode()
-		require.NoError(t, err)
-
-		finalCheckpoints = append(finalCheckpoints, finalCheckpoint)
-	}
-
-	err = grpcAlice.FinalizeTx(ctx, txid, finalCheckpoints)
+	opts := indexer.GetVtxosRequestOption{}
+	err = opts.WithOutpoints([]types.Outpoint{{Txid: validTx.UnsignedTx.TxID(), VOut: 0}})
 	require.NoError(t, err)
+	vtxos, err := idxr.GetVtxos(ctx, opts)
+	require.NoError(t, err)
+	require.Len(t, vtxos.Vtxos, 1)
+	require.True(t, vtxos.Vtxos[0].Preconfirmed)
+	require.False(t, vtxos.Vtxos[0].Spent)
 }
 
 // TestSettlementWithAsset tests the settlement flow with an asset packet in the intent.
@@ -230,7 +214,7 @@ func TestSettlementWithAsset(t *testing.T) {
 		assetAmount = 1000
 	)
 
-	bobWallet, _, bobPubKey := setupBobWallet(t, ctx)
+	bobWallet, _, bobPubKey := setupWallet(t, ctx)
 	aliceAddr := fundAndSettleAlice(t, ctx, alice, sendAmount)
 	alicePkScript, err := script.P2TRScript(aliceAddr.VtxoTapKey)
 	require.NoError(t, err)
@@ -369,50 +353,32 @@ func TestSettlementWithAsset(t *testing.T) {
 	for _, checkpoint := range mintCheckpoints {
 		encoded, err := checkpoint.B64Encode()
 		require.NoError(t, err)
-		encodedMintCheckpoints = append(encodedMintCheckpoints, encoded)
+
+		signed, err := bobWallet.SignTransaction(ctx, explorer, encoded)
+		require.NoError(t, err)
+		encodedMintCheckpoints = append(encodedMintCheckpoints, signed)
 	}
 
 	// Submit mint tx to introspector
-	signedMintTx, signedByIntrospectorMintCheckpoints, err := introspectorClient.SubmitTx(ctx, signedMintTx, encodedMintCheckpoints)
-	require.NoError(t, err)
-	require.NotEmpty(t, signedMintTx)
-
-	// Submit mint tx to server
-	mintTxid, _, signedByServerMintCheckpoints, err := grpcClient.SubmitTx(ctx, signedMintTx, encodedMintCheckpoints)
+	_, _, err = introspectorClient.SubmitTx(ctx, signedMintTx, encodedMintCheckpoints)
 	require.NoError(t, err)
 
-	// Combine and finalize mint checkpoints
-	finalMintCheckpoints := make([]string, 0, len(signedByIntrospectorMintCheckpoints))
-	for i, checkpoint := range signedByServerMintCheckpoints {
-		finalCheckpoint, err := bobWallet.SignTransaction(ctx, explorer, checkpoint)
-		require.NoError(t, err)
-
-		byIntrospectorPtx, err := psbt.NewFromRawBytes(strings.NewReader(signedByIntrospectorMintCheckpoints[i]), true)
-		require.NoError(t, err)
-
-		checkpointPtx, err := psbt.NewFromRawBytes(strings.NewReader(finalCheckpoint), true)
-		require.NoError(t, err)
-
-		checkpointPtx.Inputs[0].TaprootScriptSpendSig = append(
-			checkpointPtx.Inputs[0].TaprootScriptSpendSig,
-			byIntrospectorPtx.Inputs[0].TaprootScriptSpendSig...,
-		)
-
-		finalCheckpoint, err = checkpointPtx.B64Encode()
-		require.NoError(t, err)
-
-		finalMintCheckpoints = append(finalMintCheckpoints, finalCheckpoint)
-	}
-
-	err = grpcClient.FinalizeTx(ctx, mintTxid, finalMintCheckpoints)
+	opts := indexer.GetVtxosRequestOption{}
+	err = opts.WithOutpoints([]types.Outpoint{{Txid: mintTx.UnsignedTx.TxID(), VOut: 0}})
 	require.NoError(t, err)
+
+	vtxos, err := indexerSvc.GetVtxos(ctx, opts)
+	require.NoError(t, err)
+	require.Len(t, vtxos.Vtxos, 1)
+	require.True(t, vtxos.Vtxos[0].Preconfirmed)
+	require.False(t, vtxos.Vtxos[0].Spent)
 
 	// =========================================================================
 	// Phase 3: Settle the VTXO with a transfer asset packet
 	// =========================================================================
 
 	// Retrieve the mint tx to find the settle VTXO
-	mintResult, err := indexerSvc.GetVirtualTxs(ctx, []string{mintTxid})
+	mintResult, err := indexerSvc.GetVirtualTxs(ctx, []string{mintTx.UnsignedTx.TxID()})
 	require.NoError(t, err)
 	require.NotEmpty(t, mintResult)
 	require.Len(t, mintResult.Txs, 1)

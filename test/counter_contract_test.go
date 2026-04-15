@@ -13,6 +13,7 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
+	"github.com/arkade-os/go-sdk/indexer"
 	"github.com/arkade-os/go-sdk/types"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
@@ -115,38 +116,20 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 
 		encodedCheckpoints := encodeCheckpoints(checkpoints)
 
-		signedTx, signedByIntrospectorCheckpoints, err := introspectorClient.SubmitTx(
+		_, _, err = introspectorClient.SubmitTx(
 			ctx, encodedTx, encodedCheckpoints,
 		)
 		require.NoError(t, err)
 
-		txid, _, signedByServerCheckpoints, err := grpcClient.SubmitTx(
-			ctx, signedTx, encodedCheckpoints,
-		)
+		opts := indexer.GetVtxosRequestOption{}
+		err = opts.WithOutpoints([]types.Outpoint{{Txid: candidateTx.UnsignedTx.TxID(), VOut: 0}})
 		require.NoError(t, err)
-		require.Len(t, signedByIntrospectorCheckpoints, len(signedByServerCheckpoints))
 
-		finalCheckpoints := make([]string, 0, len(signedByServerCheckpoints))
-		for i, checkpoint := range signedByServerCheckpoints {
-			introspectorCheckpointPtx, err := psbt.NewFromRawBytes(
-				strings.NewReader(signedByIntrospectorCheckpoints[i]), true,
-			)
-			require.NoError(t, err)
-
-			checkpointPtx, err := psbt.NewFromRawBytes(strings.NewReader(checkpoint), true)
-			require.NoError(t, err)
-
-			checkpointPtx.Inputs[0].TaprootScriptSpendSig = append(
-				checkpointPtx.Inputs[0].TaprootScriptSpendSig,
-				introspectorCheckpointPtx.Inputs[0].TaprootScriptSpendSig...,
-			)
-
-			finalCheckpoint, err := checkpointPtx.B64Encode()
-			require.NoError(t, err)
-			finalCheckpoints = append(finalCheckpoints, finalCheckpoint)
-		}
-
-		require.NoError(t, grpcClient.FinalizeTx(ctx, txid, finalCheckpoints))
+		vtxos, err := indexerSvc.GetVtxos(ctx, opts)
+		require.NoError(t, err)
+		require.Len(t, vtxos.Vtxos, 1)
+		require.True(t, vtxos.Vtxos[0].Preconfirmed)
+		require.False(t, vtxos.Vtxos[0].Spent)
 	}
 
 	submitExpectIntrospectorFailure := func(candidateTx *psbt.Packet, checkpoints []*psbt.Packet) {

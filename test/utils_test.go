@@ -442,9 +442,9 @@ func getBatchExpiryLocktime(expiry uint32) arklib.RelativeLocktime {
 	return arklib.RelativeLocktime{Type: arklib.LocktimeTypeBlock, Value: expiry}
 }
 
-// setupBobWallet creates and unlocks a new wallet for Bob
-func setupBobWallet(t *testing.T, ctx context.Context) (wallet.WalletService, *btcec.PrivateKey, *btcec.PublicKey) {
-	bobPrivKey, err := btcec.NewPrivateKey()
+// setupWallet creates and unlocks a new wallet
+func setupWallet(t *testing.T, ctx context.Context) (wallet.WalletService, *btcec.PrivateKey, *btcec.PublicKey) {
+	privKey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
 
 	configStore, err := inmemorystoreconfig.NewConfigStore()
@@ -453,16 +453,16 @@ func setupBobWallet(t *testing.T, ctx context.Context) (wallet.WalletService, *b
 	walletStore, err := inmemorystore.NewWalletStore()
 	require.NoError(t, err)
 
-	bobWallet, err := singlekeywallet.NewBitcoinWallet(configStore, walletStore)
+	wallet, err := singlekeywallet.NewBitcoinWallet(configStore, walletStore)
 	require.NoError(t, err)
 
-	_, err = bobWallet.Create(ctx, password, hex.EncodeToString(bobPrivKey.Serialize()))
+	_, err = wallet.Create(ctx, password, hex.EncodeToString(privKey.Serialize()))
 	require.NoError(t, err)
 
-	_, err = bobWallet.Unlock(ctx, password)
+	_, err = wallet.Unlock(ctx, password)
 	require.NoError(t, err)
 
-	return bobWallet, bobPrivKey, bobPrivKey.PubKey()
+	return wallet, privKey, privKey.PubKey()
 }
 
 // fundAndSettleAlice funds alice's account via boarding and settles

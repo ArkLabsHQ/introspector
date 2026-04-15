@@ -17,11 +17,12 @@ import (
 var ErrTweakedArkadePubKeyNotFound = errors.New("tweaked arkade script public key not found in tapscript")
 
 type ArkadeScript struct {
-	script  []byte
-	hash    []byte
-	witness wire.TxWitness
-	pubkey  *btcec.PublicKey
-	tapLeaf txscript.TapLeaf
+	script         []byte
+	hash           []byte
+	witness        wire.TxWitness
+	pubkey         *btcec.PublicKey
+	tapLeaf        txscript.TapLeaf
+	closurePubkeys []*btcec.PublicKey
 }
 
 type ExecuteOption func(*Engine)
@@ -108,11 +109,12 @@ func ReadArkadeScript(ptx *psbt.Packet, signerPublicKey *btcec.PublicKey, entry 
 	}
 
 	return &ArkadeScript{
-		script:  entry.Script,
-		hash:    scriptHash,
-		witness: entry.Witness,
-		pubkey:  expectedPublicKey,
-		tapLeaf: txscript.NewBaseTapLeaf(spendingTapscript.Script),
+		script:         entry.Script,
+		hash:           scriptHash,
+		witness:        entry.Witness,
+		pubkey:         expectedPublicKey,
+		tapLeaf:        txscript.NewBaseTapLeaf(spendingTapscript.Script),
+		closurePubkeys: pubkeys,
 	}, nil
 }
 
@@ -184,4 +186,8 @@ func (s *ArkadeScript) TapLeaf() txscript.TapLeaf {
 
 func (s *ArkadeScript) Script() []byte {
 	return append([]byte(nil), s.script...)
+}
+
+func (s *ArkadeScript) ClosurePubKeys() []*btcec.PublicKey {
+	return s.closurePubkeys
 }

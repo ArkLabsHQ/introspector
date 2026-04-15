@@ -50,7 +50,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			{Vin: 0, Script: scriptHashInspectorScript},
 		})
 
-		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "no introspector entry for vin 1")
+		executeAndExpectFailure(t, candidateTx, env.introspectorPubKey, "no introspector entry for vin 1")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -62,7 +62,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			{Vin: 1, Script: nonOpOneScript},
 		})
 
-		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "false stack entry at end of script execution")
+		executeAndExpectFailure(t, candidateTx, env.introspectorPubKey, "false stack entry at end of script execution")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -93,7 +93,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			{Vin: 0, Script: witnessHashInspectorScript},
 		})
 
-		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "no introspector entry for vin 1")
+		executeAndExpectFailure(t, candidateTx, env.introspectorPubKey, "no introspector entry for vin 1")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -106,7 +106,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			{Vin: 1, Script: witnessAwareScript, Witness: invalidWitness},
 		})
 
-		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "false stack entry at end of script execution")
+		executeAndExpectFailure(t, candidateTx, env.introspectorPubKey, "false stack entry at end of script execution")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -161,7 +161,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: inspectPacketType, Data: inspectPacketPayload},
 		)
 
-		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "OP_EQUALVERIFY failed")
+		executeAndExpectFailure(t, candidateTx, env.introspectorPubKey, "OP_EQUALVERIFY failed")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -174,7 +174,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: inspectPacketType, Data: inspectPacketPayload},
 		)
 
-		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "false stack entry at end of script execution")
+		executeAndExpectFailure(t, candidateTx, env.introspectorPubKey, "false stack entry at end of script execution")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -187,7 +187,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: inspectPacketType, Data: inspectPacketPayload},
 		)
 
-		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "packet type out of range")
+		executeAndExpectFailure(t, candidateTx, env.introspectorPubKey, "packet type out of range")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -220,7 +220,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: packetType, Data: expectedPayload},
 		)
 
-		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "OP_EQUALVERIFY failed")
+		executeAndExpectFailure(t, candidateTx, env.introspectorPubKey, "OP_EQUALVERIFY failed")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -235,7 +235,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: packetType, Data: expectedPayload},
 		)
 
-		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "false stack entry at end of script execution")
+		executeAndExpectFailure(t, candidateTx, env.introspectorPubKey, "false stack entry at end of script execution")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -250,7 +250,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: packetType, Data: expectedPayload},
 		)
 
-		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "input index cannot be negative")
+		executeAndExpectFailure(t, candidateTx, env.introspectorPubKey, "input index cannot be negative")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -265,7 +265,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: packetType, Data: expectedPayload},
 		)
 
-		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "input index out of range")
+		executeAndExpectFailure(t, candidateTx, env.introspectorPubKey, "input index out of range")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -280,7 +280,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: packetType, Data: expectedPayload},
 		)
 
-		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "packet type out of range")
+		executeAndExpectFailure(t, candidateTx, env.introspectorPubKey, "packet type out of range")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -296,7 +296,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 
 		removePrevoutTxFields(t, candidateTx, 0, 1)
 
-		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "prevout tx not available for input 0")
+		executeAndExpectFailure(t, candidateTx, env.introspectorPubKey, "prevout tx not available for input 0")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 }
@@ -860,77 +860,10 @@ func (env *crossInputTestEnv) buildTwoInputSpend(
 	return candidateTx, checkpoints, fundingPtx
 }
 
-// encodePSBTPackets serializes a list of PSBT packets to base64 strings.
-func encodePSBTPackets(t *testing.T, packets []*psbt.Packet) []string {
-	t.Helper()
-
-	encodedPackets := make([]string, 0, len(packets))
-	for _, packet := range packets {
-		encoded, err := packet.B64Encode()
-		require.NoError(t, err)
-		encodedPackets = append(encodedPackets, encoded)
-	}
-
-	return encodedPackets
-}
-
-// signAndCombineCheckpointsByTxID merges separately signed checkpoint PSBTs by txid.
-func signAndCombineCheckpointsByTxID(
-	t *testing.T,
-	ctx context.Context,
-	signer wallet.WalletService,
-	explorer explorer.Explorer,
-	unsignedCheckpoints []string,
-	additionalSignedCheckpoints []string,
-) []string {
-	t.Helper()
-
-	// Step 1: Index the additional signed checkpoints by checkpoint txid.
-	require.Len(t, additionalSignedCheckpoints, len(unsignedCheckpoints))
-
-	additionalByTxID := make(map[string]*psbt.Packet, len(additionalSignedCheckpoints))
-	for _, checkpoint := range additionalSignedCheckpoints {
-		checkpointPtx, err := psbt.NewFromRawBytes(strings.NewReader(checkpoint), true)
-		require.NoError(t, err)
-
-		txid := checkpointPtx.UnsignedTx.TxID()
-		_, exists := additionalByTxID[txid]
-		require.Falsef(t, exists, "duplicate checkpoint txid %s", txid)
-		additionalByTxID[txid] = checkpointPtx
-	}
-
-	// Step 2: Wallet-sign the server checkpoints in their finalization order.
-	finalCheckpoints := make([]string, 0, len(unsignedCheckpoints))
-	for _, checkpoint := range unsignedCheckpoints {
-		finalCheckpoint, err := signer.SignTransaction(ctx, explorer, checkpoint)
-		require.NoError(t, err)
-
-		checkpointPtx, err := psbt.NewFromRawBytes(strings.NewReader(finalCheckpoint), true)
-		require.NoError(t, err)
-
-		// Step 3: Merge the introspector signature for the matching checkpoint txid.
-		matchingCheckpoint, ok := additionalByTxID[checkpointPtx.UnsignedTx.TxID()]
-		require.Truef(t, ok, "missing checkpoint for txid %s", checkpointPtx.UnsignedTx.TxID())
-
-		checkpointPtx.Inputs[0].TaprootScriptSpendSig = append(
-			checkpointPtx.Inputs[0].TaprootScriptSpendSig,
-			matchingCheckpoint.Inputs[0].TaprootScriptSpendSig...,
-		)
-
-		finalCheckpoint, err = checkpointPtx.B64Encode()
-		require.NoError(t, err)
-
-		finalCheckpoints = append(finalCheckpoints, finalCheckpoint)
-	}
-
-	return finalCheckpoints
-}
-
 // executeAndExpectFailure asserts that local script execution fails with the expected error.
 func executeAndExpectFailure(
 	t *testing.T,
 	candidateTx *psbt.Packet,
-	checkpoints []*psbt.Packet,
 	introspectorPubKey *btcec.PublicKey,
 	expectedErr string,
 ) {
@@ -951,44 +884,54 @@ func (env *crossInputTestEnv) submitAndExpectFailure(t *testing.T, candidateTx *
 	signedTx, err := env.bobWallet.SignTransaction(env.ctx, env.explorer, encodedTx)
 	require.NoError(t, err)
 
-	encodedCheckpoints := encodePSBTPackets(t, checkpoints)
+	signedCheckpoints := make([]string, 0, len(checkpoints))
+	for _, checkpoint := range checkpoints {
+		encoded, err := checkpoint.B64Encode()
+		require.NoError(t, err)
 
-	_, _, err = env.introspectorClient.SubmitTx(env.ctx, signedTx, encodedCheckpoints)
+		signed, err := env.bobWallet.SignTransaction(env.ctx, env.explorer, encoded)
+		require.NoError(t, err)
+		signedCheckpoints = append(signedCheckpoints, signed)
+	}
+
+	_, _, err = env.introspectorClient.SubmitTx(env.ctx, signedTx, signedCheckpoints)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to process transaction")
 }
 
-// submitAndFinalize sends the candidate tx through both signers and finalizes it.
+// submitAndFinalize submits the candidate tx once and verifies the result via the indexer.
 func (env *crossInputTestEnv) submitAndFinalize(t *testing.T, candidateTx *psbt.Packet, checkpoints []*psbt.Packet) {
 	t.Helper()
 
-	// Step 1: Sign the candidate tx locally and encode the checkpoints.
+	// Step 1: Sign the candidate tx locally and sign every checkpoint.
 	encodedTx, err := candidateTx.B64Encode()
 	require.NoError(t, err)
 
 	signedTx, err := env.bobWallet.SignTransaction(env.ctx, env.explorer, encodedTx)
 	require.NoError(t, err)
 
-	encodedCheckpoints := encodePSBTPackets(t, checkpoints)
+	signedCheckpoints := make([]string, 0, len(checkpoints))
+	for _, checkpoint := range checkpoints {
+		encoded, err := checkpoint.B64Encode()
+		require.NoError(t, err)
 
-	// Step 2: Submit to both services to collect their partial signatures.
-	signedTx, signedByIntrospectorCheckpoints, err := env.introspectorClient.SubmitTx(env.ctx, signedTx, encodedCheckpoints)
+		signed, err := env.bobWallet.SignTransaction(env.ctx, env.explorer, encoded)
+		require.NoError(t, err)
+		signedCheckpoints = append(signedCheckpoints, signed)
+	}
+
+	// Step 2: Submit once through introspector.
+	_, _, err = env.introspectorClient.SubmitTx(env.ctx, signedTx, signedCheckpoints)
 	require.NoError(t, err)
 
-	txid, _, signedByServerCheckpoints, err := env.grpcBob.SubmitTx(env.ctx, signedTx, encodedCheckpoints)
+	// Step 3: Verify the finalized output via the indexer.
+	opts := indexer.GetVtxosRequestOption{}
+	err = opts.WithOutpoints([]types.Outpoint{{Txid: candidateTx.UnsignedTx.TxID(), VOut: 0}})
 	require.NoError(t, err)
 
-	// Step 3: Combine checkpoint signatures by txid before finalization.
-	finalCheckpoints := signAndCombineCheckpointsByTxID(
-		t,
-		env.ctx,
-		env.bobWallet,
-		env.explorer,
-		signedByServerCheckpoints,
-		signedByIntrospectorCheckpoints,
-	)
-
-	// Step 4: Finalize the transaction with the fully signed checkpoints.
-	err = env.grpcBob.FinalizeTx(env.ctx, txid, finalCheckpoints)
+	vtxos, err := env.indexerSvc.GetVtxos(env.ctx, opts)
 	require.NoError(t, err)
+	require.Len(t, vtxos.Vtxos, 1)
+	require.True(t, vtxos.Vtxos[0].Preconfirmed)
+	require.False(t, vtxos.Vtxos[0].Spent)
 }

@@ -218,12 +218,12 @@ func (h *handler) SubmitFinalization(
 func (h *handler) SubmitOnchainTx(
 	ctx context.Context, req *introspectorv1.SubmitOnchainTxRequest,
 ) (*introspectorv1.SubmitOnchainTxResponse, error) {
-	raw := req.GetTx()
-	if len(raw) == 0 {
+	b64 := req.GetTx()
+	if len(b64) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "missing tx")
 	}
 
-	ptx, err := psbt.NewFromRawBytes(strings.NewReader(raw), true)
+	ptx, err := psbt.NewFromRawBytes(strings.NewReader(b64), true)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid tx")
 	}
