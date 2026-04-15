@@ -271,6 +271,13 @@ The following opcodes are supported by the Arkade script engine. They extend Bit
 | OP_TXWEIGHT | 214 | 0xd6 | Nothing | weight | Pushes the transaction weight (4 bytes, little-endian) onto the stack. Weight is calculated as `SerializeSizeStripped() * 4`. |
 | OP_TXID | 243 | 0xf3 | Nothing | txid | Pushes the current transaction hash (32 bytes) onto the stack. |
 
+### Packet Introspection
+
+| Word | Opcode | Hex | Input | Output | Description |
+|------|--------|-----|-------|--------|-------------|
+| OP_INSPECTPACKET | 244 | 0xf4 | packet_type | content 1 (or `<empty>` 0) | Looks up the TLV packet with the given type in the current transaction's extension. On hit: pushes the raw packet content and 1. Not found: pushes an empty byte array and 0. |
+| OP_INSPECTINPUTPACKET | 245 | 0xf5 | packet_type input_index | content 1 (or `<empty>` 0) | Looks up the TLV packet with the given type in the ark extension of the previous ark transaction spent by the input at `input_index`. On hit: pushes the raw packet content and 1. Not found: pushes an empty byte array and 0. Fails on negative / out-of-range `input_index`. |
+
 ### Data Manipulation
 
 | Word | Opcode | Hex | Input | Output | Description |
