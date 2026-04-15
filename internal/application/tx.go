@@ -258,6 +258,7 @@ func (a *finalizerAccumulator) isFinalizer() (bool, error) {
 }
 
 // variation of: https://github.com/arkade-os/arkd/blob/v0.9.2/internal/infrastructure/tx-builder/covenantless/builder.go#L63-L221
+// TODO: refactor into a simple loop once we can use the verify function from ark-lib: https://github.com/arkade-os/arkd/issues/1013
 func verifyNonArkdCheckpointSignatures(checkpoints []*psbt.Packet, arkdPubKey *btcec.PublicKey) error {
 	arkdXOnly := schnorr.SerializePubKey(arkdPubKey)
 	for checkpointIndex, ptx := range checkpoints {
