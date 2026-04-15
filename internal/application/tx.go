@@ -99,7 +99,9 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 			return nil, fmt.Errorf("failed to sign checkpoint input %d: %w", inputIndex, err)
 		}
 
-		finalizerAcc.checkScript(entry.Vin, script)
+		if err = finalizerAcc.checkScript(entry.Vin, script); err != nil {
+			return nil, fmt.Errorf("failed to check script for finalizer: %w", err)
+		}
 
 		nSigned++
 	}
@@ -209,27 +211,29 @@ func newFinalizerAccumulator(arkdPubKey *btcec.PublicKey) *finalizerAccumulator 
 	}
 }
 
-func (a *finalizerAccumulator) checkScript(vin uint16, script *arkade.ArkadeScript) {
+func (a *finalizerAccumulator) checkScript(vin uint16, script *arkade.ArkadeScript) error {
 	a.vins = append(a.vins, vin)
 
-	isLastForEntry := false
 	nClosurePubKeys := len(script.ClosurePubKeys())
 	tweakedSignerPublicKeyXOnly := schnorr.SerializePubKey(script.PubKey())
-	if nClosurePubKeys > 0 {
-		lastSigner := script.ClosurePubKeys()[nClosurePubKeys-1]
-		lastSignerXOnly := schnorr.SerializePubKey(lastSigner)
-
-		// if arkd is the last signer, check the second-to-last
-		if nClosurePubKeys > 1 && bytes.Equal(lastSignerXOnly, a.arkdPubKeyXonly) {
-			lastNonArkdSigner := script.ClosurePubKeys()[nClosurePubKeys-2]
-			lastNonArkdSignerXonly := schnorr.SerializePubKey(lastNonArkdSigner)
-			isLastForEntry = bytes.Equal(lastNonArkdSignerXonly, tweakedSignerPublicKeyXOnly)
-		} else {
-			isLastForEntry = bytes.Equal(lastSignerXOnly, tweakedSignerPublicKeyXOnly)
-		}
+	if nClosurePubKeys < 2 {
+		// the script should always have a forfeit closure with at least arkd + tweaked key
+		return fmt.Errorf("malformed script %x", script.Script())
 	}
 
-	a.isLastByVin[vin] = isLastForEntry
+	lastSigner := script.ClosurePubKeys()[nClosurePubKeys-1]
+	lastSignerXOnly := schnorr.SerializePubKey(lastSigner)
+
+	// if arkd is the last signer, check the second-to-last
+	if bytes.Equal(lastSignerXOnly, a.arkdPubKeyXonly) {
+		lastNonArkdSigner := script.ClosurePubKeys()[nClosurePubKeys-2]
+		lastNonArkdSignerXonly := schnorr.SerializePubKey(lastNonArkdSigner)
+		a.isLastByVin[vin] = bytes.Equal(lastNonArkdSignerXonly, tweakedSignerPublicKeyXOnly)
+		return nil
+	}
+
+	a.isLastByVin[vin] = bytes.Equal(lastSignerXOnly, tweakedSignerPublicKeyXOnly)
+	return nil
 }
 
 func (a *finalizerAccumulator) isFinalizer() (bool, error) {
@@ -239,12 +243,12 @@ func (a *finalizerAccumulator) isFinalizer() (bool, error) {
 	referenceVin := a.vins[0]
 	referenceIsLast, ok := a.isLastByVin[referenceVin]
 	if !ok {
-		panic(fmt.Sprintf("missing finalizer state for input %d", referenceVin))
+		return false, fmt.Errorf("missing finalizer state for input %d", referenceVin)
 	}
 	for _, vin := range a.vins[1:] {
 		isLast, ok := a.isLastByVin[vin]
 		if !ok {
-			panic(fmt.Sprintf("missing finalizer state for input %d", vin))
+			return false, fmt.Errorf("missing finalizer state for input %d", vin)
 		}
 		if isLast != referenceIsLast {
 			return false, fmt.Errorf("input %d has a different finalizer", vin)
