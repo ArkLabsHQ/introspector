@@ -198,7 +198,8 @@ func TestFinalizerAccumulatorFlow(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			acc := newFinalizerAccumulator(arkdSigner.PubKey())
 			for vin, closure := range tc.closures {
-				acc.checkScript(uint16(vin), newScript(t, closure...))
+				err := acc.checkScript(uint16(vin), newScript(t, closure...))
+				require.NoError(t, err)
 			}
 
 			got, err := acc.isFinalizer()
@@ -211,7 +212,8 @@ func TestFinalizerAccumulatorFlow(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			acc := newFinalizerAccumulator(arkdSigner.PubKey())
 			for vin, closure := range tc.closures {
-				acc.checkScript(uint16(vin), newScript(t, closure...))
+				err := acc.checkScript(uint16(vin), newScript(t, closure...))
+				require.NoError(t, err)
 			}
 
 			got, err := acc.isFinalizer()
