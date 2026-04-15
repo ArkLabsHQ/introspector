@@ -32,7 +32,7 @@ func TestSubmitOnchainTx(t *testing.T) {
 	ctx := context.Background()
 
 	// --- Setup Bob & introspector ---
-	bobWallet, _, bobPubKey := setupBobWallet(t, ctx)
+	bobWallet, _, bobPubKey := setupWallet(t, ctx)
 	introspectorClient, introspectorPubKey, conn := setupIntrospectorClient(t, ctx)
 	t.Cleanup(func() { _ = conn.Close() })
 
@@ -219,6 +219,48 @@ func TestSubmitOnchainTx(t *testing.T) {
 		require.NoError(t, err)
 
 		_, err = introspectorClient.SubmitOnchainTx(ctx, bobSigned)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "failed to process onchain tx")
+	})
+
+	t.Run("rejects tapscript containing arkd pubkey", func(t *testing.T) {
+		// Pull arkd's signer pubkey from the running server.
+		_, grpcAlice := setupArkSDK(t)
+		defer grpcAlice.Close()
+		arkInfo, err := grpcAlice.GetInfo(ctx)
+		require.NoError(t, err)
+		arkdPubBytes, err := hex.DecodeString(arkInfo.SignerPubKey)
+		require.NoError(t, err)
+		arkdPubKey, err := btcec.ParsePubKey(arkdPubBytes)
+		require.NoError(t, err)
+
+		// VTXO script including arkd's pubkey — this is exactly the shape
+		// SubmitOnchainTx must refuse.
+		vtxoWithArkd := createVtxoScriptWithArkadeScript(
+			bobPubKey, arkdPubKey, introspectorPubKey, arkadeScriptHash,
+		)
+		_, vtxoWithArkdTapTree, err := vtxoWithArkd.TapTree()
+		require.NoError(t, err)
+		arkdTapscript, err := vtxoWithArkd.ForfeitClosures()[0].Script()
+		require.NoError(t, err)
+		arkdMerkleProof, err := vtxoWithArkdTapTree.GetTaprootMerkleProof(
+			txscript.NewBaseTapLeaf(arkdTapscript).TapHash(),
+		)
+		require.NoError(t, err)
+
+		// The reject check runs before script execution and signing, so we
+		// can reuse the already-funded outpoint's WitnessUtxo value; the
+		// on-wire tapscript metadata is what matters for the check.
+		ptx := buildOnchainSpendPtx(
+			t, *fundingTxid, fundingVout, fundingOutput,
+			&wire.TxOut{Value: spendAmount, PkScript: bobPkScript},
+			arkdMerkleProof, rawFundingTx, arkadeScript,
+		)
+
+		encoded, err := ptx.B64Encode()
+		require.NoError(t, err)
+
+		_, err = introspectorClient.SubmitOnchainTx(ctx, encoded)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to process onchain tx")
 	})
