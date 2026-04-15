@@ -23,15 +23,17 @@ func prevOutFetcherForIntentFromPSBT(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher
 	}
 
 	prevOutArkTxs := make(map[wire.OutPoint]*wire.MsgTx, len(prevoutTxs))
+	prevOutIdxs := make(map[wire.OutPoint]uint32, len(prevoutTxs))
 	for inputIndex, prevTx := range prevoutTxs {
 		outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
 		if err := validatePrevoutTx(inputIndex, prevTx, outpoint.Hash); err != nil {
 			return nil, err
 		}
 		prevOutArkTxs[outpoint] = prevTx
+		prevOutIdxs[outpoint] = outpoint.Index
 	}
 
-	return newMapArkPrevOutFetcher(baseFetcher, prevOutArkTxs), nil
+	return newMapArkPrevOutFetcher(baseFetcher, prevOutArkTxs, prevOutIdxs), nil
 }
 
 func prevOutFetcherForArkTxFromPSBT(
@@ -53,6 +55,7 @@ func prevOutFetcherForArkTxFromPSBT(
 	}
 
 	prevOutArkTxs := make(map[wire.OutPoint]*wire.MsgTx, len(prevoutTxs))
+	prevOutIdxs := make(map[wire.OutPoint]uint32, len(prevoutTxs))
 	for inputIndex, prevTx := range prevoutTxs {
 		outpoint := arkPtx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
 		checkpointTxid := outpoint.Hash.String()
@@ -77,9 +80,10 @@ func prevOutFetcherForArkTxFromPSBT(
 		}
 
 		prevOutArkTxs[outpoint] = prevTx
+		prevOutIdxs[outpoint] = checkpointInputPrevout.Index
 	}
 
-	return newMapArkPrevOutFetcher(baseFetcher, prevOutArkTxs), nil
+	return newMapArkPrevOutFetcher(baseFetcher, prevOutArkTxs, prevOutIdxs), nil
 }
 
 func decodePrevoutTxsFromPSBT(ptx *psbt.Packet) (map[int]*wire.MsgTx, error) {
@@ -150,6 +154,7 @@ func prevOutFetcherForOnchainTxFromPSBT(ptx *psbt.Packet) (arkade.ArkPrevOutFetc
 	}
 
 	prevOutArkTxs := make(map[wire.OutPoint]*wire.MsgTx, len(prevoutTxs))
+	prevOutIdxs := make(map[wire.OutPoint]uint32, len(prevoutTxs))
 	for inputIndex, prevTx := range prevoutTxs {
 		outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
 
@@ -165,20 +170,27 @@ func prevOutFetcherForOnchainTxFromPSBT(ptx *psbt.Packet) (arkade.ArkPrevOutFetc
 		}
 
 		prevOutArkTxs[outpoint] = prevTx
+		prevOutIdxs[outpoint] = outpoint.Index
 	}
 
-	return newMapArkPrevOutFetcher(baseFetcher, prevOutArkTxs), nil
+	return newMapArkPrevOutFetcher(baseFetcher, prevOutArkTxs, prevOutIdxs), nil
 }
 
 type mapArkPrevOutFetcher struct {
 	txscript.PrevOutputFetcher
-	arkTxs map[wire.OutPoint]*wire.MsgTx
+	arkTxs      map[wire.OutPoint]*wire.MsgTx
+	prevOutIdxs map[wire.OutPoint]uint32
 }
 
-func newMapArkPrevOutFetcher(base txscript.PrevOutputFetcher, arkTxs map[wire.OutPoint]*wire.MsgTx) *mapArkPrevOutFetcher {
+func newMapArkPrevOutFetcher(
+	base txscript.PrevOutputFetcher,
+	arkTxs map[wire.OutPoint]*wire.MsgTx,
+	prevOutIdxs map[wire.OutPoint]uint32,
+) *mapArkPrevOutFetcher {
 	return &mapArkPrevOutFetcher{
 		PrevOutputFetcher: base,
 		arkTxs:            arkTxs,
+		prevOutIdxs:       prevOutIdxs,
 	}
 }
 
@@ -187,6 +199,25 @@ func (f *mapArkPrevOutFetcher) FetchPrevOutArkTx(op wire.OutPoint) *wire.MsgTx {
 		return nil
 	}
 	return f.arkTxs[op]
+}
+
+func (f *mapArkPrevOutFetcher) FetchVtxoPrevOutPkScript(op wire.OutPoint) []byte {
+	if f.arkTxs == nil || f.prevOutIdxs == nil {
+		return nil
+	}
+
+	idx, foundIdx := f.prevOutIdxs[op]
+	arkTx, foundTx := f.arkTxs[op]
+
+	if !foundIdx || !foundTx {
+		return nil
+	}
+
+	if idx >= uint32(len(arkTx.TxOut)) {
+		return nil
+	}
+
+	return arkTx.TxOut[idx].PkScript
 }
 
 func validatePrevoutTx(inputIndex int, prevTx *wire.MsgTx, expectedHash chainhash.Hash) error {
