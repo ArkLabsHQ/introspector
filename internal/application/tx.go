@@ -434,7 +434,7 @@ func (s *service) retryFinalize(ctx context.Context, txid string, checkpoints []
 		}
 
 		delay := applyJitter(backoffDelay, retryConfig.Jitter)
-		backoffDelay = max(retryConfig.MaxDelay, backoffDelay*time.Duration(retryConfig.Multiplier))
+		backoffDelay = min(retryConfig.MaxDelay, backoffDelay*time.Duration(retryConfig.Multiplier))
 
 		// try a minimum number of times before respecting ctx.Done
 		if attempt < retryConfig.MinAttempts {
