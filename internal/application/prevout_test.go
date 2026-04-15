@@ -1,6 +1,7 @@
 package application
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"strings"
@@ -20,6 +21,7 @@ func TestArkPrevOutFetcher(t *testing.T) {
 			t.Run(f.Name, func(t *testing.T) {
 				ptx := decodePSBT(t, f.Psbt)
 				checkpoints := decodePSBTs(t, f.Checkpoints)
+				require.Len(t, f.ExpectedVtxoPkScripts, len(ptx.Inputs))
 
 				fetcher, err := newPrevOutFetcher(ptx, checkpoints)
 				require.NoError(t, err)
@@ -31,6 +33,7 @@ func TestArkPrevOutFetcher(t *testing.T) {
 					outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
 					if len(fields) == 0 {
 						require.Nil(t, fetcher.FetchPrevOutArkTx(outpoint))
+						require.Nil(t, fetcher.FetchVtxoPrevOutPkScript(outpoint))
 						continue
 					}
 
@@ -39,6 +42,16 @@ func TestArkPrevOutFetcher(t *testing.T) {
 					got := fetcher.FetchPrevOutArkTx(outpoint)
 					require.NotNil(t, got)
 					require.Equal(t, fields[0].TxHash(), got.TxHash())
+
+					expectedPkScriptHex := f.ExpectedVtxoPkScripts[inputIndex]
+					if expectedPkScriptHex == "" {
+						require.Nil(t, fetcher.FetchVtxoPrevOutPkScript(outpoint))
+						continue
+					}
+
+					expectedPkScript, err := hex.DecodeString(expectedPkScriptHex)
+					require.NoError(t, err)
+					require.Equal(t, expectedPkScript, fetcher.FetchVtxoPrevOutPkScript(outpoint))
 				}
 			})
 		}
@@ -47,21 +60,9 @@ func TestArkPrevOutFetcher(t *testing.T) {
 	t.Run("invalid", func(t *testing.T) {
 		for _, f := range fix.Invalid {
 			t.Run(f.Name, func(t *testing.T) {
-				ptx, err := parsePSBT(f.Psbt)
-				if err != nil {
-					require.Error(t, err)
-					require.Contains(t, err.Error(), f.ErrorContains)
-					return
-				}
-
-				checkpoints, err := parsePSBTs(f.Checkpoints)
-				if err != nil {
-					require.Error(t, err)
-					require.Contains(t, err.Error(), f.ErrorContains)
-					return
-				}
-
-				_, err = newPrevOutFetcher(ptx, checkpoints)
+				ptx := decodePSBT(t, f.Psbt)
+				checkpoints := decodePSBTs(t, f.Checkpoints)
+				_, err := newPrevOutFetcher(ptx, checkpoints)
 				require.Error(t, err)
 				require.Contains(t, err.Error(), f.ErrorContains)
 			})
@@ -75,9 +76,10 @@ type fixtures struct {
 }
 
 type validFixture struct {
-	Name        string   `json:"name"`
-	Psbt        string   `json:"psbt"`
-	Checkpoints []string `json:"checkpoints"`
+	Name                  string   `json:"name"`
+	Psbt                  string   `json:"psbt"`
+	Checkpoints           []string `json:"checkpoints"`
+	ExpectedVtxoPkScripts []string `json:"expectedVtxoPkScripts"`
 }
 
 type invalidFixture struct {
@@ -112,7 +114,7 @@ func newPrevOutFetcher(
 func decodePSBT(t testing.TB, b64 string) *psbt.Packet {
 	t.Helper()
 
-	ptx, err := parsePSBT(b64)
+	ptx, err := psbt.NewFromRawBytes(strings.NewReader(b64), true)
 	require.NoError(t, err)
 
 	return ptx
@@ -121,25 +123,11 @@ func decodePSBT(t testing.TB, b64 string) *psbt.Packet {
 func decodePSBTs(t testing.TB, b64Packets []string) []*psbt.Packet {
 	t.Helper()
 
-	packets, err := parsePSBTs(b64Packets)
-	require.NoError(t, err)
-
-	return packets
-}
-
-func parsePSBT(b64 string) (*psbt.Packet, error) {
-	return psbt.NewFromRawBytes(strings.NewReader(b64), true)
-}
-
-func parsePSBTs(b64Packets []string) ([]*psbt.Packet, error) {
 	packets := make([]*psbt.Packet, 0, len(b64Packets))
 	for _, b64 := range b64Packets {
-		packet, err := parsePSBT(b64)
-		if err != nil {
-			return nil, err
-		}
-		packets = append(packets, packet)
+		ptx := decodePSBT(t, b64)
+		packets = append(packets, ptx)
 	}
 
-	return packets, nil
+	return packets
 }
