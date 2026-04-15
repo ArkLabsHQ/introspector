@@ -215,6 +215,33 @@ func (h *handler) SubmitFinalization(
 	return resp, nil
 }
 
+func (h *handler) SubmitOnchainTx(
+	ctx context.Context, req *introspectorv1.SubmitOnchainTxRequest,
+) (*introspectorv1.SubmitOnchainTxResponse, error) {
+	raw := req.GetTx()
+	if len(raw) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "missing tx")
+	}
+
+	ptx, err := psbt.NewFromRawBytes(strings.NewReader(raw), true)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid tx")
+	}
+
+	signed, err := h.svc.SubmitOnchainTx(ctx, application.OnchainTx{Tx: ptx})
+	if err != nil {
+		log.WithError(err).Error("failed to process onchain tx")
+		return nil, status.Error(codes.Internal, "failed to process onchain tx")
+	}
+
+	encoded, err := signed.B64Encode()
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to encode tx")
+	}
+
+	return &introspectorv1.SubmitOnchainTxResponse{SignedTx: encoded}, nil
+}
+
 func verifyTreeRelatedToCommitment(commitmentPtx *psbt.Packet, txTree *tree.TxTree) error {
 	if len(txTree.Root.Inputs) != len(commitmentPtx.UnsignedTx.TxIn) {
 		return fmt.Errorf("invalid number of inputs")

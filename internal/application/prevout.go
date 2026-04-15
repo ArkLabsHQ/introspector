@@ -90,6 +90,34 @@ func decodePrevoutTxsFromPSBT(ptx *psbt.Packet) (map[int]*wire.MsgTx, error) {
 	prevoutTxs := make(map[int]*wire.MsgTx)
 
 	for inputIndex := range ptx.Inputs {
+		fields, err := txutils.GetArkPsbtFields(ptx, inputIndex, arkade.PrevArkTxField)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode prevout tx for input %d: %w", inputIndex, err)
+		}
+
+		if len(fields) == 0 {
+			continue
+		}
+		if len(fields) > 1 {
+			return nil, fmt.Errorf("multiple prevout tx fields found for input %d", inputIndex)
+		}
+
+		prevTx := fields[0]
+		prevTxCopy := prevTx
+		prevoutTxs[inputIndex] = &prevTxCopy
+	}
+
+	return prevoutTxs, nil
+}
+
+func decodeOnchainPrevoutTxsFromPSBT(ptx *psbt.Packet) (map[int]*wire.MsgTx, error) {
+	if len(ptx.Inputs) != len(ptx.UnsignedTx.TxIn) {
+		return nil, fmt.Errorf("malformed psbt")
+	}
+
+	prevoutTxs := make(map[int]*wire.MsgTx)
+
+	for inputIndex := range ptx.Inputs {
 		fields, err := txutils.GetArkPsbtFields(ptx, inputIndex, arkade.PrevoutTxField)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode prevout tx for input %d: %w", inputIndex, err)
@@ -108,6 +136,38 @@ func decodePrevoutTxsFromPSBT(ptx *psbt.Packet) (map[int]*wire.MsgTx, error) {
 	}
 
 	return prevoutTxs, nil
+}
+
+func prevOutFetcherForOnchainTxFromPSBT(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher, error) {
+	baseFetcher, err := computePrevoutFetcher(ptx)
+	if err != nil {
+		return nil, err
+	}
+
+	prevoutTxs, err := decodeOnchainPrevoutTxsFromPSBT(ptx)
+	if err != nil {
+		return nil, err
+	}
+
+	prevOutArkTxs := make(map[wire.OutPoint]*wire.MsgTx, len(prevoutTxs))
+	for inputIndex, prevTx := range prevoutTxs {
+		outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
+
+		if err := validatePrevoutTx(inputIndex, prevTx, outpoint.Hash); err != nil {
+			return nil, err
+		}
+
+		if outpoint.Index >= uint32(len(prevTx.TxOut)) {
+			return nil, fmt.Errorf(
+				"prevout tx output index out of range for input %d: index=%d outputs=%d",
+				inputIndex, outpoint.Index, len(prevTx.TxOut),
+			)
+		}
+
+		prevOutArkTxs[outpoint] = prevTx
+	}
+
+	return newMapArkPrevOutFetcher(baseFetcher, prevOutArkTxs), nil
 }
 
 type mapArkPrevOutFetcher struct {
@@ -141,7 +201,6 @@ func validatePrevoutTx(inputIndex int, prevTx *wire.MsgTx, expectedHash chainhas
 	return nil
 }
 
-// TODO : do not rely on witness utxo to compute the prevout fetcher
 func computePrevoutFetcher(ptx *psbt.Packet) (txscript.PrevOutputFetcher, error) {
 	prevouts := make(map[wire.OutPoint]*wire.TxOut)
 

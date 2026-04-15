@@ -736,7 +736,7 @@ func executeArkadeScripts(t *testing.T, ptx *psbt.Packet, signerPublicKey *btcec
 	// relationship with the accompanying checkpoints.
 	prevOutArkTxs := make(map[wire.OutPoint]*wire.MsgTx)
 	for inputIndex := range ptx.Inputs {
-		fields, err := txutils.GetArkPsbtFields(ptx, inputIndex, arkade.PrevoutTxField)
+		fields, err := txutils.GetArkPsbtFields(ptx, inputIndex, arkade.PrevArkTxField)
 		if err != nil {
 			return fmt.Errorf("failed to decode prevout tx for input %d: %w", inputIndex, err)
 		}

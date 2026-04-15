@@ -36,11 +36,16 @@ type SignedBatchFinalization struct {
 	CommitmentTx *psbt.Packet
 }
 
+type OnchainTx struct {
+	Tx *psbt.Packet
+}
+
 type Service interface {
 	GetInfo(context.Context) (*Info, error)
 	SubmitTx(context.Context, OffchainTx) (*OffchainTx, error)
 	SubmitIntent(context.Context, Intent) (*psbt.Packet, error)
 	SubmitFinalization(context.Context, BatchFinalization) (*SignedBatchFinalization, error)
+	SubmitOnchainTx(context.Context, OnchainTx) (*psbt.Packet, error)
 }
 
 type service struct {
