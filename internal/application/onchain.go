@@ -16,7 +16,6 @@ import (
 // SubmitOnchainTx executes arkade scripts on a plain Bitcoin PSBT and signs
 // every input whose tapscript closure contains the introspector's tweaked
 // key.
-//
 // Rejects any input whose tapscript closure also contains the arkd signer
 // pubkey: those inputs must go through SubmitTx so that the offchain
 // checks (checkpoints, forfeit flow) are enforced. Accepting them here
@@ -53,7 +52,7 @@ func (s *service) SubmitOnchainTx(ctx context.Context, tx OnchainTx) (*psbt.Pack
 
 		if containsPubKey(script.ClosurePubKeys(), s.arkdPubKey) {
 			return nil, fmt.Errorf(
-				"tapscript contains arkd signer pubkey: can't be used onchain",
+				"tapscript on input #%d contains arkd signer pubkey: can't be used onchain",
 				inputIndex,
 			)
 		}
