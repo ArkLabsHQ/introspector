@@ -1541,6 +1541,24 @@ func setupServerWalletAndCLI() error {
 	); err != nil {
 		return fmt.Errorf("error initializing ark config: %s", err)
 	}
+
+	// wait for introspector to come up
+	for {
+		time.Sleep(time.Second)
+
+		conn, err := grpc.NewClient("localhost:7073", grpc.WithTransportCredentials(insecure.NewCredentials()))
+
+		if err != nil {
+			continue
+		}
+
+		introspectorClient := introspectorclient.NewGRPCClient(conn)
+
+		if _, err := introspectorClient.GetInfo(context.Background()); err == nil {
+			break
+		}
+	}
+
 	return nil
 }
 
