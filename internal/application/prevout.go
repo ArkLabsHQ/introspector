@@ -17,7 +17,7 @@ func prevOutFetcherForIntentFromPSBT(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher
 		return nil, err
 	}
 
-	prevoutTxs, err := decodePrevoutTxsFromPSBT(ptx)
+	prevoutTxs, err := decodePrevoutTxsFromField(ptx, arkade.PrevArkTxField)
 	if err != nil {
 		return nil, err
 	}
@@ -37,14 +37,14 @@ func prevOutFetcherForIntentFromPSBT(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher
 }
 
 func prevOutFetcherForArkTxFromPSBT(
-	arkPtx *psbt.Packet, checkpoints []*psbt.Packet,
+	ptx *psbt.Packet, checkpoints []*psbt.Packet,
 ) (arkade.ArkPrevOutFetcher, error) {
-	baseFetcher, err := computePrevoutFetcher(arkPtx)
+	baseFetcher, err := computePrevoutFetcher(ptx)
 	if err != nil {
 		return nil, err
 	}
 
-	prevoutTxs, err := decodePrevoutTxsFromPSBT(arkPtx)
+	prevoutTxs, err := decodePrevoutTxsFromField(ptx, arkade.PrevArkTxField)
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +57,7 @@ func prevOutFetcherForArkTxFromPSBT(
 	prevOutArkTxs := make(map[wire.OutPoint]*wire.MsgTx, len(prevoutTxs))
 	prevOutIdxs := make(map[wire.OutPoint]uint32, len(prevoutTxs))
 	for inputIndex, prevTx := range prevoutTxs {
-		outpoint := arkPtx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
+		outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
 		checkpointTxid := outpoint.Hash.String()
 		checkpoint, ok := checkpointsByTxid[checkpointTxid]
 		if !ok {
@@ -86,69 +86,13 @@ func prevOutFetcherForArkTxFromPSBT(
 	return newMapArkPrevOutFetcher(baseFetcher, prevOutArkTxs, prevOutIdxs), nil
 }
 
-func decodePrevoutTxsFromPSBT(ptx *psbt.Packet) (map[int]*wire.MsgTx, error) {
-	if len(ptx.Inputs) != len(ptx.UnsignedTx.TxIn) {
-		return nil, fmt.Errorf("malformed psbt")
-	}
-
-	prevoutTxs := make(map[int]*wire.MsgTx)
-
-	for inputIndex := range ptx.Inputs {
-		fields, err := txutils.GetArkPsbtFields(ptx, inputIndex, arkade.PrevArkTxField)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode prevout tx for input %d: %w", inputIndex, err)
-		}
-
-		if len(fields) == 0 {
-			continue
-		}
-		if len(fields) > 1 {
-			return nil, fmt.Errorf("multiple prevout tx fields found for input %d", inputIndex)
-		}
-
-		prevTx := fields[0]
-		prevTxCopy := prevTx
-		prevoutTxs[inputIndex] = &prevTxCopy
-	}
-
-	return prevoutTxs, nil
-}
-
-func decodeOnchainPrevoutTxsFromPSBT(ptx *psbt.Packet) (map[int]*wire.MsgTx, error) {
-	if len(ptx.Inputs) != len(ptx.UnsignedTx.TxIn) {
-		return nil, fmt.Errorf("malformed psbt")
-	}
-
-	prevoutTxs := make(map[int]*wire.MsgTx)
-
-	for inputIndex := range ptx.Inputs {
-		fields, err := txutils.GetArkPsbtFields(ptx, inputIndex, arkade.PrevoutTxField)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode prevout tx for input %d: %w", inputIndex, err)
-		}
-
-		if len(fields) == 0 {
-			continue
-		}
-		if len(fields) > 1 {
-			return nil, fmt.Errorf("multiple prevout tx fields found for input %d", inputIndex)
-		}
-
-		prevTx := fields[0]
-		prevTxCopy := prevTx
-		prevoutTxs[inputIndex] = &prevTxCopy
-	}
-
-	return prevoutTxs, nil
-}
-
 func prevOutFetcherForOnchainTxFromPSBT(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher, error) {
 	baseFetcher, err := computePrevoutFetcher(ptx)
 	if err != nil {
 		return nil, err
 	}
 
-	prevoutTxs, err := decodeOnchainPrevoutTxsFromPSBT(ptx)
+	prevoutTxs, err := decodePrevoutTxsFromField(ptx, arkade.PrevoutTxField)
 	if err != nil {
 		return nil, err
 	}
@@ -174,6 +118,39 @@ func prevOutFetcherForOnchainTxFromPSBT(ptx *psbt.Packet) (arkade.ArkPrevOutFetc
 	}
 
 	return newMapArkPrevOutFetcher(baseFetcher, prevOutArkTxs, prevOutIdxs), nil
+}
+
+// decodePrevoutTxsFromField decodes prevout transactions from the given psbt field
+// arkade.PrevArkTxField is used by offchain transactions
+// arkade.PrevoutTxField is used by onchain transactions
+func decodePrevoutTxsFromField(
+	ptx *psbt.Packet, field txutils.ArkPsbtFieldCoder[wire.MsgTx],
+) (map[int]*wire.MsgTx, error) {
+	if len(ptx.Inputs) != len(ptx.UnsignedTx.TxIn) {
+		return nil, fmt.Errorf("malformed psbt")
+	}
+
+	prevoutTxs := make(map[int]*wire.MsgTx)
+
+	for inputIndex := range ptx.Inputs {
+		fields, err := txutils.GetArkPsbtFields(ptx, inputIndex, field)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode prevout tx for input %d: %w", inputIndex, err)
+		}
+
+		if len(fields) == 0 {
+			continue
+		}
+		if len(fields) > 1 {
+			return nil, fmt.Errorf("multiple prevout tx fields found for input %d", inputIndex)
+		}
+
+		prevTx := fields[0]
+		prevTxCopy := prevTx
+		prevoutTxs[inputIndex] = &prevTxCopy
+	}
+
+	return prevoutTxs, nil
 }
 
 type mapArkPrevOutFetcher struct {
