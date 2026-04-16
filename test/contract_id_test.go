@@ -36,7 +36,7 @@ var fixedStatePayload = uint64LE(0xdeadbeef)
 //     contract's asset identity via OP_INSPECTINASSETLOOKUP, and reads the state
 //     from the current transaction's packet.
 func TestContractIdWithAssetIdentity(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	alice, aliceWallet, alicePubKey, grpcClient := setupArkSDKwithPublicKey(t)
 	t.Cleanup(func() {
