@@ -265,7 +265,7 @@ func TestSubmitOnchainTx(t *testing.T) {
 		require.Contains(t, err.Error(), "failed to process onchain tx")
 	})
 
-	// VTXO whose exit leaf is a CSVMultisigClosure containing the introspector's arkade-tweaked key. 
+	// VTXO whose exit leaf is a CSVMultisigClosure containing the introspector's arkade-tweaked key.
 	// Post-unroll, the owner can continue the covenant execution onchain.
 	t.Run("CSV exit closure", func(t *testing.T) {
 		const csvBlocks uint32 = 3
