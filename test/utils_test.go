@@ -34,6 +34,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcwallet/waddrmgr"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -776,6 +777,140 @@ func executeArkadeScripts(t *testing.T, ptx *psbt.Packet, signerPublicKey *btcec
 	}
 
 	return nil
+}
+
+// createArkadeOnlyVtxoScript builds a VTXO script with a 2-of-2 multisig
+// (server signer + arkade-tweaked introspector key). No separate owner key.
+func createArkadeOnlyVtxoScript(
+	serverSigner *btcec.PublicKey,
+	introspectorPubKey *btcec.PublicKey,
+	arkadeScriptHash []byte,
+) script.TapscriptsVtxoScript {
+	return script.TapscriptsVtxoScript{
+		Closures: []script.Closure{
+			&script.MultisigClosure{
+				PubKeys: []*btcec.PublicKey{
+					serverSigner,
+					arkade.ComputeArkadeScriptPublicKey(introspectorPubKey, arkadeScriptHash),
+				},
+			},
+		},
+	}
+}
+
+func onlyForfeitScript(t *testing.T, vtxoScript script.TapscriptsVtxoScript) []byte {
+	t.Helper()
+
+	closures := vtxoScript.ForfeitClosures()
+	require.Len(t, closures, 1)
+
+	tapscript, err := closures[0].Script()
+	require.NoError(t, err)
+
+	return tapscript
+}
+
+func p2trScriptForVtxoScript(t *testing.T, vtxoScript script.TapscriptsVtxoScript) []byte {
+	t.Helper()
+
+	tapKey, _, err := vtxoScript.TapTree()
+	require.NoError(t, err)
+
+	pkScript, err := script.P2TRScript(tapKey)
+	require.NoError(t, err)
+
+	return pkScript
+}
+
+func vtxoInputFromScriptOutput(
+	t *testing.T,
+	prevTx *wire.MsgTx,
+	outIndex uint32,
+	vtxoScript script.TapscriptsVtxoScript,
+	tapscript []byte,
+) offchain.VtxoInput {
+	t.Helper()
+
+	tapKey, tapTree, err := vtxoScript.TapTree()
+	require.NoError(t, err)
+
+	expectedPkScript, err := script.P2TRScript(tapKey)
+	require.NoError(t, err)
+	require.Equal(t, expectedPkScript, prevTx.TxOut[outIndex].PkScript)
+
+	merkleProof, err := tapTree.GetTaprootMerkleProof(
+		txscript.NewBaseTapLeaf(tapscript).TapHash(),
+	)
+	require.NoError(t, err)
+
+	ctrlBlock, err := txscript.ParseControlBlock(merkleProof.ControlBlock)
+	require.NoError(t, err)
+
+	revealedTapscripts, err := vtxoScript.Encode()
+	require.NoError(t, err)
+
+	return offchain.VtxoInput{
+		Outpoint: &wire.OutPoint{
+			Hash:  prevTx.TxHash(),
+			Index: outIndex,
+		},
+		Tapscript: &waddrmgr.Tapscript{
+			ControlBlock:   ctrlBlock,
+			RevealedScript: merkleProof.Script,
+		},
+		Amount:             prevTx.TxOut[outIndex].Value,
+		RevealedTapscripts: revealedTapscripts,
+	}
+}
+
+func findTaprootOutput(t *testing.T, tx *wire.MsgTx, tapKey *btcec.PublicKey) (uint32, *wire.TxOut) {
+	t.Helper()
+
+	pkScript, err := script.P2TRScript(tapKey)
+	require.NoError(t, err)
+
+	for index, output := range tx.TxOut {
+		if bytes.Equal(output.PkScript, pkScript) {
+			return uint32(index), output
+		}
+	}
+
+	require.FailNow(t, "taproot output not found")
+	return 0, nil
+}
+
+func addExtensionPacket(t *testing.T, ptx *psbt.Packet, packet extension.Packet) {
+	t.Helper()
+
+	for index, output := range ptx.UnsignedTx.TxOut {
+		if !extension.IsExtension(output.PkScript) {
+			continue
+		}
+
+		ext, err := extension.NewExtensionFromBytes(output.PkScript)
+		require.NoError(t, err)
+
+		ext = append(ext, packet)
+		txOut, err := ext.TxOut()
+		require.NoError(t, err)
+
+		ptx.UnsignedTx.TxOut[index] = txOut
+		return
+	}
+
+	ext := extension.Extension{packet}
+	txOut, err := ext.TxOut()
+	require.NoError(t, err)
+
+	lastIdx := len(ptx.UnsignedTx.TxOut) - 1
+	lastOut := ptx.UnsignedTx.TxOut[lastIdx]
+	if bytes.Equal(lastOut.PkScript, txutils.ANCHOR_PKSCRIPT) {
+		ptx.UnsignedTx.TxOut[lastIdx] = txOut
+		ptx.UnsignedTx.AddTxOut(lastOut)
+	} else {
+		ptx.UnsignedTx.AddTxOut(txOut)
+	}
+	ptx.Outputs = append(ptx.Outputs, psbt.POutput{})
 }
 
 // To get debug output for script execution: call `executeArkadeScripts(t, psbt, checkpoints, pubkey, debugScriptExecution(t))`

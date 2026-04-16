@@ -1,7 +1,6 @@
 package test
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"strings"
@@ -15,11 +14,9 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/arkade-os/go-sdk/indexer"
 	"github.com/arkade-os/go-sdk/types"
-	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcwallet/waddrmgr"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,7 +46,7 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 	require.NoError(t, err)
 
 	counterArkadeScript := counterContractArkadeScript(t)
-	counterVtxoScript := createCounterVtxoScript(
+	counterVtxoScript := createArkadeOnlyVtxoScript(
 		aliceAddr.Signer,
 		introspectorPubKey,
 		arkade.ArkadeScriptHash(counterArkadeScript),
@@ -58,7 +55,7 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 	counterDeployPkScript := p2trScriptForVtxoScript(t, counterVtxoScript)
 
 	deployArkadeScript := counterDeployArkadeScript(t, counterDeployPkScript)
-	stagingVtxoScript := createCounterVtxoScript(
+	stagingVtxoScript := createArkadeOnlyVtxoScript(
 		aliceAddr.Signer,
 		introspectorPubKey,
 		arkade.ArkadeScriptHash(deployArkadeScript),
@@ -217,24 +214,6 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 	submitAndFinalize(secondUnlockTx, secondUnlockCheckpoints)
 }
 
-// arkd requires its signer in every forfeit leaf. The dummy counter contract
-// adds no owner key: only the server signer and tweaked introspector sign.
-func createCounterVtxoScript(
-	serverSigner *btcec.PublicKey,
-	introspectorPubKey *btcec.PublicKey,
-	arkadeScriptHash []byte,
-) script.TapscriptsVtxoScript {
-	return script.TapscriptsVtxoScript{
-		Closures: []script.Closure{
-			&script.MultisigClosure{
-				PubKeys: []*btcec.PublicKey{
-					serverSigner,
-					arkade.ComputeArkadeScriptPublicKey(introspectorPubKey, arkadeScriptHash),
-				},
-			},
-		},
-	}
-}
 
 func counterDeployArkadeScript(t *testing.T, counterDeployPkScript []byte) []byte {
 	t.Helper()
@@ -327,70 +306,6 @@ func buildCounterUnlockTx(
 	return counterTx, checkpoints
 }
 
-func onlyForfeitScript(t *testing.T, vtxoScript script.TapscriptsVtxoScript) []byte {
-	t.Helper()
-
-	closures := vtxoScript.ForfeitClosures()
-	require.Len(t, closures, 1)
-
-	tapscript, err := closures[0].Script()
-	require.NoError(t, err)
-
-	return tapscript
-}
-
-func p2trScriptForVtxoScript(t *testing.T, vtxoScript script.TapscriptsVtxoScript) []byte {
-	t.Helper()
-
-	tapKey, _, err := vtxoScript.TapTree()
-	require.NoError(t, err)
-
-	pkScript, err := script.P2TRScript(tapKey)
-	require.NoError(t, err)
-
-	return pkScript
-}
-
-func vtxoInputFromScriptOutput(
-	t *testing.T,
-	prevTx *wire.MsgTx,
-	outIndex uint32,
-	vtxoScript script.TapscriptsVtxoScript,
-	tapscript []byte,
-) offchain.VtxoInput {
-	t.Helper()
-
-	tapKey, tapTree, err := vtxoScript.TapTree()
-	require.NoError(t, err)
-
-	expectedPkScript, err := script.P2TRScript(tapKey)
-	require.NoError(t, err)
-	require.Equal(t, expectedPkScript, prevTx.TxOut[outIndex].PkScript)
-
-	merkleProof, err := tapTree.GetTaprootMerkleProof(
-		txscript.NewBaseTapLeaf(tapscript).TapHash(),
-	)
-	require.NoError(t, err)
-
-	ctrlBlock, err := txscript.ParseControlBlock(merkleProof.ControlBlock)
-	require.NoError(t, err)
-
-	revealedTapscripts, err := vtxoScript.Encode()
-	require.NoError(t, err)
-
-	return offchain.VtxoInput{
-		Outpoint: &wire.OutPoint{
-			Hash:  prevTx.TxHash(),
-			Index: outIndex,
-		},
-		Tapscript: &waddrmgr.Tapscript{
-			ControlBlock:   ctrlBlock,
-			RevealedScript: merkleProof.Script,
-		},
-		Amount:             prevTx.TxOut[outIndex].Value,
-		RevealedTapscripts: revealedTapscripts,
-	}
-}
 
 func checkpointedCounterVtxoInput(
 	t *testing.T,
@@ -414,22 +329,6 @@ func checkpointedCounterVtxoInput(
 	}
 
 	return vtxoInputFromScriptOutput(t, prevTx, outIndex, checkpointVtxoScript, counterTapscript)
-}
-
-func findTaprootOutput(t *testing.T, tx *wire.MsgTx, tapKey *btcec.PublicKey) (uint32, *wire.TxOut) {
-	t.Helper()
-
-	pkScript, err := script.P2TRScript(tapKey)
-	require.NoError(t, err)
-
-	for index, output := range tx.TxOut {
-		if bytes.Equal(output.PkScript, pkScript) {
-			return uint32(index), output
-		}
-	}
-
-	require.FailNow(t, "taproot output not found")
-	return 0, nil
 }
 
 func addCounterPacket(t *testing.T, ptx *psbt.Packet, value uint64) {
@@ -464,36 +363,3 @@ func requireCounterPacket(t *testing.T, tx *wire.MsgTx, want uint64) {
 	require.FailNow(t, "counter packet not found")
 }
 
-func addExtensionPacket(t *testing.T, ptx *psbt.Packet, packet extension.Packet) {
-	t.Helper()
-
-	for index, output := range ptx.UnsignedTx.TxOut {
-		if !extension.IsExtension(output.PkScript) {
-			continue
-		}
-
-		ext, err := extension.NewExtensionFromBytes(output.PkScript)
-		require.NoError(t, err)
-
-		ext = append(ext, packet)
-		txOut, err := ext.TxOut()
-		require.NoError(t, err)
-
-		ptx.UnsignedTx.TxOut[index] = txOut
-		return
-	}
-
-	ext := extension.Extension{packet}
-	txOut, err := ext.TxOut()
-	require.NoError(t, err)
-
-	lastIdx := len(ptx.UnsignedTx.TxOut) - 1
-	lastOut := ptx.UnsignedTx.TxOut[lastIdx]
-	if bytes.Equal(lastOut.PkScript, txutils.ANCHOR_PKSCRIPT) {
-		ptx.UnsignedTx.TxOut[lastIdx] = txOut
-		ptx.UnsignedTx.AddTxOut(lastOut)
-	} else {
-		ptx.UnsignedTx.AddTxOut(txOut)
-	}
-	ptx.Outputs = append(ptx.Outputs, psbt.POutput{})
-}
