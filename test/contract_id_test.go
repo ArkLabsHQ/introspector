@@ -270,6 +270,7 @@ func TestContractIdWithAssetIdentity(t *testing.T) {
 //   - State packet exists with the fixed payload
 //   - Output 0 goes to the main contract pkscript
 //   - Exactly 1 asset group with output sum = 1
+//   - Output 0 carries the newly issued asset with amount 1
 //   - Value is preserved
 func contractIdDeployArkadeScript(t *testing.T, mainPkScript []byte) []byte {
 	t.Helper()
@@ -299,6 +300,15 @@ func contractIdDeployArkadeScript(t *testing.T, mainPkScript []byte) []byte {
 		AddOp(arkade.OP_INSPECTASSETGROUPSUM).
 		AddData(uint64LE(1)).
 		AddOp(arkade.OP_EQUALVERIFY).
+		// Verify output 0 carries the freshly issued contract ID asset.
+		AddInt64(0). // output index for OP_INSPECTOUTASSETLOOKUP
+		AddInt64(0). // group index for OP_INSPECTASSETGROUPASSETID
+		AddOp(arkade.OP_INSPECTASSETGROUPASSETID).
+		AddOp(arkade.OP_INSPECTOUTASSETLOOKUP).
+		AddOp(arkade.OP_1).
+		AddOp(arkade.OP_EQUALVERIFY). // found flag == 1
+		AddData(uint64LE(1)).
+		AddOp(arkade.OP_EQUALVERIFY). // amount == 1
 		// Verify value preserved (final check leaves result on stack).
 		AddInt64(0).
 		AddOp(arkade.OP_INSPECTOUTPUTVALUE).
@@ -313,7 +323,8 @@ func contractIdDeployArkadeScript(t *testing.T, mainPkScript []byte) []byte {
 
 // mainContractArkadeScript builds the recursive main contract script. It verifies:
 //   - Discovers own asset ID at runtime via OP_INSPECTASSETGROUPASSETID
-//   - Asset is forwarded to output 0 via OP_INSPECTOUTASSETLOOKUP
+//   - Current input carries the group-0 contract ID asset with amount 1
+//   - Contract ID asset is forwarded to output 0 with amount 1
 //   - Previous state matches the fixed payload (OP_INSPECTINPUTPACKET)
 //   - Current state matches the fixed payload (OP_INSPECTPACKET)
 //   - Output 0 scriptpubkey == input scriptpubkey (continuation)
@@ -322,16 +333,25 @@ func mainContractArkadeScript(t *testing.T) []byte {
 	t.Helper()
 
 	arkadeScript, err := txscript.NewScriptBuilder().
-		// Discover own asset ID and verify it's forwarded to output 0.
-		// Stack setup: push output_index first, then OP_INSPECTASSETGROUPASSETID
-		// produces [output_index, txid, gidx] ready for OP_INSPECTOUTASSETLOOKUP.
+		// Discover the group-0 asset ID and verify this input carries it.
+		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).
+		AddInt64(0). // group index for OP_INSPECTASSETGROUPASSETID
+		AddOp(arkade.OP_INSPECTASSETGROUPASSETID).
+		AddOp(arkade.OP_INSPECTINASSETLOOKUP).
+		AddOp(arkade.OP_1).
+		AddOp(arkade.OP_EQUALVERIFY). // found flag == 1
+		AddData(uint64LE(1)).
+		AddOp(arkade.OP_EQUALVERIFY). // amount == 1
+
+		// Verify the same group-0 asset is forwarded to output 0.
 		AddInt64(0). // output index for OP_INSPECTOUTASSETLOOKUP
 		AddInt64(0). // group index for OP_INSPECTASSETGROUPASSETID
 		AddOp(arkade.OP_INSPECTASSETGROUPASSETID).
 		AddOp(arkade.OP_INSPECTOUTASSETLOOKUP).
 		AddOp(arkade.OP_1).
 		AddOp(arkade.OP_EQUALVERIFY). // found flag == 1
-		AddOp(arkade.OP_DROP).        // drop amount
+		AddData(uint64LE(1)).
+		AddOp(arkade.OP_EQUALVERIFY). // amount == 1
 
 		// Verify previous state matches fixed payload.
 		AddInt64(statePacketType).
@@ -387,7 +407,8 @@ func readerContractArkadeScript(t *testing.T, mainAssetTxid chainhash.Hash) []by
 		AddOp(arkade.OP_INSPECTINASSETLOOKUP).
 		AddOp(arkade.OP_1).
 		AddOp(arkade.OP_EQUALVERIFY). // found flag == 1
-		AddOp(arkade.OP_DROP).        // drop amount
+		AddData(uint64LE(1)).
+		AddOp(arkade.OP_EQUALVERIFY). // amount == 1
 
 		// Read and verify state from current transaction packet.
 		AddInt64(statePacketType).
