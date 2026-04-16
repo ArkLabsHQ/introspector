@@ -264,6 +264,120 @@ func TestSubmitOnchainTx(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to process onchain tx")
 	})
+
+	// VTXO whose exit leaf is a CSVMultisigClosure containing the introspector's arkade-tweaked key. 
+	// Post-unroll, the owner can continue the covenant execution onchain.
+	t.Run("CSV exit closure", func(t *testing.T) {
+		const csvBlocks uint32 = 3
+
+		csvLocktime := arklib.RelativeLocktime{
+			Type: arklib.LocktimeTypeBlock, Value: csvBlocks,
+		}
+		exitScript := createVtxoScriptWithArkadeExitClosure(
+			bobPubKey, aliceSigner, introspectorPubKey, arkadeScriptHash, csvLocktime,
+		)
+		exitTapKey, exitTapTree, err := exitScript.TapTree()
+		require.NoError(t, err)
+
+		// Merkle proof for the CSV exit leaf (second closure).
+		csvLeafScript, err := exitScript.Closures[1].Script()
+		require.NoError(t, err)
+		exitMerkleProof, err := exitTapTree.GetTaprootMerkleProof(
+			txscript.NewBaseTapLeaf(csvLeafScript).TapHash(),
+		)
+		require.NoError(t, err)
+
+		// Fund the exit-shaped tapscript address (simulates a fully
+		// unrolled VTXO sitting onchain under this tapscript).
+		exitAddr, err := btcutil.NewAddressTaproot(
+			schnorr.SerializePubKey(exitTapKey), regtestParams,
+		)
+		require.NoError(t, err)
+		exitAddrStr := exitAddr.EncodeAddress()
+
+		_, err = runCommand("nigiri", "faucet", exitAddrStr, "0.01")
+		require.NoError(t, err)
+
+		exitUtxo := waitForUtxo(t, explorerSvc, exitAddrStr, 60*time.Second)
+
+		// Mine CSV + 1 blocks so the relative locktime is satisfied.
+		for i := uint32(0); i < csvBlocks+1; i++ {
+			_, err = runCommand("nigiri", "rpc", "-generate", "1")
+			require.NoError(t, err)
+		}
+
+		exitRawHex, err := explorerSvc.GetTxHex(exitUtxo.Txid)
+		require.NoError(t, err)
+		exitRawBytes, err := hex.DecodeString(exitRawHex)
+		require.NoError(t, err)
+		exitRawTx := wire.NewMsgTx(wire.TxVersion)
+		require.NoError(t, exitRawTx.Deserialize(bytes.NewReader(exitRawBytes)))
+
+		exitContractPkScript, err := script.P2TRScript(exitTapKey)
+		require.NoError(t, err)
+
+		var exitOutput *wire.TxOut
+		var exitVout uint32
+		for i, out := range exitRawTx.TxOut {
+			if bytes.Equal(out.PkScript, exitContractPkScript) {
+				exitOutput = out
+				exitVout = uint32(i)
+				break
+			}
+		}
+		require.NotNil(t, exitOutput)
+
+		exitTxid, err := chainhash.NewHashFromStr(exitUtxo.Txid)
+		require.NoError(t, err)
+
+		// Build the spending PSBT with the CSV sequence set.
+		unsigned := wire.NewMsgTx(wire.TxVersion)
+		unsigned.AddTxIn(&wire.TxIn{
+			PreviousOutPoint: wire.OutPoint{Hash: *exitTxid, Index: exitVout},
+			Sequence:         csvBlocks, // BIP-68 block-based CSV
+		})
+		unsigned.AddTxOut(&wire.TxOut{Value: spendAmount, PkScript: bobPkScript})
+
+		ptx, err := psbt.NewFromUnsignedTx(unsigned)
+		require.NoError(t, err)
+
+		ptx.Inputs[0].WitnessUtxo = exitOutput
+		ptx.Inputs[0].TaprootLeafScript = []*psbt.TaprootTapLeafScript{{
+			ControlBlock: exitMerkleProof.ControlBlock,
+			Script:       exitMerkleProof.Script,
+			LeafVersion:  txscript.BaseLeafVersion,
+		}}
+		require.NoError(t, txutils.SetArkPsbtField(
+			ptx, 0, arkade.PrevoutTxField, *exitRawTx,
+		))
+		addIntrospectorPacket(t, ptx, []arkade.IntrospectorEntry{
+			{Vin: 0, Script: arkadeScript},
+		})
+
+		encoded, err := ptx.B64Encode()
+		require.NoError(t, err)
+
+		bobSigned, err := bobWallet.SignTransaction(ctx, explorerSvc, encoded)
+		require.NoError(t, err)
+
+		fullySigned, err := introspectorClient.SubmitOnchainTx(ctx, bobSigned)
+		require.NoError(t, err)
+
+		signedPtx, err := psbt.NewFromRawBytes(strings.NewReader(fullySigned), true)
+		require.NoError(t, err)
+
+		introspectorTweaked := arkade.ComputeArkadeScriptPublicKey(
+			introspectorPubKey, arkadeScriptHash,
+		)
+		wantKeys := map[string]struct{}{
+			hex.EncodeToString(schnorr.SerializePubKey(bobPubKey)):           {},
+			hex.EncodeToString(schnorr.SerializePubKey(introspectorTweaked)): {},
+		}
+		for _, sig := range signedPtx.Inputs[0].TaprootScriptSpendSig {
+			delete(wantKeys, hex.EncodeToString(sig.XOnlyPubKey))
+		}
+		require.Empty(t, wantKeys)
+	})
 }
 
 // buildOnchainSpendPtx builds a one-in / one-out PSBT that spends the funding

@@ -597,6 +597,28 @@ func createVtxoScriptWithArkadeScript(bobPubKey, aliceSigner, introspectorPubKey
 	}
 }
 
+func createVtxoScriptWithArkadeExitClosure(
+	bobPubKey, aliceSigner, introspectorPubKey *btcec.PublicKey,
+	arkadeScriptHash []byte, csvLocktime arklib.RelativeLocktime,
+) script.TapscriptsVtxoScript {
+	return script.TapscriptsVtxoScript{
+		Closures: []script.Closure{
+			&script.MultisigClosure{
+				PubKeys: []*btcec.PublicKey{bobPubKey, aliceSigner},
+			},
+			&script.CSVMultisigClosure{
+				MultisigClosure: script.MultisigClosure{
+					PubKeys: []*btcec.PublicKey{
+						bobPubKey,
+						arkade.ComputeArkadeScriptPublicKey(introspectorPubKey, arkadeScriptHash),
+					},
+				},
+				Locktime: csvLocktime,
+			},
+		},
+	}
+}
+
 // addIntrospectorPacket builds an IntrospectorPacket with the given entries and
 // embeds it into the transaction's OP_RETURN output. If an existing ARK OP_RETURN
 // (e.g. from an asset packet) is present, the introspector data is merged into it.
