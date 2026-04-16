@@ -10,7 +10,9 @@ import (
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
+	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
+	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
 	"github.com/arkade-os/go-sdk/indexer"
 	"github.com/arkade-os/go-sdk/types"
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -36,7 +38,7 @@ var fixedStatePayload = uint64LE(0xdeadbeef)
 func TestContractIdWithAssetIdentity(t *testing.T) {
 	ctx := context.Background()
 
-	alice, grpcClient := setupArkSDK(t)
+	alice, aliceWallet, alicePubKey, grpcClient := setupArkSDKwithPublicKey(t)
 	t.Cleanup(func() {
 		grpcClient.Close()
 	})
@@ -56,6 +58,8 @@ func TestContractIdWithAssetIdentity(t *testing.T) {
 	require.NoError(t, err)
 
 	indexerSvc := setupIndexer(t)
+	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+	require.NoError(t, err)
 
 	// Recipient for the reader's value after the co-spend.
 	recipientKey, err := btcec.NewPrivateKey()
@@ -63,22 +67,19 @@ func TestContractIdWithAssetIdentity(t *testing.T) {
 	recipientPkScript, err := txscript.PayToTaprootScript(recipientKey.PubKey())
 	require.NoError(t, err)
 
-	submitAndFinalize := func(candidateTx *psbt.Packet, checkpoints []*psbt.Packet) {
-		encodedTx, err := candidateTx.B64Encode()
-		require.NoError(t, err)
-
+	encodeCheckpoints := func(checkpoints []*psbt.Packet) []string {
 		encodedCheckpoints := make([]string, 0, len(checkpoints))
 		for _, checkpoint := range checkpoints {
 			encoded, err := checkpoint.B64Encode()
 			require.NoError(t, err)
 			encodedCheckpoints = append(encodedCheckpoints, encoded)
 		}
+		return encodedCheckpoints
+	}
 
-		_, _, err = introspectorClient.SubmitTx(ctx, encodedTx, encodedCheckpoints)
-		require.NoError(t, err)
-
+	assertOutput0Preconfirmed := func(candidateTx *psbt.Packet) {
 		opts := indexer.GetVtxosRequestOption{}
-		err = opts.WithOutpoints([]types.Outpoint{{Txid: candidateTx.UnsignedTx.TxID(), VOut: 0}})
+		err := opts.WithOutpoints([]types.Outpoint{{Txid: candidateTx.UnsignedTx.TxID(), VOut: 0}})
 		require.NoError(t, err)
 
 		vtxos, err := indexerSvc.GetVtxos(ctx, opts)
@@ -88,8 +89,42 @@ func TestContractIdWithAssetIdentity(t *testing.T) {
 		require.False(t, vtxos.Vtxos[0].Spent)
 	}
 
+	submitWithArkd := func(candidateTx *psbt.Packet, checkpoints []*psbt.Packet) {
+		encodedTx, err := candidateTx.B64Encode()
+		require.NoError(t, err)
+
+		signedTx, err := aliceWallet.SignTransaction(ctx, explorer, encodedTx)
+		require.NoError(t, err)
+
+		txid, _, signedCheckpoints, err := grpcClient.SubmitTx(ctx, signedTx, encodeCheckpoints(checkpoints))
+		require.NoError(t, err)
+		require.NotEmpty(t, txid)
+		require.NotEmpty(t, signedCheckpoints)
+
+		finalCheckpoints := make([]string, 0, len(signedCheckpoints))
+		for _, checkpoint := range signedCheckpoints {
+			signedCheckpoint, err := aliceWallet.SignTransaction(ctx, explorer, checkpoint)
+			require.NoError(t, err)
+			finalCheckpoints = append(finalCheckpoints, signedCheckpoint)
+		}
+
+		require.NoError(t, grpcClient.FinalizeTx(ctx, txid, finalCheckpoints))
+
+		assertOutput0Preconfirmed(candidateTx)
+	}
+
+	submitWithIntrospector := func(candidateTx *psbt.Packet, checkpoints []*psbt.Packet) {
+		encodedTx, err := candidateTx.B64Encode()
+		require.NoError(t, err)
+
+		_, _, err = introspectorClient.SubmitTx(ctx, encodedTx, encodeCheckpoints(checkpoints))
+		require.NoError(t, err)
+
+		assertOutput0Preconfirmed(candidateTx)
+	}
+
 	// =========================================================================
-	// Phase 1: Compile the main contract and its deploy script.
+	// Phase 1: Compile the main contract.
 	// =========================================================================
 
 	mainArkadeScript := mainContractArkadeScript(t)
@@ -101,81 +136,90 @@ func TestContractIdWithAssetIdentity(t *testing.T) {
 	mainTapscript := onlyForfeitScript(t, mainVtxoScript)
 	mainPkScript := p2trScriptForVtxoScript(t, mainVtxoScript)
 
-	deployArkadeScript := contractIdDeployArkadeScript(t, mainPkScript)
-	stagingVtxoScript := createArkadeOnlyVtxoScript(
-		aliceAddr.Signer,
-		introspectorPubKey,
-		arkade.ArkadeScriptHash(deployArkadeScript),
-	)
-	stagingTapscript := onlyForfeitScript(t, stagingVtxoScript)
-	stagingTapKey, _, err := stagingVtxoScript.TapTree()
-	require.NoError(t, err)
-
 	// =========================================================================
-	// Phase 2: Fund the staging UTXO and deploy the main contract.
+	// Phase 2: Bootstrap the main contract directly from Alice's wallet UTXO.
 	// =========================================================================
 
-	stagingAddress := arklib.Address{
-		HRP:        "tark",
-		VtxoTapKey: stagingTapKey,
-		Signer:     aliceAddr.Signer,
+	exitDelayType := arklib.LocktimeTypeBlock
+	if infos.UnilateralExitDelay >= 512 {
+		exitDelayType = arklib.LocktimeTypeSecond
 	}
-	stagingAddr, err := stagingAddress.EncodeV0()
-	require.NoError(t, err)
-
-	stagingTxid, err := alice.SendOffChain(
-		ctx,
-		[]types.Receiver{{To: stagingAddr, Amount: 20000}},
+	fundingVtxoScript := script.NewDefaultVtxoScript(
+		alicePubKey,
+		aliceAddr.Signer,
+		arklib.RelativeLocktime{
+			Type:  exitDelayType,
+			Value: uint32(infos.UnilateralExitDelay),
+		},
 	)
-	require.NoError(t, err)
-	require.NotEmpty(t, stagingTxid)
-
-	stagingTxs, err := indexerSvc.GetVirtualTxs(ctx, []string{stagingTxid})
-	require.NoError(t, err)
-	require.Len(t, stagingTxs.Txs, 1)
-
-	stagingPtx, err := psbt.NewFromRawBytes(strings.NewReader(stagingTxs.Txs[0]), true)
+	fundingTapscript := onlyForfeitScript(t, *fundingVtxoScript)
+	fundingTapKey, _, err := fundingVtxoScript.TapTree()
 	require.NoError(t, err)
 
-	stagingOutputIndex, stagingOutput := findTaprootOutput(t, stagingPtx.UnsignedTx, stagingTapKey)
-	stagingInput := vtxoInputFromScriptOutput(
+	fundingPkScript, err := script.P2TRScript(fundingTapKey)
+	require.NoError(t, err)
+	spendableVtxos, _, err := alice.ListVtxos(ctx)
+	require.NoError(t, err)
+
+	var fundingVtxo types.Vtxo
+	for _, vtxo := range spendableVtxos {
+		if vtxo.Script == hex.EncodeToString(fundingPkScript) {
+			fundingVtxo = vtxo
+			break
+		}
+	}
+	require.NotEmpty(t, fundingVtxo.Txid)
+
+	fundingTxs, err := indexerSvc.GetVirtualTxs(ctx, []string{fundingVtxo.Txid})
+	require.NoError(t, err)
+	require.Len(t, fundingTxs.Txs, 1)
+
+	fundingPtx, err := psbt.NewFromRawBytes(strings.NewReader(fundingTxs.Txs[0]), true)
+	require.NoError(t, err)
+
+	fundingOutputIndex, fundingOutput := findTaprootOutput(t, fundingPtx.UnsignedTx, fundingTapKey)
+	require.Equal(t, fundingVtxo.VOut, fundingOutputIndex)
+	require.Equal(t, int64(fundingVtxo.Amount), fundingOutput.Value)
+
+	fundingInput := vtxoInputFromScriptOutput(
 		t,
-		stagingPtx.UnsignedTx,
-		stagingOutputIndex,
-		stagingVtxoScript,
-		stagingTapscript,
+		fundingPtx.UnsignedTx,
+		fundingOutputIndex,
+		*fundingVtxoScript,
+		fundingTapscript,
 	)
 
-	// Build the deploy tx: staging → main contract UTXO.
-	deployTx, deployCheckpoints, err := offchain.BuildTxs(
-		[]offchain.VtxoInput{stagingInput},
-		[]*wire.TxOut{{Value: stagingOutput.Value, PkScript: mainPkScript}},
+	const mainContractValue = int64(20000)
+	changeValue := fundingOutput.Value - mainContractValue
+	require.Positive(t, changeValue)
+
+	// Build the bootstrap tx: Alice's wallet UTXO -> main contract UTXO + Alice change.
+	bootstrapTx, bootstrapCheckpoints, err := offchain.BuildTxs(
+		[]offchain.VtxoInput{fundingInput},
+		[]*wire.TxOut{
+			{Value: mainContractValue, PkScript: mainPkScript},
+			{Value: changeValue, PkScript: fundingPkScript},
+		},
 		checkpointScriptBytes,
 	)
 	require.NoError(t, err)
 
 	// Genesis asset issuance: 1 unit at output 0.
 	issuancePacket := createIssuanceAssetPacket(t, 0, 1)
-	addAssetPacketToTx(t, deployTx, issuancePacket)
+	addAssetPacketToTx(t, bootstrapTx, issuancePacket)
 
 	// State packet with fixed payload.
-	addStatePacket(t, deployTx, fixedStatePayload)
+	addStatePacket(t, bootstrapTx, fixedStatePayload)
 
-	// Introspector packet for the deploy script.
-	addIntrospectorPacket(t, deployTx, []arkade.IntrospectorEntry{
-		{Vin: 0, Script: deployArkadeScript},
-	})
-
-	require.NoError(t, executeArkadeScripts(t, deployTx, introspectorPubKey))
-	submitAndFinalize(deployTx, deployCheckpoints)
+	submitWithArkd(bootstrapTx, bootstrapCheckpoints)
 
 	// =========================================================================
-	// Phase 3: Compile the reader contract (needs the deploy tx hash).
+	// Phase 3: Compile the reader contract (needs the asset genesis tx hash).
 	// =========================================================================
 
-	deployTxHash := deployTx.UnsignedTx.TxHash()
+	bootstrapTxHash := bootstrapTx.UnsignedTx.TxHash()
 
-	readerArkadeScript := readerContractArkadeScript(t, deployTxHash)
+	readerArkadeScript := readerContractArkadeScript(t, bootstrapTxHash)
 	readerVtxoScript := createArkadeOnlyVtxoScript(
 		aliceAddr.Signer,
 		introspectorPubKey,
@@ -224,10 +268,10 @@ func TestContractIdWithAssetIdentity(t *testing.T) {
 	// Phase 5: Co-spend main + reader.
 	// =========================================================================
 
-	// Build the main contract input from the deploy tx output.
+	// Build the main contract input from the bootstrap tx output.
 	mainInput := vtxoInputFromScriptOutput(
 		t,
-		deployTx.UnsignedTx,
+		bootstrapTx.UnsignedTx,
 		0,
 		mainVtxoScript,
 		mainTapscript,
@@ -246,7 +290,7 @@ func TestContractIdWithAssetIdentity(t *testing.T) {
 	require.NoError(t, err)
 
 	// Transfer asset packet: forward the asset from input 0 to output 0.
-	transferPacket := createTransferAssetPacket(t, deployTxHash, 0, 0, 0, 1)
+	transferPacket := createTransferAssetPacket(t, bootstrapTxHash, 0, 0, 0, 1)
 	addAssetPacketToTx(t, coSpendTx, transferPacket)
 
 	// State packet with the same fixed payload.
@@ -258,81 +302,32 @@ func TestContractIdWithAssetIdentity(t *testing.T) {
 		{Vin: 1, Script: readerArkadeScript},
 	})
 
-	// The main contract needs the deploy tx for OP_INSPECTINPUTPACKET.
-	require.NoError(t, txutils.SetArkPsbtField(coSpendTx, 0, arkade.PrevoutTxField, *deployTx.UnsignedTx))
+	// The main contract needs the bootstrap tx for OP_INSPECTINPUTPACKET.
+	require.NoError(t, txutils.SetArkPsbtField(coSpendTx, 0, arkade.PrevoutTxField, *bootstrapTx.UnsignedTx))
 
 	require.NoError(t, executeArkadeScripts(t, coSpendTx, introspectorPubKey))
-	submitAndFinalize(coSpendTx, coSpendCheckpoints)
-}
-
-// contractIdDeployArkadeScript builds the deploy script that transitions the
-// staging UTXO into the main contract. It verifies:
-//   - State packet exists with the fixed payload
-//   - Output 0 goes to the main contract pkscript
-//   - Exactly 1 asset group with output sum = 1
-//   - Output 0 carries the newly issued asset with amount 1
-//   - Value is preserved
-func contractIdDeployArkadeScript(t *testing.T, mainPkScript []byte) []byte {
-	t.Helper()
-
-	arkadeScript, err := txscript.NewScriptBuilder().
-		// Verify state packet.
-		AddInt64(statePacketType).
-		AddOp(arkade.OP_INSPECTPACKET).
-		AddOp(arkade.OP_1).
-		AddOp(arkade.OP_EQUALVERIFY).
-		AddData(fixedStatePayload).
-		AddOp(arkade.OP_EQUALVERIFY).
-		// Verify output 0 goes to main contract.
-		AddInt64(0).
-		AddOp(arkade.OP_INSPECTOUTPUTSCRIPTPUBKEY).
-		AddOp(arkade.OP_1).
-		AddOp(arkade.OP_EQUALVERIFY).
-		AddData(mainPkScript[2:]). // witness program only
-		AddOp(arkade.OP_EQUALVERIFY).
-		// Verify exactly 1 asset group.
-		AddOp(arkade.OP_INSPECTNUMASSETGROUPS).
-		AddInt64(1).
-		AddOp(arkade.OP_EQUALVERIFY).
-		// Verify asset output sum at group 0 = 1.
-		AddInt64(0). // group index
-		AddInt64(1). // source = outputs
-		AddOp(arkade.OP_INSPECTASSETGROUPSUM).
-		AddData(uint64LE(1)).
-		AddOp(arkade.OP_EQUALVERIFY).
-		// Verify output 0 carries the freshly issued contract ID asset.
-		AddInt64(0). // output index for OP_INSPECTOUTASSETLOOKUP
-		AddInt64(0). // group index for OP_INSPECTASSETGROUPASSETID
-		AddOp(arkade.OP_INSPECTASSETGROUPASSETID).
-		AddOp(arkade.OP_INSPECTOUTASSETLOOKUP).
-		AddOp(arkade.OP_1).
-		AddOp(arkade.OP_EQUALVERIFY). // found flag == 1
-		AddData(uint64LE(1)).
-		AddOp(arkade.OP_EQUALVERIFY). // amount == 1
-		// Verify value preserved (final check leaves result on stack).
-		AddInt64(0).
-		AddOp(arkade.OP_INSPECTOUTPUTVALUE).
-		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).
-		AddOp(arkade.OP_INSPECTINPUTVALUE).
-		AddOp(arkade.OP_EQUAL).
-		Script()
-	require.NoError(t, err)
-
-	return arkadeScript
+	submitWithIntrospector(coSpendTx, coSpendCheckpoints)
 }
 
 // mainContractArkadeScript builds the recursive main contract script. It verifies:
 //   - Discovers own asset ID at runtime via OP_INSPECTASSETGROUPASSETID
 //   - Current input carries the group-0 contract ID asset with amount 1
 //   - Contract ID asset is forwarded to output 0 with amount 1
-//   - Previous state matches the fixed payload (OP_INSPECTINPUTPACKET)
-//   - Current state matches the fixed payload (OP_INSPECTPACKET)
+//   - Current input and output 0 each carry exactly one asset
+//   - Previous state packet exists (OP_INSPECTINPUTPACKET)
+//   - Current state packet preserves the previous payload (OP_INSPECTPACKET)
 //   - Output 0 scriptpubkey == input scriptpubkey (continuation)
 //   - Value is preserved
 func mainContractArkadeScript(t *testing.T) []byte {
 	t.Helper()
 
 	arkadeScript, err := txscript.NewScriptBuilder().
+		// Verify this input carries exactly one asset.
+		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).
+		AddOp(arkade.OP_INSPECTINASSETCOUNT).
+		AddInt64(1).
+		AddOp(arkade.OP_EQUALVERIFY).
+
 		// Discover the group-0 asset ID and verify this input carries it.
 		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).
 		AddInt64(0). // group index for OP_INSPECTASSETGROUPASSETID
@@ -353,21 +348,24 @@ func mainContractArkadeScript(t *testing.T) []byte {
 		AddData(uint64LE(1)).
 		AddOp(arkade.OP_EQUALVERIFY). // amount == 1
 
-		// Verify previous state matches fixed payload.
+		// Verify output 0 carries no other assets.
+		AddInt64(0).
+		AddOp(arkade.OP_INSPECTOUTASSETCOUNT).
+		AddInt64(1).
+		AddOp(arkade.OP_EQUALVERIFY).
+
+		// Read previous state payload and keep it on the stack.
 		AddInt64(statePacketType).
 		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).
 		AddOp(arkade.OP_INSPECTINPUTPACKET).
 		AddOp(arkade.OP_1).
 		AddOp(arkade.OP_EQUALVERIFY).
-		AddData(fixedStatePayload).
-		AddOp(arkade.OP_EQUALVERIFY).
 
-		// Verify current state matches fixed payload.
+		// Verify current state preserves the previous payload.
 		AddInt64(statePacketType).
 		AddOp(arkade.OP_INSPECTPACKET).
 		AddOp(arkade.OP_1).
 		AddOp(arkade.OP_EQUALVERIFY).
-		AddData(fixedStatePayload).
 		AddOp(arkade.OP_EQUALVERIFY).
 
 		// Verify output continuation: output 0 scriptpubkey == input scriptpubkey.
