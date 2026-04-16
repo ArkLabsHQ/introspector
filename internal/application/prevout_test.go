@@ -78,7 +78,7 @@ func TestOnchainPrevOutFetcher(t *testing.T) {
 			t.Run(f.Name, func(t *testing.T) {
 				ptx := decodePSBT(t, f.Psbt)
 
-				fetcher, err := prevOutFetcherForOnchainTxFromPSBT(ptx)
+				fetcher, err := prevOutFetcherForOnchainTx(ptx)
 				require.NoError(t, err)
 
 				for inputIndex := range ptx.Inputs {
@@ -105,7 +105,7 @@ func TestOnchainPrevOutFetcher(t *testing.T) {
 		for _, f := range fix.Invalid {
 			t.Run(f.Name, func(t *testing.T) {
 				ptx := decodePSBT(t, f.Psbt)
-				_, err := prevOutFetcherForOnchainTxFromPSBT(ptx)
+				_, err := prevOutFetcherForOnchainTx(ptx)
 				require.Error(t, err)
 				require.Contains(t, err.Error(), f.ErrorContains)
 			})
@@ -176,10 +176,10 @@ func newPrevOutFetcher(
 	ptx *psbt.Packet, checkpoints []*psbt.Packet,
 ) (arkade.ArkPrevOutFetcher, error) {
 	if len(checkpoints) == 0 {
-		return prevOutFetcherForIntentFromPSBT(ptx)
+		return prevOutFetcherForIntent(ptx)
 	}
 
-	return prevOutFetcherForArkTxFromPSBT(ptx, checkpoints)
+	return prevOutFetcherForArkTx(ptx, checkpoints)
 }
 
 func decodePSBT(t testing.TB, b64 string) *psbt.Packet {

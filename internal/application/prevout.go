@@ -11,7 +11,8 @@ import (
 	"github.com/btcsuite/btcd/wire"
 )
 
-func prevOutFetcherForIntentFromPSBT(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher, error) {
+// prevOutFetcherForIntent computes and validate prevouts for an intent tx
+func prevOutFetcherForIntent(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher, error) {
 	baseFetcher, err := computePrevoutFetcher(ptx)
 	if err != nil {
 		return nil, err
@@ -36,7 +37,8 @@ func prevOutFetcherForIntentFromPSBT(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher
 	return newMapArkPrevOutFetcher(baseFetcher, prevOutArkTxs, prevOutIdxs), nil
 }
 
-func prevOutFetcherForArkTxFromPSBT(
+// prevOutFetcherForArkTx computes and validate prevouts for an Ark tx using its checkpoints
+func prevOutFetcherForArkTx(
 	ptx *psbt.Packet, checkpoints []*psbt.Packet,
 ) (arkade.ArkPrevOutFetcher, error) {
 	baseFetcher, err := computePrevoutFetcher(ptx)
@@ -86,7 +88,8 @@ func prevOutFetcherForArkTxFromPSBT(
 	return newMapArkPrevOutFetcher(baseFetcher, prevOutArkTxs, prevOutIdxs), nil
 }
 
-func prevOutFetcherForOnchainTxFromPSBT(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher, error) {
+// prevOutFetcherForOnchainTx computes and validate prevouts for SubmitOnchainTx
+func prevOutFetcherForOnchainTx(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher, error) {
 	baseFetcher, err := computePrevoutFetcher(ptx)
 	if err != nil {
 		return nil, err
@@ -97,7 +100,7 @@ func prevOutFetcherForOnchainTxFromPSBT(ptx *psbt.Packet) (arkade.ArkPrevOutFetc
 		return nil, err
 	}
 
-	prevOutArkTxs := make(map[wire.OutPoint]*wire.MsgTx, len(prevoutTxs))
+	prevOutTxs := make(map[wire.OutPoint]*wire.MsgTx, len(prevoutTxs))
 	prevOutIdxs := make(map[wire.OutPoint]uint32, len(prevoutTxs))
 	for inputIndex, prevTx := range prevoutTxs {
 		outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
@@ -113,11 +116,11 @@ func prevOutFetcherForOnchainTxFromPSBT(ptx *psbt.Packet) (arkade.ArkPrevOutFetc
 			)
 		}
 
-		prevOutArkTxs[outpoint] = prevTx
+		prevOutTxs[outpoint] = prevTx
 		prevOutIdxs[outpoint] = outpoint.Index
 	}
 
-	return newMapArkPrevOutFetcher(baseFetcher, prevOutArkTxs, prevOutIdxs), nil
+	return newMapArkPrevOutFetcher(baseFetcher, prevOutTxs, prevOutIdxs), nil
 }
 
 // decodePrevoutTxsFromField decodes prevout transactions from the given psbt field

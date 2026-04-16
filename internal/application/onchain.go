@@ -23,7 +23,7 @@ import (
 func (s *service) SubmitOnchainTx(ctx context.Context, tx OnchainTx) (*psbt.Packet, error) {
 	ptx := tx.Tx
 
-	prevOutFetcher, err := prevOutFetcherForOnchainTxFromPSBT(ptx)
+	prevOutFetcher, err := prevOutFetcherForOnchainTx(ptx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create prevout fetcher: %w", err)
 	}

@@ -20,7 +20,7 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 
 	ptx := &intent.Proof.Packet
 
-	prevOutFetcher, err := prevOutFetcherForIntentFromPSBT(ptx)
+	prevOutFetcher, err := prevOutFetcherForIntent(ptx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create prevout fetcher: %w", err)
 	}
