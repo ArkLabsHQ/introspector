@@ -2,7 +2,6 @@ package test
 
 import (
 	"bytes"
-	"context"
 	"encoding/hex"
 	"strings"
 	"testing"
@@ -35,7 +34,7 @@ import (
 // The test creates a simple asset packet with one asset group (issuance) and verifies
 // that the arkade script can correctly inspect the asset using the introspection opcodes.
 func TestOffchainTxWithAsset(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	alice, grpcAlice := setupArkSDK(t)
 	t.Cleanup(func() {
 		grpcAlice.Close()
@@ -203,7 +202,7 @@ func TestOffchainTxWithAsset(t *testing.T) {
 // TestSettlementWithAsset tests the settlement flow with an asset packet in the intent.
 // First mints the asset via an offchain tx, then settles the resulting VTXO with a transfer packet.
 func TestSettlementWithAsset(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	alice, grpcClient := setupArkSDK(t)
 	t.Cleanup(func() {
 		grpcClient.Close()
