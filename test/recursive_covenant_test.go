@@ -5,8 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"context"
-
 	"github.com/ArkLabsHQ/introspector/pkg/arkade"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
@@ -26,7 +24,7 @@ import (
 // - output 0 can pay anyone as long as amount is < 1000 sats
 // - output 1 must carry the change back to Bob's policy scriptPubKey
 func TestRecursivePolicy(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	alice, _, alicePubKey, grpcAlice := setupArkSDKwithPublicKey(t)
 	t.Cleanup(func() {

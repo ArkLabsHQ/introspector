@@ -384,7 +384,7 @@ func newCrossInputTestEnv(t *testing.T) *crossInputTestEnv {
 	t.Helper()
 
 	// Step 1: Create the ark clients and wallet handles used by the test.
-	ctx := context.Background()
+	ctx := t.Context()
 
 	alice, _, _, grpcAlice := setupArkSDKwithPublicKey(t)
 	t.Cleanup(func() {

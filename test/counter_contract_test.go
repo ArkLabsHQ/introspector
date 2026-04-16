@@ -2,7 +2,6 @@ package test
 
 import (
 	"bytes"
-	"context"
 	"encoding/hex"
 	"strings"
 	"testing"
@@ -27,7 +26,7 @@ import (
 const counterPacketType = 2
 
 func TestCounterContractWithPacketIntrospection(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	alice, grpcClient := setupArkSDK(t)
 	t.Cleanup(func() {

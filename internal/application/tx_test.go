@@ -470,7 +470,7 @@ func TestRetryFinalize(t *testing.T) {
 		svc := &service{arkdClient: client}
 		checkpoints := []string{"checkpoint-a", "checkpoint-b"}
 		err := svc.retryFinalize(
-			context.Background(),
+			t.Context(),
 			"txid-123",
 			checkpoints,
 		)
@@ -493,7 +493,7 @@ func TestRetryFinalize(t *testing.T) {
 			},
 		}
 		svc := &service{arkdClient: client}
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		// simulates client hangup
 		cancel()
 		err := svc.retryFinalize(

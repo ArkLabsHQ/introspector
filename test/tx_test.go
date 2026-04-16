@@ -71,7 +71,7 @@ func TestMain(m *testing.M) {
 // 1. offchain with the wrong outputs : test if it fails
 // 2. offchain with the correct outputs : test if it succeeds
 func TestSubmitOffchain(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	alice, grpcAlice := setupArkSDK(t)
 	_, offchainAddr, _, err := alice.Receive(ctx)
 	require.NoError(t, err)
@@ -174,7 +174,7 @@ func TestSubmitOffchain(t *testing.T) {
 		opts := indexer.GetVtxosRequestOption{}
 		err := opts.WithOutpoints([]types.Outpoint{{Txid: txid, VOut: vout}})
 		require.NoError(t, err)
-		vtxos, err := idxr.GetVtxos(context.Background(), opts)
+		vtxos, err := idxr.GetVtxos(t.Context(), opts)
 		require.NoError(t, err)
 		require.Len(t, vtxos.Vtxos, 1)
 		require.True(t, vtxos.Vtxos[0].Preconfirmed)
@@ -578,7 +578,7 @@ func TestSubmitOffchain(t *testing.T) {
 }
 
 func TestSettlement(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	alice, grpcClient := setupArkSDK(t)
 	t.Cleanup(func() {
 		grpcClient.Close()
@@ -791,7 +791,7 @@ func TestSettlement(t *testing.T) {
 }
 
 func TestBoarding(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	alice, grpcClient := setupArkSDK(t)
 	t.Cleanup(func() {
 		grpcClient.Close()
@@ -1061,7 +1061,7 @@ func TestBoarding(t *testing.T) {
 }
 
 func TestIntrospectorRejectsInvalidArkadeScript(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	alice, grpcAlice := setupArkSDK(t)
 	t.Cleanup(func() {
 		grpcAlice.Close()
@@ -1335,7 +1335,7 @@ func setupArkSDKwithPublicKey(
 
 	privkeyHex := hex.EncodeToString(privkey.Serialize())
 
-	err = client.InitWithWallet(context.Background(), arksdk.InitWithWalletArgs{
+	err = client.InitWithWallet(t.Context(), arksdk.InitWithWalletArgs{
 		Wallet:     wallet,
 		ClientType: arksdk.GrpcClient,
 		ServerUrl:  "localhost:7070",
@@ -1344,7 +1344,7 @@ func setupArkSDKwithPublicKey(
 	})
 	require.NoError(t, err)
 
-	err = client.Unlock(context.Background(), password)
+	err = client.Unlock(t.Context(), password)
 	require.NoError(t, err)
 
 	grpcClient, err := grpcclient.NewClient("localhost:7070")
