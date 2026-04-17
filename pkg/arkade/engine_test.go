@@ -36,12 +36,14 @@ func TestNewOpcodes(t *testing.T) {
 		cases  []testCase
 	}
 
+	outpoint := wire.OutPoint{
+		Hash:  chainhash.Hash{},
+		Index: 0,
+	}
+
 	prevoutFetcher := newTestArkPrevOutFetcher(
 		txscript.NewMultiPrevOutFetcher(map[wire.OutPoint]*wire.TxOut{
-			{
-				Hash:  chainhash.Hash{},
-				Index: 0,
-			}: {
+			outpoint: {
 				Value: 1000000000,
 				PkScript: []byte{
 					OP_1, OP_DATA_32,
@@ -51,7 +53,22 @@ func TestNewOpcodes(t *testing.T) {
 					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 				},
 			},
-		}), nil,
+		}), map[wire.OutPoint]*wire.MsgTx{
+			outpoint: {
+				Version: 1,
+				TxOut: []*wire.TxOut{
+					{
+						Value: 1000000000,
+						PkScript: []byte{
+							OP_1, OP_DATA_32,
+							0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+							0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+							0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+							0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+						},
+					},
+				},
+			}}, map[wire.OutPoint]uint32{outpoint: 0},
 	)
 
 	// Pre-compute the expected tx hash for OP_TXID tests
@@ -1055,17 +1072,17 @@ func TestNewOpcodes(t *testing.T) {
 			},
 		},
 		{
-			name: "OP_INSPECTINPUTSCRIPTPUBKEY",
+			name: "OP_INSPECTINPUTSCRIPTPUBKEY returns previous ark tx scriptpubkey",
 			script: txscript.NewScriptBuilder().
 				AddData([]byte{0x00}).
 				AddOp(OP_INSPECTINPUTSCRIPTPUBKEY).
 				AddOp(OP_1). // segwit v1
 				AddOp(OP_EQUALVERIFY).
 				AddData([]byte{ // witness program
-					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+					0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+					0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+					0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+					0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
 				}).
 				AddOp(OP_EQUAL),
 			cases: []testCase{
@@ -1702,7 +1719,7 @@ func TestMerkleBranchVerify(t *testing.T) {
 					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 				},
 			},
-		}), nil,
+		}), nil, nil,
 	)
 
 	simpleTx := &wire.MsgTx{
@@ -2129,7 +2146,7 @@ func TestIntrospectorPacketOpcodes(t *testing.T) {
 				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 			}},
-		}), nil,
+		}), nil, nil,
 	)
 
 	twoInputTx := &wire.MsgTx{
@@ -2324,7 +2341,6 @@ func TestIntrospectorPacketOpcodes(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			err := runEngine(t, tt.script, tt.tx, tt.pkt, tt.stack)
@@ -2394,7 +2410,7 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 			}},
-		}), nil,
+		}), nil, nil,
 	)
 
 	// Custom packet types for testing. We use small values (2, 3) that
@@ -2455,13 +2471,18 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 	// indices to previous ark transactions, using the spending tx's outpoints.
 	makeArkPrevOutFetcher := func(tx *wire.MsgTx, byIndex map[int]*wire.MsgTx) ArkPrevOutFetcher {
 		var arkTxs map[wire.OutPoint]*wire.MsgTx
+		var prevoutIdxs map[wire.OutPoint]uint32
 		if byIndex != nil {
 			arkTxs = make(map[wire.OutPoint]*wire.MsgTx, len(byIndex))
+			prevoutIdxs = make(map[wire.OutPoint]uint32, len(byIndex))
 			for idx, prevTx := range byIndex {
-				arkTxs[tx.TxIn[idx].PreviousOutPoint] = prevTx
+				outpoint := tx.TxIn[idx].PreviousOutPoint
+				arkTxs[outpoint] = prevTx
+				prevoutIdxs[outpoint] = outpoint.Index
+
 			}
 		}
-		return newTestArkPrevOutFetcher(prevoutFetcher, arkTxs)
+		return newTestArkPrevOutFetcher(prevoutFetcher, arkTxs, prevoutIdxs)
 	}
 
 	runEngine := func(t *testing.T, script []byte, tx *wire.MsgTx, prevoutTxs map[int]*wire.MsgTx) error {

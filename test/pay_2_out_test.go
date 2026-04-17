@@ -7,8 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"context"
-
 	"github.com/ArkLabsHQ/introspector/pkg/arkade"
 	introspectorclient "github.com/ArkLabsHQ/introspector/pkg/client"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
@@ -43,7 +41,7 @@ import (
 //  2. Invalid: wrong amount on output 1 → failed to process transaction
 //  3. Valid: both outputs correct → success
 func TestPayToTwoOutputs(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	alice, grpcAlice := setupArkSDK(t)
 	defer grpcAlice.Close()
 

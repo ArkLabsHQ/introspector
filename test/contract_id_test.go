@@ -1,7 +1,6 @@
 package test
 
 import (
-	"context"
 	"encoding/hex"
 	"strings"
 	"testing"
@@ -276,13 +275,11 @@ func TestContractIdWithAssetIdentity(t *testing.T) {
 		mainVtxoScript,
 		mainTapscript,
 	)
-	mainOutputPkScript, err := checkpointInputPkScript(mainInput, checkpointScriptBytes)
-	require.NoError(t, err)
 
 	coSpendTx, coSpendCheckpoints, err := offchain.BuildTxs(
 		[]offchain.VtxoInput{mainInput, readerInput},
 		[]*wire.TxOut{
-			{Value: mainInput.Amount, PkScript: mainOutputPkScript},
+			{Value: mainInput.Amount, PkScript: mainPkScript},
 			{Value: readerInput.Amount, PkScript: recipientPkScript},
 		},
 		checkpointScriptBytes,
@@ -305,7 +302,7 @@ func TestContractIdWithAssetIdentity(t *testing.T) {
 	// The main contract needs the bootstrap tx for OP_INSPECTINPUTPACKET.
 	require.NoError(t, txutils.SetArkPsbtField(coSpendTx, 0, arkade.PrevoutTxField, *bootstrapTx.UnsignedTx))
 
-	require.NoError(t, executeArkadeScripts(t, coSpendTx, introspectorPubKey))
+	require.NoError(t, executeArkadeScripts(t, coSpendTx, coSpendCheckpoints, introspectorPubKey))
 	submitWithIntrospector(coSpendTx, coSpendCheckpoints)
 }
 

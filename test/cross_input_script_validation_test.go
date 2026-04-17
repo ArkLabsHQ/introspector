@@ -50,7 +50,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			{Vin: 0, Script: scriptHashInspectorScript},
 		})
 
-		executeAndExpectFailure(t, candidateTx, env.introspectorPubKey, "no introspector entry for vin 1")
+		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "no introspector entry for vin 1")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -62,7 +62,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			{Vin: 1, Script: nonOpOneScript},
 		})
 
-		executeAndExpectFailure(t, candidateTx, env.introspectorPubKey, "false stack entry at end of script execution")
+		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "false stack entry at end of script execution")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -74,7 +74,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			{Vin: 1, Script: scriptOne},
 		})
 
-		require.NoError(t, executeArkadeScripts(t, candidateTx, env.introspectorPubKey))
+		require.NoError(t, executeArkadeScripts(t, candidateTx, checkpoints, env.introspectorPubKey))
 		env.submitAndFinalize(t, candidateTx, checkpoints)
 	})
 
@@ -93,7 +93,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			{Vin: 0, Script: witnessHashInspectorScript},
 		})
 
-		executeAndExpectFailure(t, candidateTx, env.introspectorPubKey, "no introspector entry for vin 1")
+		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "no introspector entry for vin 1")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -106,7 +106,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			{Vin: 1, Script: witnessAwareScript, Witness: invalidWitness},
 		})
 
-		executeAndExpectFailure(t, candidateTx, env.introspectorPubKey, "false stack entry at end of script execution")
+		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "false stack entry at end of script execution")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -118,7 +118,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			{Vin: 1, Script: witnessAwareScript, Witness: validWitness},
 		})
 
-		require.NoError(t, executeArkadeScripts(t, candidateTx, env.introspectorPubKey))
+		require.NoError(t, executeArkadeScripts(t, candidateTx, checkpoints, env.introspectorPubKey))
 		env.submitAndFinalize(t, candidateTx, checkpoints)
 	})
 
@@ -135,7 +135,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: inspectPacketType, Data: inspectPacketPayload},
 		)
 
-		require.NoError(t, executeArkadeScripts(t, candidateTx, env.introspectorPubKey))
+		require.NoError(t, executeArkadeScripts(t, candidateTx, checkpoints, env.introspectorPubKey))
 		env.submitAndFinalize(t, candidateTx, checkpoints)
 	})
 
@@ -148,7 +148,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: inspectPacketType, Data: inspectPacketPayload},
 		)
 
-		require.NoError(t, executeArkadeScripts(t, candidateTx, env.introspectorPubKey))
+		require.NoError(t, executeArkadeScripts(t, candidateTx, checkpoints, env.introspectorPubKey))
 		env.submitAndFinalize(t, candidateTx, checkpoints)
 	})
 
@@ -161,7 +161,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: inspectPacketType, Data: inspectPacketPayload},
 		)
 
-		executeAndExpectFailure(t, candidateTx, env.introspectorPubKey, "OP_EQUALVERIFY failed")
+		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "OP_EQUALVERIFY failed")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -174,7 +174,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: inspectPacketType, Data: inspectPacketPayload},
 		)
 
-		executeAndExpectFailure(t, candidateTx, env.introspectorPubKey, "false stack entry at end of script execution")
+		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "false stack entry at end of script execution")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -187,13 +187,15 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: inspectPacketType, Data: inspectPacketPayload},
 		)
 
-		executeAndExpectFailure(t, candidateTx, env.introspectorPubKey, "packet type out of range")
+		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "packet type out of range")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
 	const packetType = 2
 	expectedPayload := []byte{0xde, 0xad, 0xbe, 0xef}
 	packetInspectorScript := buildInspectInputPacketScript(t, packetType, 0, expectedPayload)
+	bobPkScript, err := txscript.PayToTaprootScript(env.bobPubKey)
+	require.NoError(t, err)
 
 	t.Run("op_inspect_input_packet/valid", func(t *testing.T) {
 		candidateTx, checkpoints := env.buildInspectInputPacketSpend(
@@ -205,7 +207,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: packetType, Data: expectedPayload},
 		)
 
-		require.NoError(t, executeArkadeScripts(t, candidateTx, env.introspectorPubKey))
+		require.NoError(t, executeArkadeScripts(t, candidateTx, checkpoints, env.introspectorPubKey))
 		env.submitAndFinalize(t, candidateTx, checkpoints)
 	})
 
@@ -220,7 +222,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: packetType, Data: expectedPayload},
 		)
 
-		executeAndExpectFailure(t, candidateTx, env.introspectorPubKey, "OP_EQUALVERIFY failed")
+		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "OP_EQUALVERIFY failed")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -235,7 +237,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: packetType, Data: expectedPayload},
 		)
 
-		executeAndExpectFailure(t, candidateTx, env.introspectorPubKey, "false stack entry at end of script execution")
+		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "false stack entry at end of script execution")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -250,7 +252,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: packetType, Data: expectedPayload},
 		)
 
-		executeAndExpectFailure(t, candidateTx, env.introspectorPubKey, "input index cannot be negative")
+		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "input index cannot be negative")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -265,7 +267,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: packetType, Data: expectedPayload},
 		)
 
-		executeAndExpectFailure(t, candidateTx, env.introspectorPubKey, "input index out of range")
+		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "input index out of range")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -280,7 +282,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: packetType, Data: expectedPayload},
 		)
 
-		executeAndExpectFailure(t, candidateTx, env.introspectorPubKey, "packet type out of range")
+		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "packet type out of range")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -296,8 +298,59 @@ func TestCrossInputScriptValidation(t *testing.T) {
 
 		removePrevoutTxFields(t, candidateTx, 0, 1)
 
-		executeAndExpectFailure(t, candidateTx, env.introspectorPubKey, "prevout tx not available for input 0")
+		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "prevout tx not available for input 0")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
+	})
+
+	t.Run("op_inspect_input_scriptpubkey/valid_non_zero_prevout_index", func(t *testing.T) {
+		bobTemplate := env.buildSpendTemplate(t, baseScriptTwo)
+		inputOneIsBobScript := buildInspectInputScriptPubKeyScript(t, 1, bobTemplate.pkScript)
+		inspectorTemplate := env.buildSpendTemplate(t, inputOneIsBobScript)
+
+		aliceAddr := arklib.Address{HRP: "tark", VtxoTapKey: inspectorTemplate.tapKey, Signer: env.aliceAddr.Signer}
+		bobAddr := arklib.Address{HRP: "tark", VtxoTapKey: bobTemplate.tapKey, Signer: env.aliceAddr.Signer}
+		aliceAddrStr, err := aliceAddr.EncodeV0()
+		require.NoError(t, err)
+		bobAddrStr, err := bobAddr.EncodeV0()
+		require.NoError(t, err)
+
+		const amount = uint64(10000)
+		fundingTxid, err := env.alice.SendOffChain(
+			env.ctx,
+			[]types.Receiver{{To: aliceAddrStr, Amount: amount}, {To: bobAddrStr, Amount: amount}},
+		)
+		require.NoError(t, err)
+
+		fundingTxs, err := env.indexerSvc.GetVirtualTxs(env.ctx, []string{fundingTxid})
+		require.NoError(t, err)
+		require.Len(t, fundingTxs.Txs, 1)
+
+		fundingPtx, err := psbt.NewFromRawBytes(strings.NewReader(fundingTxs.Txs[0]), true)
+		require.NoError(t, err)
+
+		aliceOutput := fundingPtx.UnsignedTx.TxOut[0]
+		bobOutput := fundingPtx.UnsignedTx.TxOut[1]
+		require.Equal(t, inspectorTemplate.pkScript, aliceOutput.PkScript)
+		require.Equal(t, bobTemplate.pkScript, bobOutput.PkScript)
+
+		candidateTx, checkpoints, err := offchain.BuildTxs(
+			[]offchain.VtxoInput{
+				buildVtxoInput(fundingPtx, aliceOutput, 0, inspectorTemplate),
+				buildVtxoInput(fundingPtx, bobOutput, 1, bobTemplate),
+			},
+			[]*wire.TxOut{{Value: aliceOutput.Value + bobOutput.Value, PkScript: bobPkScript}},
+			env.checkpointScriptBytes,
+		)
+		require.NoError(t, err)
+		require.NoError(t, txutils.SetArkPsbtField(candidateTx, 0, arkade.PrevoutTxField, *fundingPtx.UnsignedTx))
+		require.NoError(t, txutils.SetArkPsbtField(candidateTx, 1, arkade.PrevoutTxField, *fundingPtx.UnsignedTx))
+		addIntrospectorPacket(t, candidateTx, []arkade.IntrospectorEntry{
+			{Vin: 0, Script: inputOneIsBobScript},
+			{Vin: 1, Script: baseScriptTwo},
+		})
+
+		require.NoError(t, executeArkadeScripts(t, candidateTx, checkpoints, env.introspectorPubKey))
+		env.submitAndFinalize(t, candidateTx, checkpoints)
 	})
 }
 
@@ -331,7 +384,7 @@ func newCrossInputTestEnv(t *testing.T) *crossInputTestEnv {
 	t.Helper()
 
 	// Step 1: Create the ark clients and wallet handles used by the test.
-	ctx := context.Background()
+	ctx := t.Context()
 
 	alice, _, _, grpcAlice := setupArkSDKwithPublicKey(t)
 	t.Cleanup(func() {
@@ -422,6 +475,22 @@ func buildInspectInputArkadeWitnessHashScript(t *testing.T, expectedWitnessHash 
 		AddOp(arkade.OP_1).
 		AddOp(arkade.OP_INSPECTINPUTARKADEWITNESSHASH).
 		AddData(expectedWitnessHash).
+		AddOp(arkade.OP_EQUAL).
+		Script()
+	require.NoError(t, err)
+	return script
+}
+
+// buildInspectInputScriptPubKeyScript checks that another input spends a given witness-v1 output.
+func buildInspectInputScriptPubKeyScript(t *testing.T, inputIndex int64, expectedPkScript []byte) []byte {
+	t.Helper()
+
+	script, err := txscript.NewScriptBuilder().
+		AddInt64(inputIndex).
+		AddOp(arkade.OP_INSPECTINPUTSCRIPTPUBKEY).
+		AddOp(arkade.OP_1).
+		AddOp(arkade.OP_EQUALVERIFY).
+		AddData(expectedPkScript[2:]).
 		AddOp(arkade.OP_EQUAL).
 		Script()
 	require.NoError(t, err)
@@ -666,19 +735,6 @@ func addCrossInputExtensionPacket(t *testing.T, ptx *psbt.Packet, packet extensi
 	ptx.Outputs = append(ptx.Outputs, psbt.POutput{})
 }
 
-// findOutputForTemplate locates the output whose script matches the template.
-func findOutputForTemplate(t *testing.T, ptx *psbt.Packet, template spendTemplate) (*wire.TxOut, uint32) {
-	t.Helper()
-
-	for i, out := range ptx.UnsignedTx.TxOut {
-		if bytes.Equal(out.PkScript, template.pkScript) {
-			return out, uint32(i)
-		}
-	}
-
-	return nil, 0
-}
-
 // buildVtxoInput converts a funded output and template into an offchain spend input.
 func buildVtxoInput(prevTx *psbt.Packet, out *wire.TxOut, outIndex uint32, template spendTemplate) offchain.VtxoInput {
 	return offchain.VtxoInput{
@@ -750,10 +806,10 @@ func (env *crossInputTestEnv) buildFinalizedPacketChain(
 	fundingPtx, err := psbt.NewFromRawBytes(strings.NewReader(fundingTxs.Txs[0]), true)
 	require.NoError(t, err)
 
-	fundingOutputA, fundingIndexA := findOutputForTemplate(t, fundingPtx, baseTemplateA)
-	require.NotNil(t, fundingOutputA)
-	fundingOutputB, fundingIndexB := findOutputForTemplate(t, fundingPtx, baseTemplateB)
-	require.NotNil(t, fundingOutputB)
+	fundingOutputA := fundingPtx.UnsignedTx.TxOut[0]
+	fundingOutputB := fundingPtx.UnsignedTx.TxOut[1]
+	require.Equal(t, baseTemplateA.pkScript, fundingOutputA.PkScript)
+	require.Equal(t, baseTemplateB.pkScript, fundingOutputB.PkScript)
 
 	// Step 2: Build and finalize the previous ark tx that carries the packet.
 	previousTemplateA := env.buildSpendTemplate(t, scriptA)
@@ -761,8 +817,8 @@ func (env *crossInputTestEnv) buildFinalizedPacketChain(
 
 	previousArkTx, previousCheckpoints, err := offchain.BuildTxs(
 		[]offchain.VtxoInput{
-			buildVtxoInput(fundingPtx, fundingOutputA, fundingIndexA, baseTemplateA),
-			buildVtxoInput(fundingPtx, fundingOutputB, fundingIndexB, baseTemplateB),
+			buildVtxoInput(fundingPtx, fundingOutputA, 0, baseTemplateA),
+			buildVtxoInput(fundingPtx, fundingOutputB, 1, baseTemplateB),
 		},
 		[]*wire.TxOut{{Value: fundingOutputA.Value, PkScript: previousTemplateA.pkScript}, {Value: fundingOutputB.Value, PkScript: previousTemplateB.pkScript}},
 		env.checkpointScriptBytes,
@@ -772,19 +828,19 @@ func (env *crossInputTestEnv) buildFinalizedPacketChain(
 	addCrossInputExtensionPacket(t, previousArkTx, packet)
 	addIntrospectorPacket(t, previousArkTx, []arkade.IntrospectorEntry{{Vin: 0, Script: baseScriptA}, {Vin: 1, Script: baseScriptB}})
 
-	require.NoError(t, executeArkadeScripts(t, previousArkTx, env.introspectorPubKey))
+	require.NoError(t, executeArkadeScripts(t, previousArkTx, previousCheckpoints, env.introspectorPubKey))
 	finalize(t, previousArkTx, previousCheckpoints)
 
-	prevOutputA, prevIndexA := findOutputForTemplate(t, previousArkTx, previousTemplateA)
-	require.NotNil(t, prevOutputA)
-	prevOutputB, prevIndexB := findOutputForTemplate(t, previousArkTx, previousTemplateB)
-	require.NotNil(t, prevOutputB)
+	prevOutputA := previousArkTx.UnsignedTx.TxOut[0]
+	prevOutputB := previousArkTx.UnsignedTx.TxOut[1]
+	require.Equal(t, previousTemplateA.pkScript, prevOutputA.PkScript)
+	require.Equal(t, previousTemplateB.pkScript, prevOutputB.PkScript)
 
 	// Step 3: Build the candidate tx that spends outputs from the finalized tx.
 	candidateTx, checkpoints, err := offchain.BuildTxs(
 		[]offchain.VtxoInput{
-			buildVtxoInput(previousArkTx, prevOutputA, prevIndexA, previousTemplateA),
-			buildVtxoInput(previousArkTx, prevOutputB, prevIndexB, previousTemplateB),
+			buildVtxoInput(previousArkTx, prevOutputA, 0, previousTemplateA),
+			buildVtxoInput(previousArkTx, prevOutputB, 1, previousTemplateB),
 		},
 		[]*wire.TxOut{{Value: prevOutputA.Value + prevOutputB.Value, PkScript: env.recipientPkScript}},
 		env.checkpointScriptBytes,
@@ -824,11 +880,9 @@ func (env *crossInputTestEnv) buildTwoInputSpend(
 		[]types.Receiver{{To: addressAStr, Amount: uint64(inputAmount)}, {To: addressBStr, Amount: uint64(inputAmount)}},
 	)
 	require.NoError(t, err)
-	require.NotEmpty(t, fundingTxid)
 
 	fundingTxs, err := env.indexerSvc.GetVirtualTxs(env.ctx, []string{fundingTxid})
 	require.NoError(t, err)
-	require.NotEmpty(t, fundingTxs)
 	require.Len(t, fundingTxs.Txs, 1)
 
 	fundingPtx, err := psbt.NewFromRawBytes(strings.NewReader(fundingTxs.Txs[0]), true)
@@ -840,16 +894,16 @@ func (env *crossInputTestEnv) buildTwoInputSpend(
 	}
 
 	// Step 3: Locate the funded outputs that correspond to the requested scripts.
-	outputA, outputIndexA := findOutputForTemplate(t, fundingPtx, templateA)
-	require.NotNil(t, outputA)
-	outputB, outputIndexB := findOutputForTemplate(t, fundingPtx, templateB)
-	require.NotNil(t, outputB)
+	outputA := fundingPtx.UnsignedTx.TxOut[0]
+	outputB := fundingPtx.UnsignedTx.TxOut[1]
+	require.Equal(t, templateA.pkScript, outputA.PkScript)
+	require.Equal(t, templateB.pkScript, outputB.PkScript)
 
 	// Step 4: Build the two-input candidate tx that spends both outputs.
 	candidateTx, checkpoints, err := offchain.BuildTxs(
 		[]offchain.VtxoInput{
-			buildVtxoInput(fundingPtx, outputA, outputIndexA, templateA),
-			buildVtxoInput(fundingPtx, outputB, outputIndexB, templateB),
+			buildVtxoInput(fundingPtx, outputA, 0, templateA),
+			buildVtxoInput(fundingPtx, outputB, 1, templateB),
 		},
 		[]*wire.TxOut{{Value: outputA.Value + outputB.Value, PkScript: env.recipientPkScript}},
 		env.checkpointScriptBytes,
@@ -864,12 +918,13 @@ func (env *crossInputTestEnv) buildTwoInputSpend(
 func executeAndExpectFailure(
 	t *testing.T,
 	candidateTx *psbt.Packet,
+	candidateCheckpoints []*psbt.Packet,
 	introspectorPubKey *btcec.PublicKey,
 	expectedErr string,
 ) {
 	t.Helper()
 
-	err := executeArkadeScripts(t, candidateTx, introspectorPubKey)
+	err := executeArkadeScripts(t, candidateTx, candidateCheckpoints, introspectorPubKey)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), expectedErr)
 }

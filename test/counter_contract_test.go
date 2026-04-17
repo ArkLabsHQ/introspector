@@ -1,7 +1,6 @@
 package test
 
 import (
-	"context"
 	"encoding/hex"
 	"strings"
 	"testing"
@@ -10,7 +9,6 @@ import (
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
-	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/arkade-os/go-sdk/indexer"
 	"github.com/arkade-os/go-sdk/types"
@@ -24,7 +22,7 @@ import (
 const counterPacketType = 2
 
 func TestCounterContractWithPacketIntrospection(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	alice, grpcClient := setupArkSDK(t)
 	t.Cleanup(func() {
@@ -149,7 +147,7 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 		{Vin: 0, Script: deployArkadeScript},
 	})
 	requireCounterPacket(t, deployTx.UnsignedTx, 0)
-	require.NoError(t, executeArkadeScripts(t, deployTx, introspectorPubKey))
+	require.NoError(t, executeArkadeScripts(t, deployTx, deployCheckpoints, introspectorPubKey))
 	submitAndFinalize(deployTx, deployCheckpoints)
 
 	firstCounterInput := vtxoInputFromScriptOutput(
@@ -159,61 +157,53 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 		counterVtxoScript,
 		counterTapscript,
 	)
-	firstCounterPkScript, err := checkpointInputPkScript(firstCounterInput, checkpointScriptBytes)
-	require.NoError(t, err)
 
 	invalidUnlockTx, invalidUnlockCheckpoints := buildCounterUnlockTx(
 		t,
 		firstCounterInput,
-		firstCounterPkScript,
+		counterDeployPkScript,
 		checkpointScriptBytes,
 		counterArkadeScript,
 		deployTx.UnsignedTx,
 		0,
 	)
-	require.Error(t, executeArkadeScripts(t, invalidUnlockTx, introspectorPubKey))
+	require.Error(t, executeArkadeScripts(t, invalidUnlockTx, invalidUnlockCheckpoints, introspectorPubKey))
 	submitExpectIntrospectorFailure(invalidUnlockTx, invalidUnlockCheckpoints)
 
 	firstUnlockTx, firstUnlockCheckpoints := buildCounterUnlockTx(
 		t,
 		firstCounterInput,
-		firstCounterPkScript,
+		counterDeployPkScript,
 		checkpointScriptBytes,
 		counterArkadeScript,
 		deployTx.UnsignedTx,
 		1,
 	)
 	requireCounterPacket(t, firstUnlockTx.UnsignedTx, 1)
-	require.Equal(t, firstCounterPkScript, firstUnlockTx.UnsignedTx.TxOut[0].PkScript)
-	require.NoError(t, executeArkadeScripts(t, firstUnlockTx, introspectorPubKey))
+	require.NoError(t, executeArkadeScripts(t, firstUnlockTx, firstUnlockCheckpoints, introspectorPubKey))
 	submitAndFinalize(firstUnlockTx, firstUnlockCheckpoints)
-
-	secondCounterInput := checkpointedCounterVtxoInput(
-		t,
-		firstUnlockTx.UnsignedTx,
-		0,
-		checkpointScriptBytes,
-		counterTapscript,
-	)
-	secondCounterPkScript, err := checkpointInputPkScript(secondCounterInput, checkpointScriptBytes)
-	require.NoError(t, err)
-	require.Equal(t, firstCounterPkScript, secondCounterPkScript)
 
 	secondUnlockTx, secondUnlockCheckpoints := buildCounterUnlockTx(
 		t,
-		secondCounterInput,
-		secondCounterPkScript,
+		offchain.VtxoInput{
+			Outpoint: &wire.OutPoint{
+				Hash:  firstUnlockTx.UnsignedTx.TxHash(),
+				Index: 0,
+			},
+			Tapscript:          firstCounterInput.Tapscript,
+			Amount:             firstCounterInput.Amount,
+			RevealedTapscripts: firstCounterInput.RevealedTapscripts,
+		},
+		counterDeployPkScript,
 		checkpointScriptBytes,
 		counterArkadeScript,
 		firstUnlockTx.UnsignedTx,
 		2,
 	)
 	requireCounterPacket(t, secondUnlockTx.UnsignedTx, 2)
-	require.Equal(t, secondCounterPkScript, secondUnlockTx.UnsignedTx.TxOut[0].PkScript)
-	require.NoError(t, executeArkadeScripts(t, secondUnlockTx, introspectorPubKey))
+	require.NoError(t, executeArkadeScripts(t, secondUnlockTx, secondUnlockCheckpoints, introspectorPubKey))
 	submitAndFinalize(secondUnlockTx, secondUnlockCheckpoints)
 }
-
 
 func counterDeployArkadeScript(t *testing.T, counterDeployPkScript []byte) []byte {
 	t.Helper()
@@ -306,31 +296,6 @@ func buildCounterUnlockTx(
 	return counterTx, checkpoints
 }
 
-
-func checkpointedCounterVtxoInput(
-	t *testing.T,
-	prevTx *wire.MsgTx,
-	outIndex uint32,
-	checkpointScriptBytes []byte,
-	counterTapscript []byte,
-) offchain.VtxoInput {
-	t.Helper()
-
-	signerUnrollScriptClosure := &script.CSVMultisigClosure{}
-	valid, err := signerUnrollScriptClosure.Decode(checkpointScriptBytes)
-	require.NoError(t, err)
-	require.True(t, valid)
-
-	counterClosure, err := script.DecodeClosure(counterTapscript)
-	require.NoError(t, err)
-
-	checkpointVtxoScript := script.TapscriptsVtxoScript{
-		Closures: []script.Closure{signerUnrollScriptClosure, counterClosure},
-	}
-
-	return vtxoInputFromScriptOutput(t, prevTx, outIndex, checkpointVtxoScript, counterTapscript)
-}
-
 func addCounterPacket(t *testing.T, ptx *psbt.Packet, value uint64) {
 	t.Helper()
 
@@ -362,4 +327,3 @@ func requireCounterPacket(t *testing.T, tx *wire.MsgTx, want uint64) {
 
 	require.FailNow(t, "counter packet not found")
 }
-

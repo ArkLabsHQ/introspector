@@ -135,7 +135,7 @@ func TestAssetOpcodes(t *testing.T) {
 					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 				},
 			},
-		}), nil,
+		}), nil, nil,
 	)
 
 	simpleTx := &wire.MsgTx{
@@ -806,13 +806,13 @@ func TestAssetOpcodes(t *testing.T) {
 			name: "large_amount_add64",
 			// Verify pushed LE64 amount feeds directly into OP_ADD64.
 			script: txscript.NewScriptBuilder().
-				AddInt64(0). // group index
-				AddInt64(0). // source=0 (inputs)
-				AddOp(OP_INSPECTASSETGROUPSUM).       // pushes 10B as LE64
-				AddData(amountLE64(500_000_000)).      // 0.5B
-				AddOp(OP_ADD64).                       // 10B + 0.5B
-				AddOp(OP_VERIFY).                      // success flag
-				AddData(amountLE64(10_500_000_000)).    // expected sum
+				AddInt64(0).                         // group index
+				AddInt64(0).                         // source=0 (inputs)
+				AddOp(OP_INSPECTASSETGROUPSUM).      // pushes 10B as LE64
+				AddData(amountLE64(500_000_000)).    // 0.5B
+				AddOp(OP_ADD64).                     // 10B + 0.5B
+				AddOp(OP_VERIFY).                    // success flag
+				AddData(amountLE64(10_500_000_000)). // expected sum
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{valid: true, assetPacket: largeAmountPacket},
