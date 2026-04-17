@@ -137,7 +137,6 @@ func TestSubmitOnchainTx(t *testing.T) {
 	fundingTxid, err := chainhash.NewHashFromStr(fundingUtxo.Txid)
 	require.NoError(t, err)
 
-	// ---- Primary valid case ----
 	t.Run("valid", func(t *testing.T) {
 		ptx := buildOnchainSpendPtx(
 			t, *fundingTxid, fundingVout, fundingOutput,
@@ -162,6 +161,49 @@ func TestSubmitOnchainTx(t *testing.T) {
 			t, len(finalPtx.Inputs[0].TaprootScriptSpendSig), 2,
 			"expected at least 2 signatures (Bob + introspector)",
 		)
+
+		// Add alice's signature to complete the 3-of-3 multisig.
+		leaf := txscript.NewBaseTapLeaf(arkadeTapscript)
+		prevoutFetcher := txscript.NewCannedPrevOutputFetcher(
+			fundingOutput.PkScript, fundingOutput.Value,
+		)
+		sigHashes := txscript.NewTxSigHashes(finalPtx.UnsignedTx, prevoutFetcher)
+		aliceSig, err := txscript.RawTxInTapscriptSignature(
+			finalPtx.UnsignedTx, sigHashes, 0,
+			fundingOutput.Value, fundingOutput.PkScript,
+			leaf, txscript.SigHashDefault, aliceKey,
+		)
+		require.NoError(t, err)
+
+		// finalize and broadcast
+		closureIface, err := script.DecodeClosure(arkadeTapscript)
+		require.NoError(t, err)
+
+		sigs := map[string][]byte{
+			hex.EncodeToString(schnorr.SerializePubKey(aliceKey.PubKey())): aliceSig[:64],
+		}
+		for _, s := range finalPtx.Inputs[0].TaprootScriptSpendSig {
+			sigs[hex.EncodeToString(s.XOnlyPubKey)] = s.Signature
+		}
+
+		witness, err := closureIface.Witness(merkleProof.ControlBlock, sigs)
+		require.NoError(t, err)
+
+		var witnessBuf bytes.Buffer
+		require.NoError(t, psbt.WriteTxWitness(&witnessBuf, witness))
+		finalPtx.Inputs[0].FinalScriptWitness = witnessBuf.Bytes()
+		finalPtx.Inputs[0].TaprootScriptSpendSig = nil
+		finalPtx.Inputs[0].TaprootLeafScript = nil
+
+		extractedTx, err := psbt.Extract(finalPtx)
+		require.NoError(t, err)
+
+		var rawBuf bytes.Buffer
+		require.NoError(t, extractedTx.Serialize(&rawBuf))
+
+		txid, err := explorerSvc.Broadcast(hex.EncodeToString(rawBuf.Bytes()))
+		require.NoError(t, err)
+		require.NotEmpty(t, txid)
 	})
 
 	t.Run("no introspector packet", func(t *testing.T) {
