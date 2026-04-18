@@ -11,10 +11,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPrevoutTxField(t *testing.T) {
+func TestPrevArkTxField(t *testing.T) {
 	t.Run("encode and decode", func(t *testing.T) {
 		ptx := newTestPSBT(t, 1)
 		prevTx := newTestPrevoutTx(1)
+		ptx.UnsignedTx.TxIn[0].PreviousOutPoint.Hash = prevTx.TxHash()
+
+		err := txutils.SetArkPsbtField(ptx, 0, PrevArkTxField, *prevTx)
+		require.NoError(t, err)
+
+		fields, err := txutils.GetArkPsbtFields(ptx, 0, PrevArkTxField)
+		require.NoError(t, err)
+		require.Len(t, fields, 1)
+		require.Equal(t, prevTx.TxHash(), fields[0].TxHash())
+	})
+}
+
+func TestPrevoutTxField(t *testing.T) {
+	t.Run("encode and decode", func(t *testing.T) {
+		ptx := newTestPSBT(t, 1)
+		prevTx := newTestPrevoutTx(2)
 		ptx.UnsignedTx.TxIn[0].PreviousOutPoint.Hash = prevTx.TxHash()
 
 		err := txutils.SetArkPsbtField(ptx, 0, PrevoutTxField, *prevTx)
@@ -24,6 +40,25 @@ func TestPrevoutTxField(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, fields, 1)
 		require.Equal(t, prevTx.TxHash(), fields[0].TxHash())
+	})
+
+	t.Run("does not collide with PrevArkTxField", func(t *testing.T) {
+		ptx := newTestPSBT(t, 1)
+		arkTx := newTestPrevoutTx(1)
+		outTx := newTestPrevoutTx(2)
+
+		require.NoError(t, txutils.SetArkPsbtField(ptx, 0, PrevArkTxField, *arkTx))
+		require.NoError(t, txutils.SetArkPsbtField(ptx, 0, PrevoutTxField, *outTx))
+
+		arkFields, err := txutils.GetArkPsbtFields(ptx, 0, PrevArkTxField)
+		require.NoError(t, err)
+		require.Len(t, arkFields, 1)
+		require.Equal(t, arkTx.TxHash(), arkFields[0].TxHash())
+
+		outFields, err := txutils.GetArkPsbtFields(ptx, 0, PrevoutTxField)
+		require.NoError(t, err)
+		require.Len(t, outFields, 1)
+		require.Equal(t, outTx.TxHash(), outFields[0].TxHash())
 	})
 }
 

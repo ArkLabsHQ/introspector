@@ -38,7 +38,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		orderedCheckpointTxids = append(orderedCheckpointTxids, checkpoint.UnsignedTx.TxID())
 	}
 
-	prevOutFetcher, err := prevOutFetcherForArkTxFromPSBT(arkPtx, tx.Checkpoints)
+	prevOutFetcher, err := prevOutFetcherForArkTx(arkPtx, tx.Checkpoints)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create prevout fetcher: %w", err)
 	}

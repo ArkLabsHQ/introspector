@@ -537,6 +537,95 @@ func (x *Intent) GetMessage() string {
 	return ""
 }
 
+type SubmitOnchainTxRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// base64 psbt
+	Tx            string `protobuf:"bytes,1,opt,name=tx,proto3" json:"tx,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SubmitOnchainTxRequest) Reset() {
+	*x = SubmitOnchainTxRequest{}
+	mi := &file_introspector_v1_service_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubmitOnchainTxRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubmitOnchainTxRequest) ProtoMessage() {}
+
+func (x *SubmitOnchainTxRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_introspector_v1_service_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubmitOnchainTxRequest.ProtoReflect.Descriptor instead.
+func (*SubmitOnchainTxRequest) Descriptor() ([]byte, []int) {
+	return file_introspector_v1_service_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *SubmitOnchainTxRequest) GetTx() string {
+	if x != nil {
+		return x.Tx
+	}
+	return ""
+}
+
+type SubmitOnchainTxResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SignedTx      string                 `protobuf:"bytes,1,opt,name=signed_tx,json=signedTx,proto3" json:"signed_tx,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SubmitOnchainTxResponse) Reset() {
+	*x = SubmitOnchainTxResponse{}
+	mi := &file_introspector_v1_service_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubmitOnchainTxResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubmitOnchainTxResponse) ProtoMessage() {}
+
+func (x *SubmitOnchainTxResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_introspector_v1_service_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubmitOnchainTxResponse.ProtoReflect.Descriptor instead.
+func (*SubmitOnchainTxResponse) Descriptor() ([]byte, []int) {
+	return file_introspector_v1_service_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *SubmitOnchainTxResponse) GetSignedTx() string {
+	if x != nil {
+		return x.SignedTx
+	}
+	return ""
+}
+
 var File_introspector_v1_service_proto protoreflect.FileDescriptor
 
 const file_introspector_v1_service_proto_rawDesc = "" +
@@ -574,14 +663,19 @@ const file_introspector_v1_service_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"8\n" +
 	"\x06Intent\x12\x14\n" +
 	"\x05proof\x18\x01 \x01(\tR\x05proof\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage2\xce\x03\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"(\n" +
+	"\x16SubmitOnchainTxRequest\x12\x0e\n" +
+	"\x02tx\x18\x01 \x01(\tR\x02tx\"6\n" +
+	"\x17SubmitOnchainTxResponse\x12\x1b\n" +
+	"\tsigned_tx\x18\x01 \x01(\tR\bsignedTx2\xcc\x04\n" +
 	"\x13IntrospectorService\x12[\n" +
 	"\aGetInfo\x12\x1f.introspector.v1.GetInfoRequest\x1a .introspector.v1.GetInfoResponse\"\r\xb2J\n" +
 	"\x12\b/v1/info\x12_\n" +
 	"\bSubmitTx\x12 .introspector.v1.SubmitTxRequest\x1a!.introspector.v1.SubmitTxResponse\"\x0e\xb2J\vB\x01*\"\x06/v1/tx\x12o\n" +
 	"\fSubmitIntent\x12$.introspector.v1.SubmitIntentRequest\x1a%.introspector.v1.SubmitIntentResponse\"\x12\xb2J\x0fB\x01*\"\n" +
 	"/v1/intent\x12\x87\x01\n" +
-	"\x12SubmitFinalization\x12*.introspector.v1.SubmitFinalizationRequest\x1a+.introspector.v1.SubmitFinalizationResponse\"\x18\xb2J\x15B\x01*\"\x10/v1/finalizationB\xc2\x01\n" +
+	"\x12SubmitFinalization\x12*.introspector.v1.SubmitFinalizationRequest\x1a+.introspector.v1.SubmitFinalizationResponse\"\x18\xb2J\x15B\x01*\"\x10/v1/finalization\x12|\n" +
+	"\x0fSubmitOnchainTx\x12'.introspector.v1.SubmitOnchainTxRequest\x1a(.introspector.v1.SubmitOnchainTxResponse\"\x16\xb2J\x13B\x01*\"\x0e/v1/onchain-txB\xc2\x01\n" +
 	"\x13com.introspector.v1B\fServiceProtoP\x01Z@github.com/ArkLabsHQ/introspector/introspector/v1;introspectorv1\xa2\x02\x03IXX\xaa\x02\x0fIntrospector.V1\xca\x02\x0fIntrospector\\V1\xe2\x02\x1bIntrospector\\V1\\GPBMetadata\xea\x02\x10Introspector::V1b\x06proto3"
 
 var (
@@ -596,7 +690,7 @@ func file_introspector_v1_service_proto_rawDescGZIP() []byte {
 	return file_introspector_v1_service_proto_rawDescData
 }
 
-var file_introspector_v1_service_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_introspector_v1_service_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_introspector_v1_service_proto_goTypes = []any{
 	(*GetInfoRequest)(nil),             // 0: introspector.v1.GetInfoRequest
 	(*GetInfoResponse)(nil),            // 1: introspector.v1.GetInfoResponse
@@ -608,23 +702,27 @@ var file_introspector_v1_service_proto_goTypes = []any{
 	(*SubmitFinalizationResponse)(nil), // 7: introspector.v1.SubmitFinalizationResponse
 	(*TxTreeNode)(nil),                 // 8: introspector.v1.TxTreeNode
 	(*Intent)(nil),                     // 9: introspector.v1.Intent
-	nil,                                // 10: introspector.v1.TxTreeNode.ChildrenEntry
+	(*SubmitOnchainTxRequest)(nil),     // 10: introspector.v1.SubmitOnchainTxRequest
+	(*SubmitOnchainTxResponse)(nil),    // 11: introspector.v1.SubmitOnchainTxResponse
+	nil,                                // 12: introspector.v1.TxTreeNode.ChildrenEntry
 }
 var file_introspector_v1_service_proto_depIdxs = []int32{
 	9,  // 0: introspector.v1.SubmitIntentRequest.intent:type_name -> introspector.v1.Intent
 	9,  // 1: introspector.v1.SubmitFinalizationRequest.signed_intent:type_name -> introspector.v1.Intent
 	8,  // 2: introspector.v1.SubmitFinalizationRequest.connector_tree:type_name -> introspector.v1.TxTreeNode
-	10, // 3: introspector.v1.TxTreeNode.children:type_name -> introspector.v1.TxTreeNode.ChildrenEntry
+	12, // 3: introspector.v1.TxTreeNode.children:type_name -> introspector.v1.TxTreeNode.ChildrenEntry
 	0,  // 4: introspector.v1.IntrospectorService.GetInfo:input_type -> introspector.v1.GetInfoRequest
 	2,  // 5: introspector.v1.IntrospectorService.SubmitTx:input_type -> introspector.v1.SubmitTxRequest
 	4,  // 6: introspector.v1.IntrospectorService.SubmitIntent:input_type -> introspector.v1.SubmitIntentRequest
 	6,  // 7: introspector.v1.IntrospectorService.SubmitFinalization:input_type -> introspector.v1.SubmitFinalizationRequest
-	1,  // 8: introspector.v1.IntrospectorService.GetInfo:output_type -> introspector.v1.GetInfoResponse
-	3,  // 9: introspector.v1.IntrospectorService.SubmitTx:output_type -> introspector.v1.SubmitTxResponse
-	5,  // 10: introspector.v1.IntrospectorService.SubmitIntent:output_type -> introspector.v1.SubmitIntentResponse
-	7,  // 11: introspector.v1.IntrospectorService.SubmitFinalization:output_type -> introspector.v1.SubmitFinalizationResponse
-	8,  // [8:12] is the sub-list for method output_type
-	4,  // [4:8] is the sub-list for method input_type
+	10, // 8: introspector.v1.IntrospectorService.SubmitOnchainTx:input_type -> introspector.v1.SubmitOnchainTxRequest
+	1,  // 9: introspector.v1.IntrospectorService.GetInfo:output_type -> introspector.v1.GetInfoResponse
+	3,  // 10: introspector.v1.IntrospectorService.SubmitTx:output_type -> introspector.v1.SubmitTxResponse
+	5,  // 11: introspector.v1.IntrospectorService.SubmitIntent:output_type -> introspector.v1.SubmitIntentResponse
+	7,  // 12: introspector.v1.IntrospectorService.SubmitFinalization:output_type -> introspector.v1.SubmitFinalizationResponse
+	11, // 13: introspector.v1.IntrospectorService.SubmitOnchainTx:output_type -> introspector.v1.SubmitOnchainTxResponse
+	9,  // [9:14] is the sub-list for method output_type
+	4,  // [4:9] is the sub-list for method input_type
 	4,  // [4:4] is the sub-list for extension type_name
 	4,  // [4:4] is the sub-list for extension extendee
 	0,  // [0:4] is the sub-list for field type_name
@@ -641,7 +739,7 @@ func file_introspector_v1_service_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_introspector_v1_service_proto_rawDesc), len(file_introspector_v1_service_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   11,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

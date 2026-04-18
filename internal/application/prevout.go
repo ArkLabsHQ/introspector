@@ -11,13 +11,14 @@ import (
 	"github.com/btcsuite/btcd/wire"
 )
 
-func prevOutFetcherForIntentFromPSBT(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher, error) {
+// prevOutFetcherForIntent computes and validate prevouts for an intent tx
+func prevOutFetcherForIntent(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher, error) {
 	baseFetcher, err := computePrevoutFetcher(ptx)
 	if err != nil {
 		return nil, err
 	}
 
-	prevoutTxs, err := decodePrevoutTxsFromPSBT(ptx)
+	prevoutTxs, err := decodePrevoutTxsFromField(ptx, arkade.PrevArkTxField)
 	if err != nil {
 		return nil, err
 	}
@@ -36,15 +37,16 @@ func prevOutFetcherForIntentFromPSBT(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher
 	return newMapArkPrevOutFetcher(baseFetcher, prevOutArkTxs, prevOutIdxs), nil
 }
 
-func prevOutFetcherForArkTxFromPSBT(
-	arkPtx *psbt.Packet, checkpoints []*psbt.Packet,
+// prevOutFetcherForArkTx computes and validate prevouts for an Ark tx using its checkpoints
+func prevOutFetcherForArkTx(
+	ptx *psbt.Packet, checkpoints []*psbt.Packet,
 ) (arkade.ArkPrevOutFetcher, error) {
-	baseFetcher, err := computePrevoutFetcher(arkPtx)
+	baseFetcher, err := computePrevoutFetcher(ptx)
 	if err != nil {
 		return nil, err
 	}
 
-	prevoutTxs, err := decodePrevoutTxsFromPSBT(arkPtx)
+	prevoutTxs, err := decodePrevoutTxsFromField(ptx, arkade.PrevArkTxField)
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +59,7 @@ func prevOutFetcherForArkTxFromPSBT(
 	prevOutArkTxs := make(map[wire.OutPoint]*wire.MsgTx, len(prevoutTxs))
 	prevOutIdxs := make(map[wire.OutPoint]uint32, len(prevoutTxs))
 	for inputIndex, prevTx := range prevoutTxs {
-		outpoint := arkPtx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
+		outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
 		checkpointTxid := outpoint.Hash.String()
 		checkpoint, ok := checkpointsByTxid[checkpointTxid]
 		if !ok {
@@ -86,7 +88,47 @@ func prevOutFetcherForArkTxFromPSBT(
 	return newMapArkPrevOutFetcher(baseFetcher, prevOutArkTxs, prevOutIdxs), nil
 }
 
-func decodePrevoutTxsFromPSBT(ptx *psbt.Packet) (map[int]*wire.MsgTx, error) {
+// prevOutFetcherForOnchainTx computes and validate prevouts for SubmitOnchainTx
+func prevOutFetcherForOnchainTx(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher, error) {
+	baseFetcher, err := computePrevoutFetcher(ptx)
+	if err != nil {
+		return nil, err
+	}
+
+	prevoutTxs, err := decodePrevoutTxsFromField(ptx, arkade.PrevoutTxField)
+	if err != nil {
+		return nil, err
+	}
+
+	prevOutTxs := make(map[wire.OutPoint]*wire.MsgTx, len(prevoutTxs))
+	prevOutIdxs := make(map[wire.OutPoint]uint32, len(prevoutTxs))
+	for inputIndex, prevTx := range prevoutTxs {
+		outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
+
+		if err := validatePrevoutTx(inputIndex, prevTx, outpoint.Hash); err != nil {
+			return nil, err
+		}
+
+		if outpoint.Index >= uint32(len(prevTx.TxOut)) {
+			return nil, fmt.Errorf(
+				"prevout tx output index out of range for input %d: index=%d outputs=%d",
+				inputIndex, outpoint.Index, len(prevTx.TxOut),
+			)
+		}
+
+		prevOutTxs[outpoint] = prevTx
+		prevOutIdxs[outpoint] = outpoint.Index
+	}
+
+	return newMapArkPrevOutFetcher(baseFetcher, prevOutTxs, prevOutIdxs), nil
+}
+
+// decodePrevoutTxsFromField decodes prevout transactions from the given psbt field
+// arkade.PrevArkTxField is used by offchain transactions
+// arkade.PrevoutTxField is used by onchain transactions
+func decodePrevoutTxsFromField(
+	ptx *psbt.Packet, field txutils.ArkPsbtFieldCoder[wire.MsgTx],
+) (map[int]*wire.MsgTx, error) {
 	if len(ptx.Inputs) != len(ptx.UnsignedTx.TxIn) {
 		return nil, fmt.Errorf("malformed psbt")
 	}
@@ -94,7 +136,7 @@ func decodePrevoutTxsFromPSBT(ptx *psbt.Packet) (map[int]*wire.MsgTx, error) {
 	prevoutTxs := make(map[int]*wire.MsgTx)
 
 	for inputIndex := range ptx.Inputs {
-		fields, err := txutils.GetArkPsbtFields(ptx, inputIndex, arkade.PrevoutTxField)
+		fields, err := txutils.GetArkPsbtFields(ptx, inputIndex, field)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode prevout tx for input %d: %w", inputIndex, err)
 		}
@@ -170,7 +212,6 @@ func validatePrevoutTx(inputIndex int, prevTx *wire.MsgTx, expectedHash chainhas
 	return nil
 }
 
-// TODO : do not rely on witness utxo to compute the prevout fetcher
 func computePrevoutFetcher(ptx *psbt.Packet) (txscript.PrevOutputFetcher, error) {
 	prevouts := make(map[wire.OutPoint]*wire.TxOut)
 
