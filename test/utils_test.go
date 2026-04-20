@@ -755,6 +755,28 @@ func createVtxoScriptWithArkadeScript(bobPubKey, aliceSigner, introspectorPubKey
 	}
 }
 
+func createVtxoScriptWithArkadeExitClosure(
+	bobPubKey, aliceSigner, introspectorPubKey *btcec.PublicKey,
+	arkadeScriptHash []byte, csvLocktime arklib.RelativeLocktime,
+) script.TapscriptsVtxoScript {
+	return script.TapscriptsVtxoScript{
+		Closures: []script.Closure{
+			&script.MultisigClosure{
+				PubKeys: []*btcec.PublicKey{bobPubKey, aliceSigner},
+			},
+			&script.CSVMultisigClosure{
+				MultisigClosure: script.MultisigClosure{
+					PubKeys: []*btcec.PublicKey{
+						bobPubKey,
+						arkade.ComputeArkadeScriptPublicKey(introspectorPubKey, arkadeScriptHash),
+					},
+				},
+				Locktime: csvLocktime,
+			},
+		},
+	}
+}
+
 // addIntrospectorPacket builds an IntrospectorPacket with the given entries and
 // embeds it into the transaction's OP_RETURN output. If an existing ARK OP_RETURN
 // (e.g. from an asset packet) is present, the introspector data is merged into it.
@@ -887,7 +909,7 @@ func executeArkadeScripts(t *testing.T, ptx *psbt.Packet, checkpoints []*psbt.Pa
 		outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
 		prevouts[outpoint] = input.WitnessUtxo
 
-		fields, err := txutils.GetArkPsbtFields(ptx, inputIndex, arkade.PrevoutTxField)
+		fields, err := txutils.GetArkPsbtFields(ptx, inputIndex, arkade.PrevArkTxField)
 		require.NoError(t, err)
 
 		if len(fields) == 0 {

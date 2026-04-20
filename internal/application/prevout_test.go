@@ -27,7 +27,7 @@ func TestArkPrevOutFetcher(t *testing.T) {
 				require.NoError(t, err)
 
 				for inputIndex := range ptx.Inputs {
-					fields, err := txutils.GetArkPsbtFields(ptx, inputIndex, arkade.PrevoutTxField)
+					fields, err := txutils.GetArkPsbtFields(ptx, inputIndex, arkade.PrevArkTxField)
 					require.NoError(t, err)
 
 					outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
@@ -70,6 +70,49 @@ func TestArkPrevOutFetcher(t *testing.T) {
 	})
 }
 
+func TestOnchainPrevOutFetcher(t *testing.T) {
+	fix := readOnchainPrevOutFixtures(t)
+
+	t.Run("valid", func(t *testing.T) {
+		for _, f := range fix.Valid {
+			t.Run(f.Name, func(t *testing.T) {
+				ptx := decodePSBT(t, f.Psbt)
+
+				fetcher, err := prevOutFetcherForOnchainTx(ptx)
+				require.NoError(t, err)
+
+				for inputIndex := range ptx.Inputs {
+					fields, err := txutils.GetArkPsbtFields(ptx, inputIndex, arkade.PrevoutTxField)
+					require.NoError(t, err)
+
+					outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
+					if len(fields) == 0 {
+						require.Nil(t, fetcher.FetchPrevOutArkTx(outpoint))
+						continue
+					}
+
+					require.Len(t, fields, 1)
+
+					got := fetcher.FetchPrevOutArkTx(outpoint)
+					require.NotNil(t, got)
+					require.Equal(t, fields[0].TxHash(), got.TxHash())
+				}
+			})
+		}
+	})
+
+	t.Run("invalid", func(t *testing.T) {
+		for _, f := range fix.Invalid {
+			t.Run(f.Name, func(t *testing.T) {
+				ptx := decodePSBT(t, f.Psbt)
+				_, err := prevOutFetcherForOnchainTx(ptx)
+				require.Error(t, err)
+				require.Contains(t, err.Error(), f.ErrorContains)
+			})
+		}
+	})
+}
+
 type fixtures struct {
 	Valid   []validFixture   `json:"valid"`
 	Invalid []invalidFixture `json:"invalid"`
@@ -101,14 +144,42 @@ func readPrevOutFixtures(t testing.TB) fixtures {
 	return fix
 }
 
+type onchainFixtures struct {
+	Valid   []onchainValidFixture   `json:"valid"`
+	Invalid []onchainInvalidFixture `json:"invalid"`
+}
+
+type onchainValidFixture struct {
+	Name string `json:"name"`
+	Psbt string `json:"psbt"`
+}
+
+type onchainInvalidFixture struct {
+	Name          string `json:"name"`
+	Psbt          string `json:"psbt"`
+	ErrorContains string `json:"errorContains"`
+}
+
+func readOnchainPrevOutFixtures(t testing.TB) onchainFixtures {
+	t.Helper()
+
+	data, err := os.ReadFile("testdata/onchain_prevout_fetcher.json")
+	require.NoError(t, err)
+
+	var fix onchainFixtures
+	require.NoError(t, json.Unmarshal(data, &fix))
+
+	return fix
+}
+
 func newPrevOutFetcher(
 	ptx *psbt.Packet, checkpoints []*psbt.Packet,
 ) (arkade.ArkPrevOutFetcher, error) {
 	if len(checkpoints) == 0 {
-		return prevOutFetcherForIntentFromPSBT(ptx)
+		return prevOutFetcherForIntent(ptx)
 	}
 
-	return prevOutFetcherForArkTxFromPSBT(ptx, checkpoints)
+	return prevOutFetcherForArkTx(ptx, checkpoints)
 }
 
 func decodePSBT(t testing.TB, b64 string) *psbt.Packet {

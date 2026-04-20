@@ -30,6 +30,7 @@ type TransportClient interface {
 		forfeits []string,
 		connectorTree tree.FlatTxTree, commitmentTx string,
 	) (signedForfeits []string, signedCommitmentTx string, err error)
+	SubmitOnchainTx(ctx context.Context, tx string) (signedTx string, err error)
 }
 
 // grpcClient implements TransportClient using gRPC
@@ -110,6 +111,17 @@ func (c *grpcClient) SubmitFinalization(
 	}
 
 	return resp.GetSignedForfeits(), resp.GetSignedCommitmentTx(), nil
+}
+
+func (c *grpcClient) SubmitOnchainTx(ctx context.Context, tx string) (string, error) {
+	req := &introspectorv1.SubmitOnchainTxRequest{Tx: tx}
+
+	resp, err := c.client.SubmitOnchainTx(ctx, req)
+	if err != nil {
+		return "", err
+	}
+
+	return resp.GetSignedTx(), nil
 }
 
 func castTxTree(tree tree.FlatTxTree) []*introspectorv1.TxTreeNode {

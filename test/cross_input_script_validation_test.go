@@ -342,8 +342,8 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			env.checkpointScriptBytes,
 		)
 		require.NoError(t, err)
-		require.NoError(t, txutils.SetArkPsbtField(candidateTx, 0, arkade.PrevoutTxField, *fundingPtx.UnsignedTx))
-		require.NoError(t, txutils.SetArkPsbtField(candidateTx, 1, arkade.PrevoutTxField, *fundingPtx.UnsignedTx))
+		require.NoError(t, txutils.SetArkPsbtField(candidateTx, 0, arkade.PrevArkTxField, *fundingPtx.UnsignedTx))
+		require.NoError(t, txutils.SetArkPsbtField(candidateTx, 1, arkade.PrevArkTxField, *fundingPtx.UnsignedTx))
 		addIntrospectorPacket(t, candidateTx, []arkade.IntrospectorEntry{
 			{Vin: 0, Script: inputOneIsBobScript},
 			{Vin: 1, Script: baseScriptTwo},
@@ -752,7 +752,7 @@ func buildVtxoInput(prevTx *psbt.Packet, out *wire.TxOut, outIndex uint32, templ
 func removePrevoutTxFields(t *testing.T, ptx *psbt.Packet, inputIndexes ...int) {
 	t.Helper()
 
-	prevoutFieldKey := append([]byte{txutils.ArkPsbtFieldKeyType}, arkade.ArkFieldPrevoutTx...)
+	prevoutFieldKey := append([]byte{txutils.ArkPsbtFieldKeyType}, arkade.ArkFieldPrevArkTx...)
 
 	for _, inputIndex := range inputIndexes {
 		require.GreaterOrEqual(t, inputIndex, 0)
@@ -848,8 +848,8 @@ func (env *crossInputTestEnv) buildFinalizedPacketChain(
 	require.NoError(t, err)
 
 	// Step 4: Attach prevout tx fields so cross-input opcodes can inspect them.
-	require.NoError(t, txutils.SetArkPsbtField(candidateTx, 0, arkade.PrevoutTxField, *previousArkTx.UnsignedTx))
-	require.NoError(t, txutils.SetArkPsbtField(candidateTx, 1, arkade.PrevoutTxField, *previousArkTx.UnsignedTx))
+	require.NoError(t, txutils.SetArkPsbtField(candidateTx, 0, arkade.PrevArkTxField, *previousArkTx.UnsignedTx))
+	require.NoError(t, txutils.SetArkPsbtField(candidateTx, 1, arkade.PrevArkTxField, *previousArkTx.UnsignedTx))
 
 	return candidateTx, checkpoints, previousArkTx
 }

@@ -242,7 +242,7 @@ func buildCounterUnlockTx(
 	addIntrospectorPacket(t, counterTx, []arkade.IntrospectorEntry{
 		{Vin: 0, Script: arkadeScript},
 	})
-	require.NoError(t, txutils.SetArkPsbtField(counterTx, 0, arkade.PrevoutTxField, *prevArkTx))
+	require.NoError(t, txutils.SetArkPsbtField(counterTx, 0, arkade.PrevArkTxField, *prevArkTx))
 
 	return counterTx, checkpoints
 }
