@@ -331,7 +331,7 @@ func buildCounterIncrementIntent(
 		{Vin: 1, Script: counterArkadeScript},
 	})
 	require.NoError(t, txutils.SetArkPsbtField(
-		intentPtx, 1, arkade.PrevoutTxField, *prevArkTx,
+		intentPtx, 1, arkade.PrevArkTxField, *prevArkTx,
 	))
 
 	return intentPtx, message

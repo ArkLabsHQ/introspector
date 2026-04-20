@@ -300,7 +300,7 @@ func TestContractIdWithAssetIdentity(t *testing.T) {
 	})
 
 	// The main contract needs the bootstrap tx for OP_INSPECTINPUTPACKET.
-	require.NoError(t, txutils.SetArkPsbtField(coSpendTx, 0, arkade.PrevoutTxField, *bootstrapTx.UnsignedTx))
+	require.NoError(t, txutils.SetArkPsbtField(coSpendTx, 0, arkade.PrevArkTxField, *bootstrapTx.UnsignedTx))
 
 	require.NoError(t, executeArkadeScripts(t, coSpendTx, coSpendCheckpoints, introspectorPubKey))
 	submitWithIntrospector(coSpendTx, coSpendCheckpoints)
