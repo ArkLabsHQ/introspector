@@ -1,16 +1,25 @@
 package test
 
 import (
+	"bytes"
+	"context"
 	"encoding/hex"
 	"testing"
 
 	"github.com/ArkLabsHQ/introspector/pkg/arkade"
 	introspectorclient "github.com/ArkLabsHQ/introspector/pkg/client"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
+	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
+	arksdk "github.com/arkade-os/go-sdk"
+	"github.com/arkade-os/go-sdk/client"
+	"github.com/arkade-os/go-sdk/explorer"
+	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
+	"github.com/arkade-os/go-sdk/types"
+	"github.com/arkade-os/go-sdk/wallet"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/txscript"
@@ -18,38 +27,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCounterContractBatchContinuation pins down the current inability to
-// batch-continue a contract VTXO.
+// TestCounterContractBatchContinuation pins down the current inability to carry
+// custom contract packets through a batch-swap intent.
 //
-// Semantics: a batch swap is a passive move of a VTXO into the next batch —
-// NOT a contract call. arkd is expected to COPY the creating tx's
-// introspector / state packets onto the new leaf tx so the contract state is
-// preserved as-is; no transition is performed. The intent proof therefore
-// carries the same state as the deploy tx (counter=0).
+// Semantics: the first batch swap is a real contract transition. The intent
+// proof spends the current counter VTXO, carries counter=1 in its output
+// packets, and outputs the same value back to the same contract script. The
+// introspector executes the arkade script against that intent proof and signs
+// only because counter=1 is a valid transition from the deployed counter=0.
 //
-// Today this is not possible:
-//  1. arkd drops every extension packet except the asset packet (type 0x00)
-//     when building the leaf tx, so state would be lost even if signing
-//     succeeded. Tracked in https://github.com/arkade-os/arkd/issues/1017.
-//  2. The only way to obtain the introspector's arkade-tweaked signature on
-//     the intent proof is SubmitIntent, which executes the arkade script.
-//     The counter contract only authorizes increment-by-1 (not preservation),
-//     so the script rejects the preservation-intent proof.
+// The missing piece today is packet propagation from the intent proof into the
+// new batch leaf tx. arkd currently drops every extension packet except the
+// asset packet (type 0x00) when building the leaf tx, so the counter=1 packet
+// is lost. Tracked in https://github.com/arkade-os/arkd/issues/1017.
 //
-// The test asserts (2): SubmitIntent fails because the counter script cannot
-// authorize a batch move that preserves state.
+// The test asserts that consequence: after the first increment lands in the
+// next batch, a second increment intent fails because OP_INSPECTINPUTPACKET
+// cannot recover the previous counter packet from the batch leaf tx.
 //
-// To make batch continuation work, the introspector needs a signing path that
-// does NOT execute the contract script — either an extra option on
-// SubmitIntent (e.g. a "batch continuation" flag that skips script execution
-// and signs the arkade-tweaked key for a state-preserving proof) or a new
-// dedicated RPC for batch-continuation intents. Both require arkd to also
-// carry the introspector / state packets across batches (issue #1017).
-//
-// TODO: flip this test to a success path once arkd carries custom extension
-// packets across batches AND the introspector exposes a batch-continuation
-// signing path (extra SubmitIntent option or new RPC) that does not execute
-// the contract script.
+// TODO: flip the second increment to a success assertion once arkd carries
+// custom extension packets from swap intents into the created batch leaf tx.
 func TestCounterContractBatchContinuation(t *testing.T) {
 	ctx := t.Context()
 
@@ -74,26 +71,24 @@ func TestCounterContractBatchContinuation(t *testing.T) {
 
 	indexerSvc := setupIndexer(t)
 
+	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+	require.NoError(t, err)
+
 	// =========================================================================
 	// Phase 1: Deploy the counter at counter=0 from Alice's wallet VTXO.
 	// =========================================================================
 
-	// The counter VTXO must carry a CSV exit leaf alongside the arkade
-	// closure: arkd rejects batch forfeits of VTXOs that have no exit leaf
-	// (INVALID_VTXO_SCRIPT / "no exit leaf"). The exit path is never taken in
-	// this test — the CSV key is a throwaway.
-	exitKey, err := btcec.NewPrivateKey()
-	require.NoError(t, err)
-
 	counterArkadeScript := counterContractArkadeScript(t)
-	counterVtxoScript := createArkadeVtxoScriptWithExit(
+	counterVtxoScript := createVtxoScriptWithArkadeAndCSV(
+		alicePubKey,
 		aliceAddr.Signer,
 		introspectorPubKey,
-		exitKey.PubKey(),
 		arkade.ArkadeScriptHash(counterArkadeScript),
 	)
 	counterTapscript := onlyForfeitScript(t, counterVtxoScript)
 	counterPkScript := p2trScriptForVtxoScript(t, counterVtxoScript)
+	counterRevealedTapscripts, err := counterVtxoScript.Encode()
+	require.NoError(t, err)
 
 	deployTx := deployCounterFromWallet(
 		t,
@@ -110,27 +105,159 @@ func TestCounterContractBatchContinuation(t *testing.T) {
 	)
 
 	// =========================================================================
-	// Phase 2: Attempt to batch-continue the counter by preserving state.
+	// Phase 2: Increment from counter=0 to counter=1 through a swap intent.
 	//
-	// The intent proof spends the counter VTXO and outputs the same amount
-	// back to the same counter contract script. The counter packet carries
-	// the SAME value as on the deploy tx (counter=0) — no increment, because
-	// a batch swap is not a contract call.
+	// The intent proof spends the counter VTXO, carries counter=1, and asks
+	// arkd to create the same contract output in the next batch.
 	// =========================================================================
 
 	counterVtxoAmount := deployTx.UnsignedTx.TxOut[0].Value
-	counterOutpoint := &wire.OutPoint{
-		Hash:  deployTx.UnsignedTx.TxHash(),
-		Index: 0,
-	}
-	counterWitnessUtxo := &wire.TxOut{
-		Value:    counterVtxoAmount,
-		PkScript: counterPkScript,
-	}
 
 	cosignerKey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
 	signerSession := tree.NewTreeSignerSession(cosignerKey)
+
+	firstIntentPtx, firstMessage := buildCounterIncrementIntent(
+		t,
+		signerSession,
+		deployTx.UnsignedTx,
+		0,
+		counterVtxoScript,
+		counterTapscript,
+		counterPkScript,
+		counterArkadeScript,
+		1,
+	)
+	requireCounterPacket(t, firstIntentPtx.UnsignedTx, 1)
+	require.NoError(t, executeArkadeScripts(t, firstIntentPtx, nil, introspectorPubKey))
+
+	signedIntent := signAndSubmitCounterIntent(
+		t,
+		ctx,
+		aliceWallet,
+		explorer,
+		introspectorClient,
+		firstIntentPtx,
+		firstMessage,
+	)
+
+	intentId, err := grpcClient.RegisterIntent(ctx, signedIntent.Proof, signedIntent.Message)
+	require.NoError(t, err)
+
+	vtxo := client.TapscriptsVtxo{
+		Vtxo: types.Vtxo{
+			Outpoint: types.Outpoint{
+				Txid: deployTx.UnsignedTx.TxHash().String(),
+				VOut: 0,
+			},
+			Script: hex.EncodeToString(counterTapscript),
+			Amount: uint64(counterVtxoAmount),
+		},
+		Tapscripts: counterRevealedTapscripts,
+	}
+
+	batchHandler := &capturingBatchEventsHandler{
+		delegateBatchEventsHandler: &delegateBatchEventsHandler{
+			intentId:           intentId,
+			intent:             signedIntent,
+			vtxosToForfeit:     []client.TapscriptsVtxo{vtxo},
+			signerSession:      signerSession,
+			introspectorClient: introspectorClient,
+			wallet:             aliceWallet,
+			client:             grpcClient,
+			explorer:           explorer,
+		},
+	}
+
+	topics := arksdk.GetEventStreamTopics(
+		[]types.Outpoint{vtxo.Outpoint},
+		[]tree.SignerSession{signerSession},
+	)
+	eventStream, stop, err := grpcClient.GetEventStream(ctx, topics)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		stop()
+	})
+
+	commitmentTxid, err := arksdk.JoinBatchSession(ctx, eventStream, batchHandler)
+	require.NoError(t, err)
+	require.NotEmpty(t, commitmentTxid)
+	require.NotNil(t, batchHandler.vtxoTree)
+
+	// =========================================================================
+	// Phase 3: Try another increment from the newly created batch leaf VTXO.
+	//
+	// This currently fails because the leaf tx does not retain the counter=1
+	// extension packet from the first swap intent.
+	// =========================================================================
+
+	nextCounterTx, nextCounterVout := findCounterLeafOutput(
+		t, batchHandler.vtxoTree, counterPkScript, counterVtxoAmount,
+	)
+	requireNoCounterPacket(t, nextCounterTx)
+
+	secondSignerKey, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+	secondSignerSession := tree.NewTreeSignerSession(secondSignerKey)
+
+	secondIntentPtx, secondMessage := buildCounterIncrementIntent(
+		t,
+		secondSignerSession,
+		nextCounterTx,
+		nextCounterVout,
+		counterVtxoScript,
+		counterTapscript,
+		counterPkScript,
+		counterArkadeScript,
+		2,
+	)
+	requireCounterPacket(t, secondIntentPtx.UnsignedTx, 2)
+
+	err = executeArkadeScripts(t, secondIntentPtx, nil, introspectorPubKey)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "OP_EQUALVERIFY")
+
+	encodedSecondIntentProof, err := secondIntentPtx.B64Encode()
+	require.NoError(t, err)
+	signedSecondIntentProof, err := aliceWallet.SignTransaction(
+		ctx, explorer, encodedSecondIntentProof,
+	)
+	require.NoError(t, err)
+
+	_, err = introspectorClient.SubmitIntent(ctx, introspectorclient.Intent{
+		Proof:   signedSecondIntentProof,
+		Message: secondMessage,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to process intent")
+}
+
+type capturingBatchEventsHandler struct {
+	*delegateBatchEventsHandler
+	vtxoTree *tree.TxTree
+}
+
+func (h *capturingBatchEventsHandler) OnBatchFinalization(
+	ctx context.Context,
+	event client.BatchFinalizationEvent,
+	vtxoTree, connectorTree *tree.TxTree,
+) error {
+	h.vtxoTree = vtxoTree
+	return h.delegateBatchEventsHandler.OnBatchFinalization(ctx, event, vtxoTree, connectorTree)
+}
+
+func buildCounterIncrementIntent(
+	t *testing.T,
+	signerSession tree.SignerSession,
+	prevArkTx *wire.MsgTx,
+	prevVout uint32,
+	counterVtxoScript script.TapscriptsVtxoScript,
+	counterTapscript []byte,
+	counterPkScript []byte,
+	counterArkadeScript []byte,
+	nextCounterValue uint64,
+) (*psbt.Packet, string) {
+	t.Helper()
 
 	message, err := intent.RegisterMessage{
 		BaseMessage: intent.BaseMessage{
@@ -143,13 +270,20 @@ func TestCounterContractBatchContinuation(t *testing.T) {
 	}.Encode()
 	require.NoError(t, err)
 
+	require.True(t, prevVout < uint32(len(prevArkTx.TxOut)))
+	counterVtxoAmount := prevArkTx.TxOut[prevVout].Value
+	require.Equal(t, counterPkScript, prevArkTx.TxOut[prevVout].PkScript)
+
 	intentProof, err := intent.New(
 		message,
 		[]intent.Input{
 			{
-				OutPoint:    counterOutpoint,
+				OutPoint: &wire.OutPoint{
+					Hash:  prevArkTx.TxHash(),
+					Index: prevVout,
+				},
 				Sequence:    wire.MaxTxInSequenceNum,
-				WitnessUtxo: counterWitnessUtxo,
+				WitnessUtxo: prevArkTx.TxOut[prevVout],
 			},
 		},
 		[]*wire.TxOut{
@@ -192,67 +326,76 @@ func TestCounterContractBatchContinuation(t *testing.T) {
 	intentProof.Inputs[1].Unknowns = append(intentProof.Inputs[1].Unknowns, taptreeField)
 
 	intentPtx := &intentProof.Packet
-
-	// Preserve the existing counter state: same value (0) as on the deploy
-	// tx. Point the introspector packet at input 1 (input 0 is the fake
-	// message input from intent.New).
-	addCounterPacket(t, intentPtx, 0)
+	addCounterPacket(t, intentPtx, nextCounterValue)
 	addIntrospectorPacket(t, intentPtx, []arkade.IntrospectorEntry{
 		{Vin: 1, Script: counterArkadeScript},
 	})
-
-	// OP_INSPECTINPUTPACKET on input 1 needs the deploy tx as the previous
-	// ark tx to read the counter=0 packet.
 	require.NoError(t, txutils.SetArkPsbtField(
-		intentPtx, 1, arkade.PrevoutTxField, *deployTx.UnsignedTx,
+		intentPtx, 1, arkade.PrevoutTxField, *prevArkTx,
 	))
+
+	return intentPtx, message
+}
+
+func signAndSubmitCounterIntent(
+	t *testing.T,
+	ctx context.Context,
+	walletSvc wallet.WalletService,
+	explorerSvc explorer.Explorer,
+	introspectorClient introspectorclient.TransportClient,
+	intentPtx *psbt.Packet,
+	message string,
+) introspectorclient.Intent {
+	t.Helper()
 
 	encodedIntentProof, err := intentPtx.B64Encode()
 	require.NoError(t, err)
 
-	// SubmitIntent executes the counter arkade script against the intent
-	// proof. The script only authorizes counter_new = counter_prev + 1, so
-	// a preservation proof (counter=0 in, counter=0 out) fails. There is no
-	// other way to obtain the arkade-tweaked signature today, so batch
-	// continuation of this contract is not possible.
-	_, err = introspectorClient.SubmitIntent(
-		ctx, introspectorclient.Intent{
-			Proof:   encodedIntentProof,
-			Message: message,
-		},
-	)
-	require.Error(t, err,
-		"expected SubmitIntent to fail: the counter arkade script demands "+
-			"increment, but batch continuation preserves state")
+	signedIntentProof, err := walletSvc.SignTransaction(ctx, explorerSvc, encodedIntentProof)
+	require.NoError(t, err)
+
+	approvedIntentProof, err := introspectorClient.SubmitIntent(ctx, introspectorclient.Intent{
+		Proof:   signedIntentProof,
+		Message: message,
+	})
+	require.NoError(t, err)
+
+	return introspectorclient.Intent{
+		Proof:   approvedIntentProof,
+		Message: message,
+	}
 }
 
-// createArkadeVtxoScriptWithExit returns a VTXO script with a 2-of-2 arkade
-// forfeit closure (server signer + arkade-tweaked introspector) plus a CSV
-// exit closure owned by exitOwner. The CSV exit is required so arkd accepts
-// the VTXO as forfeitable in a batch.
-func createArkadeVtxoScriptWithExit(
-	serverSigner *btcec.PublicKey,
-	introspectorPubKey *btcec.PublicKey,
-	exitOwner *btcec.PublicKey,
-	arkadeScriptHash []byte,
-) script.TapscriptsVtxoScript {
-	return script.TapscriptsVtxoScript{
-		Closures: []script.Closure{
-			&script.MultisigClosure{
-				PubKeys: []*btcec.PublicKey{
-					serverSigner,
-					arkade.ComputeArkadeScriptPublicKey(introspectorPubKey, arkadeScriptHash),
-				},
-			},
-			&script.CSVMultisigClosure{
-				MultisigClosure: script.MultisigClosure{
-					PubKeys: []*btcec.PublicKey{exitOwner},
-				},
-				Locktime: arklib.RelativeLocktime{
-					Type:  arklib.LocktimeTypeSecond,
-					Value: 512 * 10,
-				},
-			},
-		},
+func findCounterLeafOutput(
+	t *testing.T,
+	vtxoTree *tree.TxTree,
+	counterPkScript []byte,
+	counterVtxoAmount int64,
+) (*wire.MsgTx, uint32) {
+	t.Helper()
+
+	for _, leaf := range vtxoTree.Leaves() {
+		for vout, output := range leaf.UnsignedTx.TxOut {
+			if output.Value == counterVtxoAmount && bytes.Equal(output.PkScript, counterPkScript) {
+				return leaf.UnsignedTx, uint32(vout)
+			}
+		}
+	}
+
+	require.FailNow(t, "counter leaf output not found")
+	return nil, 0
+}
+
+func requireNoCounterPacket(t *testing.T, tx *wire.MsgTx) {
+	t.Helper()
+
+	ext, err := extension.NewExtensionFromTx(tx)
+	if err != nil {
+		require.ErrorIs(t, err, extension.ErrExtensionNotFound)
+		return
+	}
+
+	for _, packet := range ext {
+		require.NotEqual(t, uint8(counterPacketType), packet.Type())
 	}
 }
