@@ -24,7 +24,10 @@ import (
 	arksdk "github.com/arkade-os/go-sdk"
 	"github.com/arkade-os/go-sdk/client"
 	"github.com/arkade-os/go-sdk/explorer"
+	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
+	"github.com/arkade-os/go-sdk/indexer"
 	inmemorystoreconfig "github.com/arkade-os/go-sdk/store/inmemory"
+	"github.com/arkade-os/go-sdk/types"
 	"github.com/arkade-os/go-sdk/wallet"
 	singlekeywallet "github.com/arkade-os/go-sdk/wallet/singlekey"
 	inmemorystore "github.com/arkade-os/go-sdk/wallet/singlekey/store/inmemory"
@@ -488,6 +491,159 @@ func fundAndSettleAlice(t *testing.T, ctx context.Context, alice arksdk.ArkClien
 	time.Sleep(5 * time.Second)
 
 	return aliceAddr
+}
+
+func encodeCheckpoints(t *testing.T, checkpoints []*psbt.Packet) []string {
+	t.Helper()
+
+	encodedCheckpoints := make([]string, 0, len(checkpoints))
+	for _, checkpoint := range checkpoints {
+		encoded, err := checkpoint.B64Encode()
+		require.NoError(t, err)
+		encodedCheckpoints = append(encodedCheckpoints, encoded)
+	}
+
+	return encodedCheckpoints
+}
+
+func buildWalletFundedTx(
+	t *testing.T,
+	ctx context.Context,
+	alice arksdk.ArkClient,
+	indexerSvc indexer.Indexer,
+	alicePubKey *btcec.PublicKey,
+	serverSigner *btcec.PublicKey,
+	unilateralExitDelay uint32,
+	outputs []*wire.TxOut,
+	checkpointScriptBytes []byte,
+) (*psbt.Packet, []*psbt.Packet) {
+	t.Helper()
+
+	exitDelayType := arklib.LocktimeTypeBlock
+	if unilateralExitDelay >= 512 {
+		exitDelayType = arklib.LocktimeTypeSecond
+	}
+	fundingVtxoScript := script.NewDefaultVtxoScript(
+		alicePubKey,
+		serverSigner,
+		arklib.RelativeLocktime{
+			Type:  exitDelayType,
+			Value: unilateralExitDelay,
+		},
+	)
+	fundingTapscript := onlyForfeitScript(t, *fundingVtxoScript)
+	fundingTapKey, _, err := fundingVtxoScript.TapTree()
+	require.NoError(t, err)
+
+	fundingPkScript, err := script.P2TRScript(fundingTapKey)
+	require.NoError(t, err)
+	spendableVtxos, _, err := alice.ListVtxos(ctx)
+	require.NoError(t, err)
+
+	var fundingVtxo types.Vtxo
+	for _, vtxo := range spendableVtxos {
+		if vtxo.Script == hex.EncodeToString(fundingPkScript) {
+			fundingVtxo = vtxo
+			break
+		}
+	}
+	require.NotEmpty(t, fundingVtxo.Txid)
+
+	fundingTxs, err := indexerSvc.GetVirtualTxs(ctx, []string{fundingVtxo.Txid})
+	require.NoError(t, err)
+	require.Len(t, fundingTxs.Txs, 1)
+
+	fundingPtx, err := psbt.NewFromRawBytes(strings.NewReader(fundingTxs.Txs[0]), true)
+	require.NoError(t, err)
+
+	fundingOutputIndex, fundingOutput := findTaprootOutput(t, fundingPtx.UnsignedTx, fundingTapKey)
+	require.Equal(t, fundingVtxo.VOut, fundingOutputIndex)
+	require.Equal(t, int64(fundingVtxo.Amount), fundingOutput.Value)
+
+	fundingInput := vtxoInputFromScriptOutput(
+		t,
+		fundingPtx.UnsignedTx,
+		fundingOutputIndex,
+		*fundingVtxoScript,
+		fundingTapscript,
+	)
+
+	outputValue := int64(0)
+	for _, output := range outputs {
+		outputValue += output.Value
+	}
+	changeValue := fundingOutput.Value - outputValue
+	require.Positive(t, changeValue)
+
+	txOutputs := make([]*wire.TxOut, 0, len(outputs)+1)
+	txOutputs = append(txOutputs, outputs...)
+	txOutputs = append(txOutputs, &wire.TxOut{
+		Value:    changeValue,
+		PkScript: fundingPkScript,
+	})
+
+	ptx, checkpoints, err := offchain.BuildTxs(
+		[]offchain.VtxoInput{fundingInput},
+		txOutputs,
+		checkpointScriptBytes,
+	)
+	require.NoError(t, err)
+
+	return ptx, checkpoints
+}
+
+func submitWithArkd(
+	t *testing.T,
+	ctx context.Context,
+	candidateTx *psbt.Packet,
+	checkpoints []*psbt.Packet,
+	walletSvc wallet.WalletService,
+	grpcClient client.TransportClient,
+) {
+	t.Helper()
+
+	explorerSvc, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+	require.NoError(t, err)
+
+	encodedTx, err := candidateTx.B64Encode()
+	require.NoError(t, err)
+
+	signedTx, err := walletSvc.SignTransaction(ctx, explorerSvc, encodedTx)
+	require.NoError(t, err)
+
+	txid, _, signedCheckpoints, err := grpcClient.SubmitTx(ctx, signedTx, encodeCheckpoints(t, checkpoints))
+	require.NoError(t, err)
+	require.NotEmpty(t, txid)
+	require.NotEmpty(t, signedCheckpoints)
+
+	finalCheckpoints := make([]string, 0, len(signedCheckpoints))
+	for _, checkpoint := range signedCheckpoints {
+		signedCheckpoint, err := walletSvc.SignTransaction(ctx, explorerSvc, checkpoint)
+		require.NoError(t, err)
+		finalCheckpoints = append(finalCheckpoints, signedCheckpoint)
+	}
+
+	require.NoError(t, grpcClient.FinalizeTx(ctx, txid, finalCheckpoints))
+}
+
+func requirePreconfirmedVtxo(
+	t *testing.T,
+	ctx context.Context,
+	indexerSvc indexer.Indexer,
+	candidateTx *psbt.Packet,
+	vout uint32,
+) {
+	t.Helper()
+
+	opts := indexer.GetVtxosRequestOption{}
+	err := opts.WithOutpoints([]types.Outpoint{{Txid: candidateTx.UnsignedTx.TxID(), VOut: vout}})
+	require.NoError(t, err)
+
+	vtxos, err := indexerSvc.GetVtxos(ctx, opts)
+	require.NoError(t, err)
+	require.Len(t, vtxos.Vtxos, 1)
+	require.True(t, vtxos.Vtxos[0].Preconfirmed)
+	require.False(t, vtxos.Vtxos[0].Spent)
 }
 
 // createIssuanceAssetPacket creates a simple asset issuance packet with one output

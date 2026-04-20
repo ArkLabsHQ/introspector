@@ -2,18 +2,15 @@ package test
 
 import (
 	"encoding/hex"
-	"strings"
 	"testing"
 
 	"github.com/ArkLabsHQ/introspector/pkg/arkade"
 	introspectorclient "github.com/ArkLabsHQ/introspector/pkg/client"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
-	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
-	"github.com/arkade-os/go-sdk/types"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/txscript"
@@ -56,12 +53,12 @@ import (
 func TestCounterContractBatchContinuation(t *testing.T) {
 	ctx := t.Context()
 
-	alice, grpcClient := setupArkSDK(t)
+	alice, aliceWallet, alicePubKey, grpcClient := setupArkSDKwithPublicKey(t)
 	t.Cleanup(func() {
 		grpcClient.Close()
 	})
 
-	aliceAddr := fundAndSettleAlice(t, ctx, alice, 20000)
+	aliceAddr := fundAndSettleAlice(t, ctx, alice, 50000)
 
 	introspectorClient, introspectorPubKey, conn := setupIntrospectorClient(t, ctx)
 	t.Cleanup(func() {
@@ -78,8 +75,7 @@ func TestCounterContractBatchContinuation(t *testing.T) {
 	indexerSvc := setupIndexer(t)
 
 	// =========================================================================
-	// Phase 1: Deploy the counter at counter=0, reusing the helpers from
-	// counter_contract_test.go.
+	// Phase 1: Deploy the counter at counter=0 from Alice's wallet VTXO.
 	// =========================================================================
 
 	// The counter VTXO must carry a CSV exit leaf alongside the arkade
@@ -97,77 +93,21 @@ func TestCounterContractBatchContinuation(t *testing.T) {
 		arkade.ArkadeScriptHash(counterArkadeScript),
 	)
 	counterTapscript := onlyForfeitScript(t, counterVtxoScript)
-	counterDeployPkScript := p2trScriptForVtxoScript(t, counterVtxoScript)
+	counterPkScript := p2trScriptForVtxoScript(t, counterVtxoScript)
 
-	deployArkadeScript := counterDeployArkadeScript(t, counterDeployPkScript)
-	stagingVtxoScript := createArkadeOnlyVtxoScript(
-		aliceAddr.Signer,
-		introspectorPubKey,
-		arkade.ArkadeScriptHash(deployArkadeScript),
-	)
-	stagingTapscript := onlyForfeitScript(t, stagingVtxoScript)
-	stagingTapKey, _, err := stagingVtxoScript.TapTree()
-	require.NoError(t, err)
-
-	stagingAddress := arklib.Address{
-		HRP:        "tark",
-		VtxoTapKey: stagingTapKey,
-		Signer:     aliceAddr.Signer,
-	}
-	stagingAddr, err := stagingAddress.EncodeV0()
-	require.NoError(t, err)
-
-	stagingTxid, err := alice.SendOffChain(
-		ctx,
-		[]types.Receiver{{To: stagingAddr, Amount: 20000}},
-	)
-	require.NoError(t, err)
-	require.NotEmpty(t, stagingTxid)
-
-	stagingTxs, err := indexerSvc.GetVirtualTxs(ctx, []string{stagingTxid})
-	require.NoError(t, err)
-	require.Len(t, stagingTxs.Txs, 1)
-
-	stagingPtx, err := psbt.NewFromRawBytes(strings.NewReader(stagingTxs.Txs[0]), true)
-	require.NoError(t, err)
-
-	stagingOutputIndex, stagingOutput := findTaprootOutput(t, stagingPtx.UnsignedTx, stagingTapKey)
-	stagingInput := vtxoInputFromScriptOutput(
+	deployTx := deployCounterFromWallet(
 		t,
-		stagingPtx.UnsignedTx,
-		stagingOutputIndex,
-		stagingVtxoScript,
-		stagingTapscript,
-	)
-
-	encodeCheckpoints := func(checkpoints []*psbt.Packet) []string {
-		encoded := make([]string, 0, len(checkpoints))
-		for _, c := range checkpoints {
-			s, err := c.B64Encode()
-			require.NoError(t, err)
-			encoded = append(encoded, s)
-		}
-		return encoded
-	}
-
-	deployTx, deployCheckpoints, err := offchain.BuildTxs(
-		[]offchain.VtxoInput{stagingInput},
-		[]*wire.TxOut{{Value: stagingOutput.Value, PkScript: counterDeployPkScript}},
+		ctx,
+		alice,
+		aliceWallet,
+		grpcClient,
+		indexerSvc,
+		alicePubKey,
+		aliceAddr.Signer,
+		uint32(infos.UnilateralExitDelay),
+		counterPkScript,
 		checkpointScriptBytes,
 	)
-	require.NoError(t, err)
-	addCounterPacket(t, deployTx, 0)
-	addIntrospectorPacket(t, deployTx, []arkade.IntrospectorEntry{
-		{Vin: 0, Script: deployArkadeScript},
-	})
-	require.NoError(t, executeArkadeScripts(t, deployTx, deployCheckpoints, introspectorPubKey))
-
-	encodedDeployTx, err := deployTx.B64Encode()
-	require.NoError(t, err)
-	_, _, err = introspectorClient.SubmitTx(
-		ctx, encodedDeployTx, encodeCheckpoints(deployCheckpoints),
-	)
-	require.NoError(t, err)
 
 	// =========================================================================
 	// Phase 2: Attempt to batch-continue the counter by preserving state.
@@ -178,14 +118,14 @@ func TestCounterContractBatchContinuation(t *testing.T) {
 	// a batch swap is not a contract call.
 	// =========================================================================
 
-	counterVtxoAmount := stagingOutput.Value
+	counterVtxoAmount := deployTx.UnsignedTx.TxOut[0].Value
 	counterOutpoint := &wire.OutPoint{
 		Hash:  deployTx.UnsignedTx.TxHash(),
 		Index: 0,
 	}
 	counterWitnessUtxo := &wire.TxOut{
 		Value:    counterVtxoAmount,
-		PkScript: counterDeployPkScript,
+		PkScript: counterPkScript,
 	}
 
 	cosignerKey, err := btcec.NewPrivateKey()
@@ -215,7 +155,7 @@ func TestCounterContractBatchContinuation(t *testing.T) {
 		[]*wire.TxOut{
 			{
 				Value:    counterVtxoAmount,
-				PkScript: counterDeployPkScript,
+				PkScript: counterPkScript,
 			},
 		},
 	)
