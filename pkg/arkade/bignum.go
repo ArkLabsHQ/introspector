@@ -293,3 +293,64 @@ func (n BigNum) Abs() BigNum {
 	}
 	return BigNum{big: new(big.Int).Abs(n.asBig()), useBig: true}
 }
+
+// Lshift returns n << shift. Fails if the minimal encoding of the result
+// would exceed maxBigNumLen bytes.
+func (n BigNum) Lshift(shift uint) (BigNum, error) {
+	if n.IsZero() {
+		return n, nil
+	}
+	// Early fail: an n > 0 shifted by more than maxBigNumLen*8 bits cannot fit.
+	if shift > uint(maxBigNumLen*8) {
+		return BigNum{}, scriptError(txscript.ErrNumberTooBig,
+			fmt.Sprintf("LSHIFT result would exceed %d bytes", maxBigNumLen))
+	}
+	res := new(big.Int).Lsh(n.asBig(), shift)
+	out := BigNum{big: res, useBig: true}
+	if _, err := out.Bytes(); err != nil {
+		return BigNum{}, err
+	}
+	return out, nil
+}
+
+// Rshift returns n >> shift with arithmetic semantics:
+//   - rounds toward negative infinity (e.g., -7 >> 1 == -4, -1 >> any == -1)
+//   - shifting a positive value by more than its bit-width yields 0
+//   - shifting a negative value by more than its bit-width yields -1
+func (n BigNum) Rshift(shift uint) BigNum {
+	if n.IsZero() {
+		return n
+	}
+	// big.Int.Rsh operates on two's-complement representation and rounds
+	// toward negative infinity for negative values, matching our spec.
+	res := new(big.Int).Rsh(n.asBig(), shift)
+	return BigNum{big: res, useBig: true}
+}
+
+// MinimallyEncode returns the minimal sign-magnitude LE encoding of the
+// byte slice v (interpreting v as sign-magnitude LE). It strips trailing
+// zero-bytes while preserving the sign bit, and normalises negative zero
+// ([0x80], [0x00, 0x00, 0x80], etc.) to the empty slice.
+func MinimallyEncode(v []byte) []byte {
+	if len(v) == 0 {
+		return []byte{}
+	}
+	out := append([]byte(nil), v...)
+	sign := out[len(out)-1] & 0x80
+	// Clear sign bit from MSB so we can detect an all-zero magnitude.
+	out[len(out)-1] &= 0x7f
+	// Strip trailing zero-bytes.
+	for len(out) > 0 && out[len(out)-1] == 0 {
+		out = out[:len(out)-1]
+	}
+	if len(out) == 0 {
+		return []byte{}
+	}
+	// If new MSB's high bit is set, we need a sign-extension byte.
+	if out[len(out)-1]&0x80 != 0 {
+		out = append(out, sign) // sign byte is either 0x00 (positive) or 0x80 (negative)
+	} else if sign != 0 {
+		out[len(out)-1] |= sign
+	}
+	return out
+}

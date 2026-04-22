@@ -305,3 +305,92 @@ func TestBigNumAbs(t *testing.T) {
 		t.Fatalf("abs(int64 min) must promote")
 	}
 }
+
+func TestBigNumLshift(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		in, shift, want int64
+	}{
+		{1, 0, 1},
+		{1, 8, 256},
+		{-1, 8, -256},
+		{5, 1, 10},
+		{-5, 1, -10},
+		{0, 100, 0},
+	}
+	for _, tc := range tests {
+		got, err := BigNumFromInt64(tc.in).Lshift(uint(tc.shift))
+		if err != nil {
+			t.Fatalf("Lshift(%d, %d): %v", tc.in, tc.shift, err)
+		}
+		if got.useBig {
+			if got.asBig().Cmp(big.NewInt(tc.want)) != 0 {
+				t.Fatalf("Lshift(%d, %d) big = %s, want %d", tc.in, tc.shift, got.big, tc.want)
+			}
+			continue
+		}
+		if got.small != tc.want {
+			t.Fatalf("Lshift(%d, %d) small = %d, want %d", tc.in, tc.shift, got.small, tc.want)
+		}
+	}
+}
+
+func TestBigNumLshiftExceeds520Bytes(t *testing.T) {
+	t.Parallel()
+	// Shifting a non-zero value by enough to exceed 520*8 = 4160 bits
+	// produces a magnitude that can't fit in 520 bytes.
+	_, err := BigNumFromInt64(1).Lshift(4161)
+	if !isScriptError(err, txscript.ErrNumberTooBig) {
+		t.Fatalf("want ErrNumberTooBig, got %v", err)
+	}
+}
+
+func TestBigNumRshiftArithmetic(t *testing.T) {
+	t.Parallel()
+	// Arithmetic shift: rounds toward negative infinity for negatives.
+	tests := []struct {
+		in, shift, want int64
+	}{
+		{7, 1, 3},
+		{-7, 1, -4}, // -4 (floor(-3.5) = -4)
+		{-1, 1, -1}, // -1 >> any = -1
+		{-1, 100, -1},
+		{8, 3, 1},
+		{-8, 3, -1},
+		{-9, 3, -2}, // floor(-1.125) = -2
+		{0, 10, 0},
+	}
+	for _, tc := range tests {
+		got := BigNumFromInt64(tc.in).Rshift(uint(tc.shift))
+		if got.asBig().Cmp(big.NewInt(tc.want)) != 0 {
+			t.Fatalf("Rshift(%d, %d) = %s, want %d", tc.in, tc.shift, got.asBig(), tc.want)
+		}
+	}
+}
+
+func TestMinimallyEncode(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		in, want []byte
+	}{
+		{nil, nil},
+		{[]byte{}, nil},
+		{[]byte{0x05, 0x00, 0x00, 0x00}, []byte{0x05}},
+		{[]byte{0x00, 0x00, 0x00, 0x80}, nil},          // negative zero → zero
+		{[]byte{0x05, 0x00, 0x00, 0x80}, []byte{0x85}}, // -5 padded
+		{[]byte{0x05}, []byte{0x05}},                   // already minimal
+		{[]byte{0x80, 0x00}, []byte{0x80, 0x00}},       // 128 needs sign-ext byte
+		{[]byte{0x80, 0x00, 0x00}, []byte{0x80, 0x00}}, // 128 with extra padding
+		{[]byte{0x00, 0x80}, nil},                      // -0 two-byte → zero
+	}
+	for i, tc := range tests {
+		got := MinimallyEncode(tc.in)
+		want := tc.want
+		if want == nil {
+			want = []byte{}
+		}
+		if !bytes.Equal(got, want) {
+			t.Fatalf("case %d: MinimallyEncode(%x) = %x, want %x", i, tc.in, got, want)
+		}
+	}
+}
