@@ -134,6 +134,43 @@ func (s *stack) PeekBool(idx int32) (bool, error) {
 	return asBool(so), nil
 }
 
+// PushBigNum encodes n as minimal sign-magnitude LE and pushes it onto the
+// stack. If the encoding would exceed maxBigNumLen bytes the script is
+// failed with ErrNumberTooBig.
+//
+// Stack transformation: [... x1 x2] -> [... x1 x2 bignum]
+func (s *stack) PushBigNum(n BigNum) error {
+	b, err := n.Bytes()
+	if err != nil {
+		return err
+	}
+	s.PushByteArray(b)
+	return nil
+}
+
+// PopBigNum pops the top stack item and decodes it as a BigNum with the
+// given maxLen. Minimal-encoding is enforced iff the stack's
+// verifyMinimalData flag is set.
+//
+// Stack transformation: [... x1 x2 x3] -> [... x1 x2]
+func (s *stack) PopBigNum(maxLen int) (BigNum, error) {
+	so, err := s.PopByteArray()
+	if err != nil {
+		return BigNum{}, err
+	}
+	return MakeBigNum(so, s.verifyMinimalData, maxLen)
+}
+
+// PeekBigNum returns the Nth item on the stack as a BigNum without removing
+// it.
+func (s *stack) PeekBigNum(idx int32, maxLen int) (BigNum, error) {
+	so, err := s.PeekByteArray(idx)
+	if err != nil {
+		return BigNum{}, err
+	}
+	return MakeBigNum(so, s.verifyMinimalData, maxLen)
+}
+
 // nipN is an internal function that removes the nth item on the stack and
 // returns it.
 //
