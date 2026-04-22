@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"hash"
 	"math"
-	"math/big"
 	"strings"
 
 	//nolint:staticcheck
@@ -2404,52 +2403,47 @@ func opcodeMod(op *opcode, data []byte, vm *Engine) error {
 	return vm.dstack.PushBigNum(a.Mod(b))
 }
 
-// opcodeLshift performs a left shift operation.
+// opcodeLshift performs a left shift on BigNum operands. The shift count
+// operand must be non-negative. Fails the script if the result would exceed 520 bytes.
+//
 // Stack transformation: [... x n] -> [... x<<n]
 func opcodeLshift(op *opcode, data []byte, vm *Engine) error {
-	n, err := vm.dstack.PopInt()
+	shiftNum, err := vm.dstack.PopInt()
 	if err != nil {
 		return err
 	}
-	if n < 0 {
+	if shiftNum < 0 {
 		return scriptError(txscript.ErrInvalidIndex, "negative shift count")
 	}
-
-	x, err := vm.dstack.PopByteArray()
+	x, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-
-	// Convert to big integer for arbitrary precision shift
-	value := new(big.Int).SetBytes(x)
-	result := value.Lsh(value, uint(n))
-
-	vm.dstack.PushByteArray(result.Bytes())
-	return nil
+	result, err := x.Lshift(uint(shiftNum))
+	if err != nil {
+		return err
+	}
+	return vm.dstack.PushBigNum(result)
 }
 
-// opcodeRshift performs a right shift operation.
+// opcodeRshift performs an arithmetic right shift on BigNum operands,
+// rounding toward negative infinity. The shift count operand must be
+// non-negative.
+//
 // Stack transformation: [... x n] -> [... x>>n]
 func opcodeRshift(op *opcode, data []byte, vm *Engine) error {
-	n, err := vm.dstack.PopInt()
+	shiftNum, err := vm.dstack.PopInt()
 	if err != nil {
 		return err
 	}
-	if n < 0 {
+	if shiftNum < 0 {
 		return scriptError(txscript.ErrInvalidIndex, "negative shift count")
 	}
-
-	x, err := vm.dstack.PopByteArray()
+	x, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-
-	// Convert to big integer for arbitrary precision shift
-	value := new(big.Int).SetBytes(x)
-	result := value.Rsh(value, uint(n))
-
-	vm.dstack.PushByteArray(result.Bytes())
-	return nil
+	return vm.dstack.PushBigNum(x.Rshift(uint(shiftNum)))
 }
 
 // opcodeChecksigFromStack verifies a signature against a public key and message from the stack.

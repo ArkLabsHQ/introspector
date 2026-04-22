@@ -223,3 +223,66 @@ func TestOpcodeDisasm(t *testing.T) {
 		}
 	}
 }
+
+func TestShiftOpcodesBigNumSemantics(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		setup  func(*stack)
+		opFunc func(*opcode, []byte, *Engine) error
+		want   []byte
+	}{
+		{
+			name: "lshift 5 << 1 = 10",
+			setup: func(s *stack) {
+				s.PushByteArray([]byte{0x05})
+				s.PushByteArray([]byte{0x01})
+			},
+			opFunc: opcodeLshift,
+			want:   []byte{0x0a},
+		},
+		{
+			name: "lshift 255 << 1 = 510",
+			setup: func(s *stack) {
+				s.PushByteArray([]byte{0xff, 0x00})
+				s.PushByteArray([]byte{0x01})
+			},
+			opFunc: opcodeLshift,
+			want:   []byte{0xfe, 0x01},
+		},
+		{
+			name: "rshift arithmetic: -7 >> 1 = -4",
+			setup: func(s *stack) {
+				s.PushByteArray([]byte{0x87}) // -7
+				s.PushByteArray([]byte{0x01})
+			},
+			opFunc: opcodeRshift,
+			want:   []byte{0x84}, // -4
+		},
+		{
+			name: "rshift arithmetic: -1 >> 100 = -1",
+			setup: func(s *stack) {
+				s.PushByteArray([]byte{0x81}) // -1
+				s.PushByteArray([]byte{0x64}) // 100
+			},
+			opFunc: opcodeRshift,
+			want:   []byte{0x81},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			vm := &Engine{dstack: stack{verifyMinimalData: true}}
+			tc.setup(&vm.dstack)
+			if err := tc.opFunc(nil, nil, vm); err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+			got, err := vm.dstack.PopByteArray()
+			if err != nil {
+				t.Fatalf("pop: %v", err)
+			}
+			if !bytes.Equal(got, tc.want) {
+				t.Fatalf("got %x, want %x", got, tc.want)
+			}
+		})
+	}
+}
