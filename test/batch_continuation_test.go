@@ -9,7 +9,6 @@ import (
 	"github.com/ArkLabsHQ/introspector/pkg/arkade"
 	introspectorclient "github.com/ArkLabsHQ/introspector/pkg/client"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
-	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
@@ -27,27 +26,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCounterContractBatchContinuation pins down the current inability to carry
-// custom contract packets through a batch-swap intent.
+// TestCounterContractBatchContinuation exercises carrying custom contract
+// packets through a batch-swap intent.
 //
-// Semantics: the first batch swap is a real contract transition. The intent
-// proof spends the current counter VTXO, carries counter=1 in its output
-// packets, and outputs the same value back to the same contract script. The
-// introspector executes the arkade script against that intent proof and signs
-// only because counter=1 is a valid transition from the deployed counter=0.
+// Semantics: each batch swap is a real contract transition. The intent proof
+// spends the current counter VTXO, carries counter=N+1 in its output packets,
+// and outputs the same value back to the same contract script. The introspector
+// executes the arkade script against that intent proof and signs only because
+// counter=N+1 is a valid transition from the current counter=N.
 //
-// The missing piece today is packet propagation from the intent proof into the
-// new batch leaf tx. arkd currently drops every extension packet except the
-// asset packet (type 0x00) when building the leaf tx, so the counter=1 packet
-// is lost. Tracked in https://github.com/arkade-os/arkd/issues/1017.
-//
-// The test asserts that consequence: after the first increment lands in the
-// next batch, a second increment intent fails because OP_INSPECTINPUTPACKET
-// cannot recover the previous counter packet from the batch leaf tx.
-//
-// TODO: flip the second increment to a success assertion once arkd carries
-// custom extension packets from swap intents into the created batch leaf tx.
+// arkd propagates the counter packet from the intent proof into the new batch
+// leaf tx (see https://github.com/arkade-os/arkd/issues/1017), so a second
+// increment can read the previous counter via OP_INSPECTINPUTPACKET and chain
+// from the batch leaf VTXO.
 func TestCounterContractBatchContinuation(t *testing.T) {
+	t.Skip("requires arkd PR https://github.com/arkade-os/arkd/pull/1022")
+
 	ctx := t.Context()
 
 	alice, aliceWallet, alicePubKey, grpcClient := setupArkSDKwithPublicKey(t)
@@ -185,16 +179,16 @@ func TestCounterContractBatchContinuation(t *testing.T) {
 	require.NotNil(t, batchHandler.vtxoTree)
 
 	// =========================================================================
-	// Phase 3: Try another increment from the newly created batch leaf VTXO.
+	// Phase 3: Increment again from the newly created batch leaf VTXO.
 	//
-	// This currently fails because the leaf tx does not retain the counter=1
-	// extension packet from the first swap intent.
+	// The leaf tx retains the counter=1 packet from the first swap intent, so
+	// OP_INSPECTINPUTPACKET can recover it and validate the 1->2 transition.
 	// =========================================================================
 
 	nextCounterTx, nextCounterVout := findCounterLeafOutput(
 		t, batchHandler.vtxoTree, counterPkScript, counterVtxoAmount,
 	)
-	requireNoCounterPacket(t, nextCounterTx)
+	requireCounterPacket(t, nextCounterTx, 1)
 
 	secondSignerKey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
@@ -212,24 +206,17 @@ func TestCounterContractBatchContinuation(t *testing.T) {
 		2,
 	)
 	requireCounterPacket(t, secondIntentPtx.UnsignedTx, 2)
+	require.NoError(t, executeArkadeScripts(t, secondIntentPtx, nil, introspectorPubKey))
 
-	err = executeArkadeScripts(t, secondIntentPtx, nil, introspectorPubKey)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "OP_EQUALVERIFY")
-
-	encodedSecondIntentProof, err := secondIntentPtx.B64Encode()
-	require.NoError(t, err)
-	signedSecondIntentProof, err := aliceWallet.SignTransaction(
-		ctx, explorer, encodedSecondIntentProof,
+	signAndSubmitCounterIntent(
+		t,
+		ctx,
+		aliceWallet,
+		explorer,
+		introspectorClient,
+		secondIntentPtx,
+		secondMessage,
 	)
-	require.NoError(t, err)
-
-	_, err = introspectorClient.SubmitIntent(ctx, introspectorclient.Intent{
-		Proof:   signedSecondIntentProof,
-		Message: secondMessage,
-	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "failed to process intent")
 }
 
 type capturingBatchEventsHandler struct {
@@ -384,18 +371,4 @@ func findCounterLeafOutput(
 
 	require.FailNow(t, "counter leaf output not found")
 	return nil, 0
-}
-
-func requireNoCounterPacket(t *testing.T, tx *wire.MsgTx) {
-	t.Helper()
-
-	ext, err := extension.NewExtensionFromTx(tx)
-	if err != nil {
-		require.ErrorIs(t, err, extension.ErrExtensionNotFound)
-		return
-	}
-
-	for _, packet := range ext {
-		require.NotEqual(t, uint8(counterPacketType), packet.Type())
-	}
 }
