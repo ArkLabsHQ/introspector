@@ -1,24 +1,22 @@
 package test
 
 import (
-	"bytes"
+	"context"
 	"encoding/hex"
-	"strings"
 	"testing"
 
 	"github.com/ArkLabsHQ/introspector/pkg/arkade"
-	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
-	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
+	arksdk "github.com/arkade-os/go-sdk"
+	"github.com/arkade-os/go-sdk/client"
 	"github.com/arkade-os/go-sdk/indexer"
-	"github.com/arkade-os/go-sdk/types"
+	"github.com/arkade-os/go-sdk/wallet"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcwallet/waddrmgr"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,12 +26,12 @@ const counterPacketType = 2
 func TestCounterContractWithPacketIntrospection(t *testing.T) {
 	ctx := t.Context()
 
-	alice, grpcClient := setupArkSDK(t)
+	alice, aliceWallet, alicePubKey, grpcClient := setupArkSDKwithPublicKey(t)
 	t.Cleanup(func() {
 		grpcClient.Close()
 	})
 
-	aliceAddr := fundAndSettleAlice(t, ctx, alice, 20000)
+	aliceAddr := fundAndSettleAlice(t, ctx, alice, 50000)
 
 	introspectorClient, introspectorPubKey, conn := setupIntrospectorClient(t, ctx)
 	t.Cleanup(func() {
@@ -47,112 +45,51 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 	checkpointScriptBytes, err := hex.DecodeString(infos.CheckpointTapscript)
 	require.NoError(t, err)
 
+	indexerSvc := setupIndexer(t)
+
 	counterArkadeScript := counterContractArkadeScript(t)
-	counterVtxoScript := createCounterVtxoScript(
+	counterVtxoScript := createArkadeOnlyVtxoScript(
 		aliceAddr.Signer,
 		introspectorPubKey,
 		arkade.ArkadeScriptHash(counterArkadeScript),
 	)
 	counterTapscript := onlyForfeitScript(t, counterVtxoScript)
-	counterDeployPkScript := p2trScriptForVtxoScript(t, counterVtxoScript)
-
-	deployArkadeScript := counterDeployArkadeScript(t, counterDeployPkScript)
-	stagingVtxoScript := createCounterVtxoScript(
-		aliceAddr.Signer,
-		introspectorPubKey,
-		arkade.ArkadeScriptHash(deployArkadeScript),
-	)
-	stagingTapscript := onlyForfeitScript(t, stagingVtxoScript)
-	stagingTapKey, _, err := stagingVtxoScript.TapTree()
-	require.NoError(t, err)
-
-	stagingAddress := arklib.Address{
-		HRP:        "tark",
-		VtxoTapKey: stagingTapKey,
-		Signer:     aliceAddr.Signer,
-	}
-
-	stagingAddr, err := stagingAddress.EncodeV0()
-	require.NoError(t, err)
-
-	stagingTxid, err := alice.SendOffChain(
-		ctx,
-		[]types.Receiver{{To: stagingAddr, Amount: 20000}},
-	)
-	require.NoError(t, err)
-	require.NotEmpty(t, stagingTxid)
-
-	indexerSvc := setupIndexer(t)
-	stagingTxs, err := indexerSvc.GetVirtualTxs(ctx, []string{stagingTxid})
-	require.NoError(t, err)
-	require.Len(t, stagingTxs.Txs, 1)
-
-	stagingPtx, err := psbt.NewFromRawBytes(strings.NewReader(stagingTxs.Txs[0]), true)
-	require.NoError(t, err)
-
-	stagingOutputIndex, stagingOutput := findTaprootOutput(t, stagingPtx.UnsignedTx, stagingTapKey)
-	stagingInput := vtxoInputFromScriptOutput(
-		t,
-		stagingPtx.UnsignedTx,
-		stagingOutputIndex,
-		stagingVtxoScript,
-		stagingTapscript,
-	)
-
-	encodeCheckpoints := func(checkpoints []*psbt.Packet) []string {
-		encodedCheckpoints := make([]string, 0, len(checkpoints))
-		for _, checkpoint := range checkpoints {
-			encoded, err := checkpoint.B64Encode()
-			require.NoError(t, err)
-			encodedCheckpoints = append(encodedCheckpoints, encoded)
-		}
-		return encodedCheckpoints
-	}
+	counterPkScript := p2trScriptForVtxoScript(t, counterVtxoScript)
 
 	submitAndFinalize := func(candidateTx *psbt.Packet, checkpoints []*psbt.Packet) {
 		encodedTx, err := candidateTx.B64Encode()
 		require.NoError(t, err)
 
-		encodedCheckpoints := encodeCheckpoints(checkpoints)
-
 		_, _, err = introspectorClient.SubmitTx(
-			ctx, encodedTx, encodedCheckpoints,
+			ctx, encodedTx, encodeCheckpoints(t, checkpoints),
 		)
 		require.NoError(t, err)
 
-		opts := indexer.GetVtxosRequestOption{}
-		err = opts.WithOutpoints([]types.Outpoint{{Txid: candidateTx.UnsignedTx.TxID(), VOut: 0}})
-		require.NoError(t, err)
-
-		vtxos, err := indexerSvc.GetVtxos(ctx, opts)
-		require.NoError(t, err)
-		require.Len(t, vtxos.Vtxos, 1)
-		require.True(t, vtxos.Vtxos[0].Preconfirmed)
-		require.False(t, vtxos.Vtxos[0].Spent)
+		requirePreconfirmedVtxo(t, ctx, indexerSvc, candidateTx, 0)
 	}
 
 	submitExpectIntrospectorFailure := func(candidateTx *psbt.Packet, checkpoints []*psbt.Packet) {
 		encodedTx, err := candidateTx.B64Encode()
 		require.NoError(t, err)
 
-		_, _, err = introspectorClient.SubmitTx(ctx, encodedTx, encodeCheckpoints(checkpoints))
+		_, _, err = introspectorClient.SubmitTx(ctx, encodedTx, encodeCheckpoints(t, checkpoints))
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to process transaction")
 	}
 
-	deployTx, deployCheckpoints, err := offchain.BuildTxs(
-		[]offchain.VtxoInput{stagingInput},
-		[]*wire.TxOut{{Value: stagingOutput.Value, PkScript: counterDeployPkScript}},
+	deployTx := deployCounterFromWallet(
+		t,
+		ctx,
+		alice,
+		aliceWallet,
+		grpcClient,
+		indexerSvc,
+		alicePubKey,
+		aliceAddr.Signer,
+		uint32(infos.UnilateralExitDelay),
+		counterPkScript,
 		checkpointScriptBytes,
 	)
-	require.NoError(t, err)
-	addCounterPacket(t, deployTx, 0)
-	addIntrospectorPacket(t, deployTx, []arkade.IntrospectorEntry{
-		{Vin: 0, Script: deployArkadeScript},
-	})
-	requireCounterPacket(t, deployTx.UnsignedTx, 0)
-	require.NoError(t, executeArkadeScripts(t, deployTx, deployCheckpoints, introspectorPubKey))
-	submitAndFinalize(deployTx, deployCheckpoints)
 
 	firstCounterInput := vtxoInputFromScriptOutput(
 		t,
@@ -165,7 +102,7 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 	invalidUnlockTx, invalidUnlockCheckpoints := buildCounterUnlockTx(
 		t,
 		firstCounterInput,
-		counterDeployPkScript,
+		counterPkScript,
 		checkpointScriptBytes,
 		counterArkadeScript,
 		deployTx.UnsignedTx,
@@ -177,7 +114,7 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 	firstUnlockTx, firstUnlockCheckpoints := buildCounterUnlockTx(
 		t,
 		firstCounterInput,
-		counterDeployPkScript,
+		counterPkScript,
 		checkpointScriptBytes,
 		counterArkadeScript,
 		deployTx.UnsignedTx,
@@ -198,7 +135,7 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 			Amount:             firstCounterInput.Amount,
 			RevealedTapscripts: firstCounterInput.RevealedTapscripts,
 		},
-		counterDeployPkScript,
+		counterPkScript,
 		checkpointScriptBytes,
 		counterArkadeScript,
 		firstUnlockTx.UnsignedTx,
@@ -209,50 +146,41 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 	submitAndFinalize(secondUnlockTx, secondUnlockCheckpoints)
 }
 
-// arkd requires its signer in every forfeit leaf. The dummy counter contract
-// adds no owner key: only the server signer and tweaked introspector sign.
-func createCounterVtxoScript(
+func deployCounterFromWallet(
+	t *testing.T,
+	ctx context.Context,
+	alice arksdk.ArkClient,
+	aliceWallet wallet.WalletService,
+	grpcClient client.TransportClient,
+	indexerSvc indexer.Indexer,
+	alicePubKey *btcec.PublicKey,
 	serverSigner *btcec.PublicKey,
-	introspectorPubKey *btcec.PublicKey,
-	arkadeScriptHash []byte,
-) script.TapscriptsVtxoScript {
-	return script.TapscriptsVtxoScript{
-		Closures: []script.Closure{
-			&script.MultisigClosure{
-				PubKeys: []*btcec.PublicKey{
-					serverSigner,
-					arkade.ComputeArkadeScriptPublicKey(introspectorPubKey, arkadeScriptHash),
-				},
-			},
-		},
-	}
-}
-
-func counterDeployArkadeScript(t *testing.T, counterDeployPkScript []byte) []byte {
+	unilateralExitDelay uint32,
+	counterPkScript []byte,
+	checkpointScriptBytes []byte,
+) *psbt.Packet {
 	t.Helper()
 
-	arkadeScript, err := txscript.NewScriptBuilder().
-		AddInt64(counterPacketType).
-		AddOp(arkade.OP_INSPECTPACKET).
-		AddOp(arkade.OP_1).
-		AddOp(arkade.OP_EQUALVERIFY).
-		AddData(counterPacketPayload(0)).
-		AddOp(arkade.OP_EQUALVERIFY).
-		AddInt64(0).
-		AddOp(arkade.OP_INSPECTOUTPUTSCRIPTPUBKEY).
-		AddOp(arkade.OP_1).
-		AddOp(arkade.OP_EQUALVERIFY).
-		AddData(counterDeployPkScript[2:]).
-		AddOp(arkade.OP_EQUALVERIFY).
-		AddInt64(0).
-		AddOp(arkade.OP_INSPECTOUTPUTVALUE).
-		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).
-		AddOp(arkade.OP_INSPECTINPUTVALUE).
-		AddOp(arkade.OP_EQUAL).
-		Script()
-	require.NoError(t, err)
+	const counterContractValue = int64(20000)
+	deployTx, deployCheckpoints := buildWalletFundedTx(
+		t,
+		ctx,
+		alice,
+		indexerSvc,
+		alicePubKey,
+		serverSigner,
+		unilateralExitDelay,
+		[]*wire.TxOut{
+			{Value: counterContractValue, PkScript: counterPkScript},
+		},
+		checkpointScriptBytes,
+	)
+	addCounterPacket(t, deployTx, 0)
+	requireCounterPacket(t, deployTx.UnsignedTx, 0)
+	submitWithArkd(t, ctx, deployTx, deployCheckpoints, aliceWallet, grpcClient)
+	requirePreconfirmedVtxo(t, ctx, indexerSvc, deployTx, 0)
 
-	return arkadeScript
+	return deployTx
 }
 
 func counterContractArkadeScript(t *testing.T) []byte {
@@ -319,87 +247,6 @@ func buildCounterUnlockTx(
 	return counterTx, checkpoints
 }
 
-func onlyForfeitScript(t *testing.T, vtxoScript script.TapscriptsVtxoScript) []byte {
-	t.Helper()
-
-	closures := vtxoScript.ForfeitClosures()
-	require.Len(t, closures, 1)
-
-	tapscript, err := closures[0].Script()
-	require.NoError(t, err)
-
-	return tapscript
-}
-
-func p2trScriptForVtxoScript(t *testing.T, vtxoScript script.TapscriptsVtxoScript) []byte {
-	t.Helper()
-
-	tapKey, _, err := vtxoScript.TapTree()
-	require.NoError(t, err)
-
-	pkScript, err := script.P2TRScript(tapKey)
-	require.NoError(t, err)
-
-	return pkScript
-}
-
-func vtxoInputFromScriptOutput(
-	t *testing.T,
-	prevTx *wire.MsgTx,
-	outIndex uint32,
-	vtxoScript script.TapscriptsVtxoScript,
-	tapscript []byte,
-) offchain.VtxoInput {
-	t.Helper()
-
-	tapKey, tapTree, err := vtxoScript.TapTree()
-	require.NoError(t, err)
-
-	expectedPkScript, err := script.P2TRScript(tapKey)
-	require.NoError(t, err)
-	require.Equal(t, expectedPkScript, prevTx.TxOut[outIndex].PkScript)
-
-	merkleProof, err := tapTree.GetTaprootMerkleProof(
-		txscript.NewBaseTapLeaf(tapscript).TapHash(),
-	)
-	require.NoError(t, err)
-
-	ctrlBlock, err := txscript.ParseControlBlock(merkleProof.ControlBlock)
-	require.NoError(t, err)
-
-	revealedTapscripts, err := vtxoScript.Encode()
-	require.NoError(t, err)
-
-	return offchain.VtxoInput{
-		Outpoint: &wire.OutPoint{
-			Hash:  prevTx.TxHash(),
-			Index: outIndex,
-		},
-		Tapscript: &waddrmgr.Tapscript{
-			ControlBlock:   ctrlBlock,
-			RevealedScript: merkleProof.Script,
-		},
-		Amount:             prevTx.TxOut[outIndex].Value,
-		RevealedTapscripts: revealedTapscripts,
-	}
-}
-
-func findTaprootOutput(t *testing.T, tx *wire.MsgTx, tapKey *btcec.PublicKey) (uint32, *wire.TxOut) {
-	t.Helper()
-
-	pkScript, err := script.P2TRScript(tapKey)
-	require.NoError(t, err)
-
-	for index, output := range tx.TxOut {
-		if bytes.Equal(output.PkScript, pkScript) {
-			return uint32(index), output
-		}
-	}
-
-	require.FailNow(t, "taproot output not found")
-	return 0, nil
-}
-
 func addCounterPacket(t *testing.T, ptx *psbt.Packet, value uint64) {
 	t.Helper()
 
@@ -430,38 +277,4 @@ func requireCounterPacket(t *testing.T, tx *wire.MsgTx, want uint64) {
 	}
 
 	require.FailNow(t, "counter packet not found")
-}
-
-func addExtensionPacket(t *testing.T, ptx *psbt.Packet, packet extension.Packet) {
-	t.Helper()
-
-	for index, output := range ptx.UnsignedTx.TxOut {
-		if !extension.IsExtension(output.PkScript) {
-			continue
-		}
-
-		ext, err := extension.NewExtensionFromBytes(output.PkScript)
-		require.NoError(t, err)
-
-		ext = append(ext, packet)
-		txOut, err := ext.TxOut()
-		require.NoError(t, err)
-
-		ptx.UnsignedTx.TxOut[index] = txOut
-		return
-	}
-
-	ext := extension.Extension{packet}
-	txOut, err := ext.TxOut()
-	require.NoError(t, err)
-
-	lastIdx := len(ptx.UnsignedTx.TxOut) - 1
-	lastOut := ptx.UnsignedTx.TxOut[lastIdx]
-	if bytes.Equal(lastOut.PkScript, txutils.ANCHOR_PKSCRIPT) {
-		ptx.UnsignedTx.TxOut[lastIdx] = txOut
-		ptx.UnsignedTx.AddTxOut(lastOut)
-	} else {
-		ptx.UnsignedTx.AddTxOut(txOut)
-	}
-	ptx.Outputs = append(ptx.Outputs, psbt.POutput{})
 }
