@@ -17,13 +17,17 @@ import (
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
+	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	arksdk "github.com/arkade-os/go-sdk"
 	"github.com/arkade-os/go-sdk/client"
 	"github.com/arkade-os/go-sdk/explorer"
+	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
+	"github.com/arkade-os/go-sdk/indexer"
 	inmemorystoreconfig "github.com/arkade-os/go-sdk/store/inmemory"
+	"github.com/arkade-os/go-sdk/types"
 	"github.com/arkade-os/go-sdk/wallet"
 	singlekeywallet "github.com/arkade-os/go-sdk/wallet/singlekey"
 	inmemorystore "github.com/arkade-os/go-sdk/wallet/singlekey/store/inmemory"
@@ -33,6 +37,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcwallet/waddrmgr"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -488,6 +493,159 @@ func fundAndSettleAlice(t *testing.T, ctx context.Context, alice arksdk.ArkClien
 	return aliceAddr
 }
 
+func encodeCheckpoints(t *testing.T, checkpoints []*psbt.Packet) []string {
+	t.Helper()
+
+	encodedCheckpoints := make([]string, 0, len(checkpoints))
+	for _, checkpoint := range checkpoints {
+		encoded, err := checkpoint.B64Encode()
+		require.NoError(t, err)
+		encodedCheckpoints = append(encodedCheckpoints, encoded)
+	}
+
+	return encodedCheckpoints
+}
+
+func buildWalletFundedTx(
+	t *testing.T,
+	ctx context.Context,
+	alice arksdk.ArkClient,
+	indexerSvc indexer.Indexer,
+	alicePubKey *btcec.PublicKey,
+	serverSigner *btcec.PublicKey,
+	unilateralExitDelay uint32,
+	outputs []*wire.TxOut,
+	checkpointScriptBytes []byte,
+) (*psbt.Packet, []*psbt.Packet) {
+	t.Helper()
+
+	exitDelayType := arklib.LocktimeTypeBlock
+	if unilateralExitDelay >= 512 {
+		exitDelayType = arklib.LocktimeTypeSecond
+	}
+	fundingVtxoScript := script.NewDefaultVtxoScript(
+		alicePubKey,
+		serverSigner,
+		arklib.RelativeLocktime{
+			Type:  exitDelayType,
+			Value: unilateralExitDelay,
+		},
+	)
+	fundingTapscript := onlyForfeitScript(t, *fundingVtxoScript)
+	fundingTapKey, _, err := fundingVtxoScript.TapTree()
+	require.NoError(t, err)
+
+	fundingPkScript, err := script.P2TRScript(fundingTapKey)
+	require.NoError(t, err)
+	spendableVtxos, _, err := alice.ListVtxos(ctx)
+	require.NoError(t, err)
+
+	var fundingVtxo types.Vtxo
+	for _, vtxo := range spendableVtxos {
+		if vtxo.Script == hex.EncodeToString(fundingPkScript) {
+			fundingVtxo = vtxo
+			break
+		}
+	}
+	require.NotEmpty(t, fundingVtxo.Txid)
+
+	fundingTxs, err := indexerSvc.GetVirtualTxs(ctx, []string{fundingVtxo.Txid})
+	require.NoError(t, err)
+	require.Len(t, fundingTxs.Txs, 1)
+
+	fundingPtx, err := psbt.NewFromRawBytes(strings.NewReader(fundingTxs.Txs[0]), true)
+	require.NoError(t, err)
+
+	fundingOutputIndex, fundingOutput := findTaprootOutput(t, fundingPtx.UnsignedTx, fundingTapKey)
+	require.Equal(t, fundingVtxo.VOut, fundingOutputIndex)
+	require.Equal(t, int64(fundingVtxo.Amount), fundingOutput.Value)
+
+	fundingInput := vtxoInputFromScriptOutput(
+		t,
+		fundingPtx.UnsignedTx,
+		fundingOutputIndex,
+		*fundingVtxoScript,
+		fundingTapscript,
+	)
+
+	outputValue := int64(0)
+	for _, output := range outputs {
+		outputValue += output.Value
+	}
+	changeValue := fundingOutput.Value - outputValue
+	require.Positive(t, changeValue)
+
+	txOutputs := make([]*wire.TxOut, 0, len(outputs)+1)
+	txOutputs = append(txOutputs, outputs...)
+	txOutputs = append(txOutputs, &wire.TxOut{
+		Value:    changeValue,
+		PkScript: fundingPkScript,
+	})
+
+	ptx, checkpoints, err := offchain.BuildTxs(
+		[]offchain.VtxoInput{fundingInput},
+		txOutputs,
+		checkpointScriptBytes,
+	)
+	require.NoError(t, err)
+
+	return ptx, checkpoints
+}
+
+func submitWithArkd(
+	t *testing.T,
+	ctx context.Context,
+	candidateTx *psbt.Packet,
+	checkpoints []*psbt.Packet,
+	walletSvc wallet.WalletService,
+	grpcClient client.TransportClient,
+) {
+	t.Helper()
+
+	explorerSvc, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+	require.NoError(t, err)
+
+	encodedTx, err := candidateTx.B64Encode()
+	require.NoError(t, err)
+
+	signedTx, err := walletSvc.SignTransaction(ctx, explorerSvc, encodedTx)
+	require.NoError(t, err)
+
+	txid, _, signedCheckpoints, err := grpcClient.SubmitTx(ctx, signedTx, encodeCheckpoints(t, checkpoints))
+	require.NoError(t, err)
+	require.NotEmpty(t, txid)
+	require.NotEmpty(t, signedCheckpoints)
+
+	finalCheckpoints := make([]string, 0, len(signedCheckpoints))
+	for _, checkpoint := range signedCheckpoints {
+		signedCheckpoint, err := walletSvc.SignTransaction(ctx, explorerSvc, checkpoint)
+		require.NoError(t, err)
+		finalCheckpoints = append(finalCheckpoints, signedCheckpoint)
+	}
+
+	require.NoError(t, grpcClient.FinalizeTx(ctx, txid, finalCheckpoints))
+}
+
+func requirePreconfirmedVtxo(
+	t *testing.T,
+	ctx context.Context,
+	indexerSvc indexer.Indexer,
+	candidateTx *psbt.Packet,
+	vout uint32,
+) {
+	t.Helper()
+
+	opts := indexer.GetVtxosRequestOption{}
+	err := opts.WithOutpoints([]types.Outpoint{{Txid: candidateTx.UnsignedTx.TxID(), VOut: vout}})
+	require.NoError(t, err)
+
+	vtxos, err := indexerSvc.GetVtxos(ctx, opts)
+	require.NoError(t, err)
+	require.Len(t, vtxos.Vtxos, 1)
+	require.True(t, vtxos.Vtxos[0].Preconfirmed)
+	require.False(t, vtxos.Vtxos[0].Spent)
+}
+
 // createIssuanceAssetPacket creates a simple asset issuance packet with one output
 func createIssuanceAssetPacket(t *testing.T, vout uint16, amount uint64) asset.Packet {
 	assetOutput, err := asset.NewAssetOutput(vout, amount)
@@ -801,6 +959,140 @@ func executeArkadeScripts(t *testing.T, ptx *psbt.Packet, checkpoints []*psbt.Pa
 	}
 
 	return nil
+}
+
+// createArkadeOnlyVtxoScript builds a VTXO script with a 2-of-2 multisig
+// (server signer + arkade-tweaked introspector key). No separate owner key.
+func createArkadeOnlyVtxoScript(
+	serverSigner *btcec.PublicKey,
+	introspectorPubKey *btcec.PublicKey,
+	arkadeScriptHash []byte,
+) script.TapscriptsVtxoScript {
+	return script.TapscriptsVtxoScript{
+		Closures: []script.Closure{
+			&script.MultisigClosure{
+				PubKeys: []*btcec.PublicKey{
+					serverSigner,
+					arkade.ComputeArkadeScriptPublicKey(introspectorPubKey, arkadeScriptHash),
+				},
+			},
+		},
+	}
+}
+
+func onlyForfeitScript(t *testing.T, vtxoScript script.TapscriptsVtxoScript) []byte {
+	t.Helper()
+
+	closures := vtxoScript.ForfeitClosures()
+	require.Len(t, closures, 1)
+
+	tapscript, err := closures[0].Script()
+	require.NoError(t, err)
+
+	return tapscript
+}
+
+func p2trScriptForVtxoScript(t *testing.T, vtxoScript script.TapscriptsVtxoScript) []byte {
+	t.Helper()
+
+	tapKey, _, err := vtxoScript.TapTree()
+	require.NoError(t, err)
+
+	pkScript, err := script.P2TRScript(tapKey)
+	require.NoError(t, err)
+
+	return pkScript
+}
+
+func vtxoInputFromScriptOutput(
+	t *testing.T,
+	prevTx *wire.MsgTx,
+	outIndex uint32,
+	vtxoScript script.TapscriptsVtxoScript,
+	tapscript []byte,
+) offchain.VtxoInput {
+	t.Helper()
+
+	tapKey, tapTree, err := vtxoScript.TapTree()
+	require.NoError(t, err)
+
+	expectedPkScript, err := script.P2TRScript(tapKey)
+	require.NoError(t, err)
+	require.Equal(t, expectedPkScript, prevTx.TxOut[outIndex].PkScript)
+
+	merkleProof, err := tapTree.GetTaprootMerkleProof(
+		txscript.NewBaseTapLeaf(tapscript).TapHash(),
+	)
+	require.NoError(t, err)
+
+	ctrlBlock, err := txscript.ParseControlBlock(merkleProof.ControlBlock)
+	require.NoError(t, err)
+
+	revealedTapscripts, err := vtxoScript.Encode()
+	require.NoError(t, err)
+
+	return offchain.VtxoInput{
+		Outpoint: &wire.OutPoint{
+			Hash:  prevTx.TxHash(),
+			Index: outIndex,
+		},
+		Tapscript: &waddrmgr.Tapscript{
+			ControlBlock:   ctrlBlock,
+			RevealedScript: merkleProof.Script,
+		},
+		Amount:             prevTx.TxOut[outIndex].Value,
+		RevealedTapscripts: revealedTapscripts,
+	}
+}
+
+func findTaprootOutput(t *testing.T, tx *wire.MsgTx, tapKey *btcec.PublicKey) (uint32, *wire.TxOut) {
+	t.Helper()
+
+	pkScript, err := script.P2TRScript(tapKey)
+	require.NoError(t, err)
+
+	for index, output := range tx.TxOut {
+		if bytes.Equal(output.PkScript, pkScript) {
+			return uint32(index), output
+		}
+	}
+
+	require.FailNow(t, "taproot output not found")
+	return 0, nil
+}
+
+func addExtensionPacket(t *testing.T, ptx *psbt.Packet, packet extension.Packet) {
+	t.Helper()
+
+	for index, output := range ptx.UnsignedTx.TxOut {
+		if !extension.IsExtension(output.PkScript) {
+			continue
+		}
+
+		ext, err := extension.NewExtensionFromBytes(output.PkScript)
+		require.NoError(t, err)
+
+		ext = append(ext, packet)
+		txOut, err := ext.TxOut()
+		require.NoError(t, err)
+
+		ptx.UnsignedTx.TxOut[index] = txOut
+		return
+	}
+
+	ext := extension.Extension{packet}
+	txOut, err := ext.TxOut()
+	require.NoError(t, err)
+
+	lastIdx := len(ptx.UnsignedTx.TxOut) - 1
+	lastOut := ptx.UnsignedTx.TxOut[lastIdx]
+	if bytes.Equal(lastOut.PkScript, txutils.ANCHOR_PKSCRIPT) {
+		ptx.UnsignedTx.TxOut[lastIdx] = txOut
+		ptx.UnsignedTx.AddTxOut(lastOut)
+	} else {
+		ptx.UnsignedTx.AddTxOut(txOut)
+	}
+	ptx.Outputs = append(ptx.Outputs, psbt.POutput{})
 }
 
 // To get debug output for script execution: call `executeArkadeScripts(t, psbt, checkpoints, pubkey, debugScriptExecution(t))`
