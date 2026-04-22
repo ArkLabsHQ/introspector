@@ -1415,23 +1415,18 @@ func opcodeSub(op *opcode, data []byte, vm *Engine) error {
 // Stack transformation (x1==0, x2!=0): [... 0 7] -> [... 0]
 // Stack transformation (x1!=0, x2!=0): [... 4 8] -> [... 1]
 func opcodeBoolAnd(op *opcode, data []byte, vm *Engine) error {
-	v0, err := vm.dstack.PopInt()
+	b, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-
-	v1, err := vm.dstack.PopInt()
+	a, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-
-	if v0 != 0 && v1 != 0 {
-		vm.dstack.PushInt(scriptNum(1))
-	} else {
-		vm.dstack.PushInt(scriptNum(0))
+	if !a.IsZero() && !b.IsZero() {
+		return vm.dstack.PushBigNum(BigNumFromInt64(1))
 	}
-
-	return nil
+	return vm.dstack.PushBigNum(BigNumFromInt64(0))
 }
 
 // opcodeBoolOr treats the top two items on the data stack as integers.  When
@@ -1442,23 +1437,18 @@ func opcodeBoolAnd(op *opcode, data []byte, vm *Engine) error {
 // Stack transformation (x1==0, x2!=0): [... 0 7] -> [... 1]
 // Stack transformation (x1!=0, x2!=0): [... 4 8] -> [... 1]
 func opcodeBoolOr(op *opcode, data []byte, vm *Engine) error {
-	v0, err := vm.dstack.PopInt()
+	b, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-
-	v1, err := vm.dstack.PopInt()
+	a, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-
-	if v0 != 0 || v1 != 0 {
-		vm.dstack.PushInt(scriptNum(1))
-	} else {
-		vm.dstack.PushInt(scriptNum(0))
+	if !a.IsZero() || !b.IsZero() {
+		return vm.dstack.PushBigNum(BigNumFromInt64(1))
 	}
-
-	return nil
+	return vm.dstack.PushBigNum(BigNumFromInt64(0))
 }
 
 // opcodeNumEqual treats the top two items on the data stack as integers.  When
@@ -1467,23 +1457,18 @@ func opcodeBoolOr(op *opcode, data []byte, vm *Engine) error {
 // Stack transformation (x1==x2): [... 5 5] -> [... 1]
 // Stack transformation (x1!=x2): [... 5 7] -> [... 0]
 func opcodeNumEqual(op *opcode, data []byte, vm *Engine) error {
-	v0, err := vm.dstack.PopInt()
+	b, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-
-	v1, err := vm.dstack.PopInt()
+	a, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-
-	if v0 == v1 {
-		vm.dstack.PushInt(scriptNum(1))
-	} else {
-		vm.dstack.PushInt(scriptNum(0))
+	if a.Cmp(b) == 0 {
+		return vm.dstack.PushBigNum(BigNumFromInt64(1))
 	}
-
-	return nil
+	return vm.dstack.PushBigNum(BigNumFromInt64(0))
 }
 
 // opcodeNumEqualVerify is a combination of opcodeNumEqual and opcodeVerify.
@@ -1508,23 +1493,18 @@ func opcodeNumEqualVerify(op *opcode, data []byte, vm *Engine) error {
 // Stack transformation (x1==x2): [... 5 5] -> [... 0]
 // Stack transformation (x1!=x2): [... 5 7] -> [... 1]
 func opcodeNumNotEqual(op *opcode, data []byte, vm *Engine) error {
-	v0, err := vm.dstack.PopInt()
+	b, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-
-	v1, err := vm.dstack.PopInt()
+	a, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-
-	if v0 != v1 {
-		vm.dstack.PushInt(scriptNum(1))
-	} else {
-		vm.dstack.PushInt(scriptNum(0))
+	if a.Cmp(b) != 0 {
+		return vm.dstack.PushBigNum(BigNumFromInt64(1))
 	}
-
-	return nil
+	return vm.dstack.PushBigNum(BigNumFromInt64(0))
 }
 
 // opcodeLessThan treats the top two items on the data stack as integers.  When
