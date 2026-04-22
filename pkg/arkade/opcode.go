@@ -274,8 +274,8 @@ const (
 	OP_INSPECTNUMOUTPUTS = 0xd5 // 213
 	OP_TXWEIGHT          = 0xd6 // 214
 
-	OP_UNKNOWN215                    = 0xd7 // 215
-	OP_UNKNOWN216                    = 0xd8 // 216
+	OP_NUM2BIN                       = 0xd7 // 215
+	OP_BIN2NUM                       = 0xd8 // 216
 	OP_UNKNOWN217                    = 0xd9 // 217
 	OP_UNKNOWN218                    = 0xda // 218
 	OP_UNKNOWN219                    = 0xdb // 219
@@ -575,8 +575,8 @@ var opcodeArray = [256]opcode{
 	OP_INSPECTNUMOUTPUTS: {OP_INSPECTNUMOUTPUTS, "OP_INSPECTNUMOUTPUTS", 1, opcodeInspectNumOutputs},
 	OP_TXWEIGHT:          {OP_TXWEIGHT, "OP_TXWEIGHT", 1, opcodeTxWeight},
 
-	OP_UNKNOWN215:                    {OP_UNKNOWN215, "OP_UNKNOWN215", 1, opcodeInvalid},
-	OP_UNKNOWN216:                    {OP_UNKNOWN216, "OP_UNKNOWN216", 1, opcodeInvalid},
+	OP_NUM2BIN:                       {OP_NUM2BIN, "OP_NUM2BIN", 1, opcodeNum2Bin},
+	OP_BIN2NUM:                       {OP_BIN2NUM, "OP_BIN2NUM", 1, opcodeBin2Num},
 	OP_UNKNOWN217:                    {OP_UNKNOWN217, "OP_UNKNOWN217", 1, opcodeInvalid},
 	OP_UNKNOWN218:                    {OP_UNKNOWN218, "OP_UNKNOWN218", 1, opcodeInvalid},
 	OP_UNKNOWN219:                    {OP_UNKNOWN219, "OP_UNKNOWN219", 1, opcodeInvalid},
@@ -1603,6 +1603,70 @@ func opcodeWithin(op *opcode, data []byte, vm *Engine) error {
 		return vm.dstack.PushBigNum(BigNumFromInt64(1))
 	}
 	return vm.dstack.PushBigNum(BigNumFromInt64(0))
+}
+
+// opcodeNum2Bin converts a minimally encoded BigNum to a fixed-width byte
+// string. The size argument remains a small script number.
+//
+// Stack transformation: [... num size] -> [... bytes]
+func opcodeNum2Bin(op *opcode, data []byte, vm *Engine) error {
+	size, err := vm.dstack.PopInt()
+	if err != nil {
+		return err
+	}
+	if size < 0 || size > scriptNum(maxBigNumLen) {
+		return scriptError(txscript.ErrNumberTooBig,
+			fmt.Sprintf("invalid OP_NUM2BIN size %d", size))
+	}
+
+	num, err := vm.dstack.PopBigNum(maxBigNumLen)
+	if err != nil {
+		return err
+	}
+	encoded, err := num.Bytes()
+	if err != nil {
+		return err
+	}
+	if len(encoded) > int(size) {
+		return scriptError(txscript.ErrNumberTooBig,
+			fmt.Sprintf("OP_NUM2BIN: number needs %d bytes, size=%d", len(encoded), size))
+	}
+
+	out := make([]byte, int(size))
+	if len(encoded) == 0 {
+		vm.dstack.PushByteArray(out)
+		return nil
+	}
+
+	sign := encoded[len(encoded)-1] & 0x80
+	magnitude := append([]byte(nil), encoded...)
+	magnitude[len(magnitude)-1] &= 0x7f
+	if magnitude[len(magnitude)-1] == 0 {
+		magnitude = magnitude[:len(magnitude)-1]
+	}
+
+	copy(out, magnitude)
+	out[len(out)-1] |= sign
+	vm.dstack.PushByteArray(out)
+	return nil
+}
+
+// opcodeBin2Num minimally encodes the top byte string as a BigNum byte
+// representation. Negative zero normalizes to the empty byte slice.
+//
+// Stack transformation: [... bytes] -> [... num]
+func opcodeBin2Num(op *opcode, data []byte, vm *Engine) error {
+	b, err := vm.dstack.PopByteArray()
+	if err != nil {
+		return err
+	}
+	if len(b) > maxBigNumLen {
+		return scriptError(txscript.ErrNumberTooBig,
+			fmt.Sprintf("OP_BIN2NUM input exceeds %d bytes", maxBigNumLen))
+	}
+
+	vm.dstack.PushByteArray(MinimallyEncode(b))
+	return nil
 }
 
 // calcHash calculates the hash of hasher over buf.

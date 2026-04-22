@@ -70,7 +70,7 @@ func TestOpcodeDisasm(t *testing.T) {
 		0xd1: "OP_INSPECTOUTPUTSCRIPTPUBKEY", 0xd2: "OP_INSPECTVERSION",
 		0xd3: "OP_INSPECTLOCKTIME", 0xd4: "OP_INSPECTNUMINPUTS",
 		0xd5: "OP_INSPECTNUMOUTPUTS", 0xd6: "OP_TXWEIGHT",
-		0xd7: "OP_UNKNOWN215", 0xd8: "OP_UNKNOWN216",
+		0xd7: "OP_NUM2BIN", 0xd8: "OP_BIN2NUM",
 		0xd9: "OP_UNKNOWN217", 0xda: "OP_UNKNOWN218",
 		0xdb: "OP_UNKNOWN219", 0xdc: "OP_UNKNOWN220",
 		0xdd: "OP_UNKNOWN221", 0xde: "OP_UNKNOWN222",
@@ -225,6 +225,98 @@ func TestOpcodeDisasm(t *testing.T) {
 				expectedStr)
 			continue
 		}
+	}
+}
+
+func TestOpcodeNum2Bin(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		num        []byte
+		size       int64
+		want       []byte
+		shouldFail bool
+	}{
+		{"5 as 4 bytes", []byte{0x05}, 4, []byte{0x05, 0x00, 0x00, 0x00}, false},
+		{"-5 as 4 bytes", []byte{0x85}, 4, []byte{0x05, 0x00, 0x00, 0x80}, false},
+		{"-5 as 1 byte", []byte{0x85}, 1, []byte{0x85}, false},
+		{"0 as 4 bytes", nil, 4, []byte{0x00, 0x00, 0x00, 0x00}, false},
+		{"0 as 0 bytes", nil, 0, []byte{}, false},
+		{"255 as 1 byte fails", []byte{0xff, 0x00}, 1, nil, true},
+		{"size over max fails", nil, 521, nil, true},
+		{"negative size fails", nil, -1, nil, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			vm := &Engine{dstack: stack{verifyMinimalData: true}}
+			vm.dstack.PushByteArray(tc.num)
+			vm.dstack.PushInt(scriptNum(tc.size))
+
+			err := opcodeNum2Bin(nil, nil, vm)
+			if tc.shouldFail {
+				if err == nil {
+					t.Fatalf("expected failure, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			got, err := vm.dstack.PopByteArray()
+			if err != nil {
+				t.Fatalf("pop: %v", err)
+			}
+			if !bytes.Equal(got, tc.want) {
+				t.Fatalf("got %x, want %x", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestOpcodeBin2Num(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		in         []byte
+		want       []byte
+		shouldFail bool
+	}{
+		{"5 from 4 bytes", []byte{0x05, 0x00, 0x00, 0x00}, []byte{0x05}, false},
+		{"negative zero normalizes", []byte{0x00, 0x00, 0x00, 0x80}, []byte{}, false},
+		{"-5 from 4 bytes", []byte{0x05, 0x00, 0x00, 0x80}, []byte{0x85}, false},
+		{"128 minimal", []byte{0x80, 0x00, 0x00, 0x00}, []byte{0x80, 0x00}, false},
+		{"empty stays zero", []byte{}, []byte{}, false},
+		{"oversized input fails", bytes.Repeat([]byte{0x01}, maxBigNumLen+1), nil, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			vm := &Engine{dstack: stack{verifyMinimalData: true}}
+			vm.dstack.PushByteArray(tc.in)
+
+			err := opcodeBin2Num(nil, nil, vm)
+			if tc.shouldFail {
+				if err == nil {
+					t.Fatalf("expected failure, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			got, err := vm.dstack.PopByteArray()
+			if err != nil {
+				t.Fatalf("pop: %v", err)
+			}
+			if !bytes.Equal(got, tc.want) {
+				t.Fatalf("got %x, want %x", got, tc.want)
+			}
+		})
 	}
 }
 

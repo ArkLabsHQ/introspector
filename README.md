@@ -326,7 +326,8 @@ The following opcodes are supported by the Arkade script engine. They extend Bit
 ### Arithmetic
 
 Arithmetic operands and results use the VM's minimally encoded BigNum format
-and can be up to the maximum script element size.
+and can be up to the maximum script element size. `OP_NUM2BIN` and
+`OP_BIN2NUM` bridge between BigNum values and fixed-width byte strings.
 
 | Word | Opcode | Hex | Input | Output | Description |
 |------|--------|-----|-------|--------|-------------|
@@ -337,6 +338,8 @@ and can be up to the maximum script element size.
 | OP_MOD | 151 | 0x97 | a b | a%b | Returns the remainder after dividing a by b. Fails if b is zero. |
 | OP_LSHIFT | 152 | 0x98 | x n | x<<n | Logical left shift by n bits. Sign data is discarded. |
 | OP_RSHIFT | 153 | 0x99 | x n | x>>n | Logical right shift by n bits. Sign data is discarded. |
+| OP_NUM2BIN | 215 | 0xd7 | num size | bytes | Pads a BigNum to exactly size bytes. Fails if the number does not fit or size is negative or greater than the maximum script element size. |
+| OP_BIN2NUM | 216 | 0xd8 | bytes | num | Normalizes a byte string into a minimally encoded BigNum. |
 
 ### Cryptography
 

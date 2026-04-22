@@ -156,6 +156,63 @@ func TestNewOpcodes(t *testing.T) {
 			},
 		},
 		{
+			name: "OP_NUM2BIN",
+			script: txscript.NewScriptBuilder().
+				AddData([]byte{0x85}).
+				AddInt64(4).
+				AddOp(OP_NUM2BIN).
+				AddData([]byte{0x05, 0x00, 0x00, 0x80}).
+				AddOp(OP_EQUAL),
+			cases: []testCase{
+				{
+					valid: true,
+					tx: &wire.MsgTx{
+						Version: 1,
+						TxIn: []*wire.TxIn{
+							{
+								PreviousOutPoint: wire.OutPoint{
+									Hash:  chainhash.Hash{},
+									Index: 0,
+								},
+							},
+						},
+					},
+					txIdx:       0,
+					inputAmount: 0,
+					stack:       nil,
+				},
+			},
+		},
+		{
+			name: "OP_BIN2NUM_feeds_arithmetic",
+			script: txscript.NewScriptBuilder().
+				AddData([]byte{0x05, 0x00, 0x00, 0x00}).
+				AddOp(OP_BIN2NUM).
+				AddInt64(6).
+				AddOp(OP_ADD).
+				AddInt64(11).
+				AddOp(OP_EQUAL),
+			cases: []testCase{
+				{
+					valid: true,
+					tx: &wire.MsgTx{
+						Version: 1,
+						TxIn: []*wire.TxIn{
+							{
+								PreviousOutPoint: wire.OutPoint{
+									Hash:  chainhash.Hash{},
+									Index: 0,
+								},
+							},
+						},
+					},
+					txIdx:       0,
+					inputAmount: 0,
+					stack:       nil,
+				},
+			},
+		},
+		{
 			name:   "OP_MUL",
 			script: txscript.NewScriptBuilder().AddOp(OP_MUL).AddOp(OP_6).AddOp(OP_EQUAL),
 			cases: []testCase{
