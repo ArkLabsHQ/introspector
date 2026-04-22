@@ -211,3 +211,85 @@ func (n BigNum) asBig() *big.Int {
 	}
 	return big.NewInt(n.small)
 }
+
+// Add returns n + m. Promotes to big on int64 overflow.
+func (n BigNum) Add(m BigNum) BigNum {
+	if !n.useBig && !m.useBig {
+		r := n.small + m.small
+		// Overflow when sign of both operands matches and differs from result.
+		if (r^n.small)&(r^m.small) >= 0 {
+			return BigNum{small: r}
+		}
+	}
+	return BigNum{big: new(big.Int).Add(n.asBig(), m.asBig()), useBig: true}
+}
+
+// Sub returns n - m. Promotes to big on int64 overflow.
+func (n BigNum) Sub(m BigNum) BigNum {
+	if !n.useBig && !m.useBig {
+		r := n.small - m.small
+		if (n.small^m.small)&(n.small^r) >= 0 {
+			return BigNum{small: r}
+		}
+	}
+	return BigNum{big: new(big.Int).Sub(n.asBig(), m.asBig()), useBig: true}
+}
+
+// Mul returns n * m. Promotes to big on int64 overflow.
+func (n BigNum) Mul(m BigNum) BigNum {
+	if !n.useBig && !m.useBig {
+		if n.small == 0 || m.small == 0 {
+			return BigNum{small: 0}
+		}
+		r := n.small * m.small
+		if r/n.small == m.small {
+			return BigNum{small: r}
+		}
+	}
+	return BigNum{big: new(big.Int).Mul(n.asBig(), m.asBig()), useBig: true}
+}
+
+// Div returns truncated n / m. Caller MUST verify m is non-zero first.
+// Promotes only on int64 min / -1 overflow.
+func (n BigNum) Div(m BigNum) BigNum {
+	if !n.useBig && !m.useBig {
+		if !(n.small == -9223372036854775808 && m.small == -1) {
+			return BigNum{small: n.small / m.small}
+		}
+	}
+	return BigNum{big: new(big.Int).Quo(n.asBig(), m.asBig()), useBig: true}
+}
+
+// Mod returns truncated n % m (sign follows dividend). Caller MUST verify
+// m is non-zero first.
+func (n BigNum) Mod(m BigNum) BigNum {
+	if !n.useBig && !m.useBig {
+		if !(n.small == -9223372036854775808 && m.small == -1) {
+			return BigNum{small: n.small % m.small}
+		}
+	}
+	return BigNum{big: new(big.Int).Rem(n.asBig(), m.asBig()), useBig: true}
+}
+
+// Negate returns -n. Promotes on int64 min.
+func (n BigNum) Negate() BigNum {
+	if !n.useBig {
+		if n.small != -9223372036854775808 {
+			return BigNum{small: -n.small}
+		}
+	}
+	return BigNum{big: new(big.Int).Neg(n.asBig()), useBig: true}
+}
+
+// Abs returns |n|. Promotes on int64 min.
+func (n BigNum) Abs() BigNum {
+	if !n.useBig {
+		if n.small >= 0 {
+			return n
+		}
+		if n.small != -9223372036854775808 {
+			return BigNum{small: -n.small}
+		}
+	}
+	return BigNum{big: new(big.Int).Abs(n.asBig()), useBig: true}
+}

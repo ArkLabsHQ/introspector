@@ -213,3 +213,95 @@ func TestBigNumFromUint64(t *testing.T) {
 		t.Fatalf("big = %s, want %s", n.big, want)
 	}
 }
+
+func TestBigNumAddFastPath(t *testing.T) {
+	t.Parallel()
+	a := BigNumFromInt64(2)
+	b := BigNumFromInt64(3)
+	got := a.Add(b)
+	if got.useBig || got.small != 5 {
+		t.Fatalf("got %+v, want small=5", got)
+	}
+}
+
+func TestBigNumAddOverflowPromotes(t *testing.T) {
+	t.Parallel()
+	a := BigNumFromInt64(9223372036854775807) // int64 max
+	b := BigNumFromInt64(1)
+	got := a.Add(b)
+	if !got.useBig {
+		t.Fatalf("expected promotion to big, got %+v", got)
+	}
+	want := new(big.Int).Add(big.NewInt(9223372036854775807), big.NewInt(1))
+	if got.big.Cmp(want) != 0 {
+		t.Fatalf("got %s, want %s", got.big, want)
+	}
+}
+
+func TestBigNumSubOverflowPromotes(t *testing.T) {
+	t.Parallel()
+	a := BigNumFromInt64(-9223372036854775808) // int64 min
+	b := BigNumFromInt64(1)
+	got := a.Sub(b)
+	if !got.useBig {
+		t.Fatalf("expected promotion, got %+v", got)
+	}
+}
+
+func TestBigNumMulFastPathAndOverflow(t *testing.T) {
+	t.Parallel()
+	got := BigNumFromInt64(1_000_000).Mul(BigNumFromInt64(1_000_000))
+	if got.useBig || got.small != 1_000_000_000_000 {
+		t.Fatalf("unexpected small-path result %+v", got)
+	}
+	big1 := BigNumFromInt64(1 << 32)
+	got = big1.Mul(big1) // 2^64, overflows int64
+	if !got.useBig {
+		t.Fatalf("expected promotion for 2^32 * 2^32, got %+v", got)
+	}
+	want := new(big.Int).Lsh(big.NewInt(1), 64)
+	if got.big.Cmp(want) != 0 {
+		t.Fatalf("got %s, want 2^64", got.big)
+	}
+}
+
+func TestBigNumDivAndModSignSemantics(t *testing.T) {
+	t.Parallel()
+	// Truncated division: sign of remainder follows dividend.
+	q := BigNumFromInt64(-7).Div(BigNumFromInt64(2))
+	r := BigNumFromInt64(-7).Mod(BigNumFromInt64(2))
+	if q.small != -3 || r.small != -1 {
+		t.Fatalf("got q=%d r=%d, want q=-3 r=-1", q.small, r.small)
+	}
+	// 7 / -2 = -3 (truncated), 7 % -2 = 1.
+	q = BigNumFromInt64(7).Div(BigNumFromInt64(-2))
+	r = BigNumFromInt64(7).Mod(BigNumFromInt64(-2))
+	if q.small != -3 || r.small != 1 {
+		t.Fatalf("got q=%d r=%d, want q=-3 r=1", q.small, r.small)
+	}
+}
+
+func TestBigNumNegateOverflowPromotes(t *testing.T) {
+	t.Parallel()
+	a := BigNumFromInt64(-9223372036854775808) // int64 min; -min overflows
+	got := a.Negate()
+	if !got.useBig {
+		t.Fatalf("expected promotion, got %+v", got)
+	}
+	want := new(big.Int).Neg(big.NewInt(-9223372036854775808))
+	if got.big.Cmp(want) != 0 {
+		t.Fatalf("got %s, want %s", got.big, want)
+	}
+}
+
+func TestBigNumAbs(t *testing.T) {
+	t.Parallel()
+	if BigNumFromInt64(-5).Abs().small != 5 {
+		t.Fatalf("abs(-5) wrong")
+	}
+	// abs of int64 min must promote.
+	got := BigNumFromInt64(-9223372036854775808).Abs()
+	if !got.useBig {
+		t.Fatalf("abs(int64 min) must promote")
+	}
+}
