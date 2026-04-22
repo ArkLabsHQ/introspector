@@ -1379,43 +1379,32 @@ func opcode0NotEqual(op *opcode, data []byte, vm *Engine) error {
 	return vm.dstack.PushBigNum(BigNumFromInt64(1))
 }
 
-// opcodeAdd treats the top two items on the data stack as integers and replaces
-// them with their sum.
-//
+// opcodeAdd pops two BigNums and pushes their sum.
 // Stack transformation: [... x1 x2] -> [... x1+x2]
 func opcodeAdd(op *opcode, data []byte, vm *Engine) error {
-	v0, err := vm.dstack.PopInt()
+	b, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-
-	v1, err := vm.dstack.PopInt()
+	a, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-
-	vm.dstack.PushInt(v0 + v1)
-	return nil
+	return vm.dstack.PushBigNum(a.Add(b))
 }
 
-// opcodeSub treats the top two items on the data stack as integers and replaces
-// them with the result of subtracting the top entry from the second-to-top
-// entry.
-//
+// opcodeSub pops two BigNums and pushes x1 - x2.
 // Stack transformation: [... x1 x2] -> [... x1-x2]
 func opcodeSub(op *opcode, data []byte, vm *Engine) error {
-	v0, err := vm.dstack.PopInt()
+	b, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-
-	v1, err := vm.dstack.PopInt()
+	a, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-
-	vm.dstack.PushInt(v1 - v0)
-	return nil
+	return vm.dstack.PushBigNum(a.Sub(b))
 }
 
 // opcodeBoolAnd treats the top two items on the data stack as integers.  When
@@ -2418,60 +2407,54 @@ func opcode2Div(op *opcode, data []byte, vm *Engine) error {
 	return vm.dstack.PushBigNum(n.Div(BigNumFromInt64(2)))
 }
 
-// opcodeMul multiplies two numbers.
+// opcodeMul pops two BigNums and pushes their product.
 // Stack transformation: [... x1 x2] -> [... x1*x2]
 func opcodeMul(op *opcode, data []byte, vm *Engine) error {
-	x2, err := vm.dstack.PopInt()
+	b, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-	x1, err := vm.dstack.PopInt()
+	a, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-
-	vm.dstack.PushInt(x1 * x2)
-	return nil
+	return vm.dstack.PushBigNum(a.Mul(b))
 }
 
-// opcodeDiv divides two numbers.
+// opcodeDiv pops two BigNums and pushes the truncated quotient. Fails the
+// script on division by zero.
 // Stack transformation: [... x1 x2] -> [... x1/x2]
 func opcodeDiv(op *opcode, data []byte, vm *Engine) error {
-	x2, err := vm.dstack.PopInt()
+	b, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-	x1, err := vm.dstack.PopInt()
+	a, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-
-	if x2 == 0 {
+	if b.IsZero() {
 		return scriptError(txscript.ErrInvalidStackOperation, "division by zero")
 	}
-
-	vm.dstack.PushInt(x1 / x2)
-	return nil
+	return vm.dstack.PushBigNum(a.Div(b))
 }
 
-// opcodeMod returns the remainder after division.
+// opcodeMod pops two BigNums and pushes the truncated remainder (sign of
+// result follows dividend). Fails the script on modulo by zero.
 // Stack transformation: [... x1 x2] -> [... x1%x2]
 func opcodeMod(op *opcode, data []byte, vm *Engine) error {
-	x2, err := vm.dstack.PopInt()
+	b, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-	x1, err := vm.dstack.PopInt()
+	a, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-
-	if x2 == 0 {
+	if b.IsZero() {
 		return scriptError(txscript.ErrInvalidStackOperation, "modulo by zero")
 	}
-
-	vm.dstack.PushInt(x1 % x2)
-	return nil
+	return vm.dstack.PushBigNum(a.Mod(b))
 }
 
 // opcodeLshift performs a left shift operation.
