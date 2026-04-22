@@ -1922,32 +1922,25 @@ func opcodeInspectInputOutpoint(op *opcode, data []byte, vm *Engine) error {
 	return nil
 }
 
-// opcodeInspectInputValue pops the input index from the stack and pushes the value of the current input onto the stack.
+// opcodeInspectInputValue pops the input index and pushes the satoshi value
+// of that input as a minimally-encoded BigNum.
 // Stack transformation: [... index] -> [... value]
 func opcodeInspectInputValue(op *opcode, data []byte, vm *Engine) error {
 	index, err := vm.dstack.PopInt()
 	if err != nil {
 		return err
 	}
-
 	if index < 0 {
 		return scriptError(txscript.ErrInvalidIndex, "input index cannot be negative")
 	}
-
 	if int(index) >= len(vm.tx.TxIn) {
 		return scriptError(txscript.ErrInvalidIndex, "input index out of range")
 	}
-
 	if vm.prevOutFetcher == nil {
 		return scriptError(txscript.ErrInvalidIndex, "previous output fetcher not set")
 	}
-
 	prevOut := vm.prevOutFetcher.FetchPrevOutput(vm.tx.TxIn[index].PreviousOutPoint)
-
-	value := make([]byte, 8)
-	binary.LittleEndian.PutUint64(value, uint64(prevOut.Value))
-	vm.dstack.PushByteArray(value)
-	return nil
+	return vm.dstack.PushBigNum(BigNumFromUint64(uint64(prevOut.Value)))
 }
 
 func pushScriptPubKey(scriptPubKey []byte, vm *Engine) error {
@@ -2031,26 +2024,21 @@ func opcodePushCurrentInputIndex(op *opcode, data []byte, vm *Engine) error {
 	return nil
 }
 
-// opcodeInspectOutputValue pops the output index from the stack and pushes the value of the output onto the stack.
+// opcodeInspectOutputValue pops the output index and pushes the satoshi
+// value as a minimally-encoded BigNum.
 // Stack transformation: [... index] -> [... value]
 func opcodeInspectOutputValue(op *opcode, data []byte, vm *Engine) error {
 	index, err := vm.dstack.PopInt()
 	if err != nil {
 		return err
 	}
-
 	if index < 0 {
 		return scriptError(txscript.ErrInvalidIndex, "output index cannot be negative")
 	}
-
 	if int(index) >= len(vm.tx.TxOut) {
 		return scriptError(txscript.ErrInvalidIndex, "output index out of range")
 	}
-
-	value := make([]byte, 8)
-	binary.LittleEndian.PutUint64(value, uint64(vm.tx.TxOut[index].Value))
-	vm.dstack.PushByteArray(value)
-	return nil
+	return vm.dstack.PushBigNum(BigNumFromUint64(uint64(vm.tx.TxOut[index].Value)))
 }
 
 // opcodeInspectOutputScriptPubkey pushes the scriptPubKey of the output at the given index onto the stack.

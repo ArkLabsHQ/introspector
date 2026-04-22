@@ -1023,7 +1023,7 @@ func TestNewOpcodes(t *testing.T) {
 			script: txscript.NewScriptBuilder().
 				AddData([]byte{0x00}).
 				AddOp(OP_INSPECTINPUTVALUE).
-				AddData([]byte{0x00, 0xCA, 0x9A, 0x3B, 0x00, 0x00, 0x00, 0x00}). // 1000000000 in LE64
+				AddData([]byte{0x00, 0xCA, 0x9A, 0x3B}).
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{
@@ -1217,7 +1217,7 @@ func TestNewOpcodes(t *testing.T) {
 			script: txscript.NewScriptBuilder().
 				AddData([]byte{0x00}).
 				AddOp(OP_INSPECTOUTPUTVALUE).
-				AddData([]byte{0x00, 0xCA, 0x9A, 0x3B, 0x00, 0x00, 0x00, 0x00}). // 1000000000 in LE64
+				AddData([]byte{0x00, 0xCA, 0x9A, 0x3B}).
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{
