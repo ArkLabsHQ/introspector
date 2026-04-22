@@ -10,6 +10,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/btcsuite/btcd/txscript"
+	"github.com/btcsuite/btcd/wire"
 )
 
 // TestOpcodeDisasm tests the print function for all opcodes in both the oneline
@@ -284,5 +287,77 @@ func TestShiftOpcodesBigNumSemantics(t *testing.T) {
 				t.Fatalf("got %x, want %x", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestCLTVAcceptsBigNumResult(t *testing.T) {
+	t.Parallel()
+	// 3_000_000_000 = 0xB2D05E00; sign-magnitude LE needs a 0x00 sign byte
+	// because the magnitude MSB (0xb2) has bit 7 set → 5-byte minimal encoding.
+	// This is the kind of 5-byte value arithmetic can produce for locktimes.
+	vm := &Engine{
+		dstack: stack{verifyMinimalData: true},
+		tx: wire.MsgTx{
+			LockTime: 3_000_000_000,
+			TxIn:     []*wire.TxIn{{Sequence: 0}},
+		},
+		txIdx: 0,
+	}
+	vm.dstack.PushByteArray([]byte{0x00, 0x5e, 0xd0, 0xb2, 0x00})
+	if err := opcodeCheckLockTimeVerify(nil, nil, vm); err != nil {
+		t.Fatalf("CLTV: %v", err)
+	}
+}
+
+func TestCLTVRejectsNegative(t *testing.T) {
+	t.Parallel()
+	vm := &Engine{
+		dstack: stack{verifyMinimalData: true},
+		tx:     wire.MsgTx{LockTime: 3_000_000_000, TxIn: []*wire.TxIn{{Sequence: 0}}},
+	}
+	vm.dstack.PushByteArray([]byte{0x81}) // -1
+	err := opcodeCheckLockTimeVerify(nil, nil, vm)
+	if !isScriptError(err, txscript.ErrNegativeLockTime) {
+		t.Fatalf("want ErrNegativeLockTime, got %v", err)
+	}
+}
+
+func TestCLTVRejectsTooLarge(t *testing.T) {
+	t.Parallel()
+	vm := &Engine{
+		dstack: stack{verifyMinimalData: true},
+		tx:     wire.MsgTx{LockTime: 1, TxIn: []*wire.TxIn{{Sequence: 0}}},
+	}
+	// 9-byte positive value ≥ 2^63: exceeds uint32 so CLTV must reject.
+	v := make([]byte, 9)
+	for i := 0; i < 8; i++ {
+		v[i] = 0xff
+	}
+	v[8] = 0x00
+	vm.dstack.PushByteArray(v)
+	err := opcodeCheckLockTimeVerify(nil, nil, vm)
+	if err == nil {
+		t.Fatalf("expected error for too-large locktime, got nil")
+	}
+}
+
+func TestCLTVAccepts9ByteBigNumThatFitsInUint32(t *testing.T) {
+	t.Parallel()
+	// 2^40, encoded minimally as [0x00,0x00,0x00,0x00,0x00,0x01] — 6 bytes.
+	// The old MakeScriptNum(..., 5) path would reject this as too big.
+	// With BigNum the Peek succeeds; verifyLockTime rejects it because
+	// 2^40 > tx.LockTime == 1.
+	v := []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x01}
+	vm := &Engine{
+		dstack: stack{verifyMinimalData: true},
+		tx:     wire.MsgTx{LockTime: 1, TxIn: []*wire.TxIn{{Sequence: 0}}},
+	}
+	vm.dstack.PushByteArray(v)
+	err := opcodeCheckLockTimeVerify(nil, nil, vm)
+	if err == nil {
+		t.Fatalf("expected error (UnsatisfiedLockTime), got nil")
+	}
+	if !isScriptError(err, txscript.ErrUnsatisfiedLockTime) {
+		t.Fatalf("want ErrUnsatisfiedLockTime, got %v", err)
 	}
 }

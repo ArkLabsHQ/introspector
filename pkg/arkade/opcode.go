@@ -947,103 +947,58 @@ func verifyLockTime(txLockTime, threshold, lockTime int64) error {
 }
 
 // opcodeCheckLockTimeVerify compares the top item on the data stack to the
-// LockTime field of the transaction containing the script signature
-// validating if the transaction outputs are spendable yet.
+// LockTime field of the transaction. The item is peeked as a BigNum so that
+// values produced by the unified arithmetic pipeline can be fed in directly.
+// The script fails if the value is negative, does not fit in uint32, or the
+// locktime requirement is not satisfied.
 func opcodeCheckLockTimeVerify(op *opcode, data []byte, vm *Engine) error {
-	// The current transaction locktime is a uint32 resulting in a maximum
-	// locktime of 2^32-1 (the year 2106).  However, scriptNums are signed
-	// and therefore a standard 4-byte scriptNum would only support up to a
-	// maximum of 2^31-1 (the year 2038).  Thus, a 5-byte scriptNum is used
-	// here since it will support up to 2^39-1 which allows dates beyond the
-	// current locktime limit.
-	//
-	// PeekByteArray is used here instead of PeekInt because we do not want
-	// to be limited to a 4-byte integer for reasons specified above.
-	so, err := vm.dstack.PeekByteArray(0)
+	n, err := vm.dstack.PeekBigNum(0, maxBigNumLen)
 	if err != nil {
 		return err
 	}
-	lockTime, err := MakeScriptNum(so, vm.dstack.verifyMinimalData, 5)
-	if err != nil {
+	if n.Sign() < 0 {
+		return scriptError(txscript.ErrNegativeLockTime,
+			fmt.Sprintf("negative lock time: %s", n.asBig().Text(10)))
+	}
+	// Locktime must fit in uint32. Values on the big path are ≥ 2^63,
+	// which cannot be a valid locktime.
+	if n.useBig || n.small > int64(math.MaxUint32) {
+		return scriptError(txscript.ErrUnsatisfiedLockTime,
+			"locktime value exceeds uint32")
+	}
+	lockTime := n.small
+	if err := verifyLockTime(int64(vm.tx.LockTime), txscript.LockTimeThreshold, lockTime); err != nil {
 		return err
 	}
-
-	// In the rare event that the argument needs to be < 0 due to some
-	// arithmetic being done first, you can always use
-	// 0 OP_MAX OP_CHECKLOCKTIMEVERIFY.
-	if lockTime < 0 {
-		str := fmt.Sprintf("negative lock time: %d", lockTime)
-		return scriptError(txscript.ErrNegativeLockTime, str)
-	}
-
-	// The lock time field of a transaction is either a block height at
-	// which the transaction is finalized or a timestamp depending on if the
-	// value is before the txscript.LockTimeThreshold.  When it is under the
-	// threshold it is a block height.
-	err = verifyLockTime(int64(vm.tx.LockTime), txscript.LockTimeThreshold,
-		int64(lockTime))
-	if err != nil {
-		return err
-	}
-
-	// The lock time feature can also be disabled, thereby bypassing
-	// OP_CHECKLOCKTIMEVERIFY, if every transaction input has been finalized by
-	// setting its sequence to the maximum value (wire.MaxTxInSequenceNum).  This
-	// condition would result in the transaction being allowed into the blockchain
-	// making the opcode ineffective.
-	//
-	// This condition is prevented by enforcing that the input being used by
-	// the opcode is unlocked (its sequence number is less than the max
-	// value).  This is sufficient to prove correctness without having to
-	// check every input.
-	//
-	// NOTE: This implies that even if the transaction is not finalized due to
-	// another input being unlocked, the opcode execution will still fail when the
-	// input being used by the opcode is locked.
 	if vm.tx.TxIn[vm.txIdx].Sequence == wire.MaxTxInSequenceNum {
 		return scriptError(txscript.ErrUnsatisfiedLockTime,
 			"transaction input is finalized")
 	}
-
 	return nil
 }
 
 // opcodeCheckSequenceVerify compares the top item on the data stack to the
-// sequence field of the transaction input containing the script signature
-// validating if the transaction outputs are spendable yet.
+// sequence number of the transaction input. The item is peeked as a BigNum.
+// The script fails if the value is negative or does not fit in uint32.
 func opcodeCheckSequenceVerify(op *opcode, data []byte, vm *Engine) error {
-	// The current transaction sequence is a uint32 resulting in a maximum
-	// sequence of 2^32-1.  However, scriptNums are signed and therefore a
-	// standard 4-byte scriptNum would only support up to a maximum of
-	// 2^31-1.  Thus, a 5-byte scriptNum is used here since it will support
-	// up to 2^39-1 which allows sequences beyond the current sequence
-	// limit.
-	//
-	// PeekByteArray is used here instead of PeekInt because we do not want
-	// to be limited to a 4-byte integer for reasons specified above.
-	so, err := vm.dstack.PeekByteArray(0)
+	n, err := vm.dstack.PeekBigNum(0, maxBigNumLen)
 	if err != nil {
 		return err
 	}
-	stackSequence, err := MakeScriptNum(so, vm.dstack.verifyMinimalData, 5)
-	if err != nil {
-		return err
+	if n.Sign() < 0 {
+		return scriptError(txscript.ErrNegativeLockTime,
+			fmt.Sprintf("negative sequence: %s", n.asBig().Text(10)))
 	}
-
-	// In the rare event that the argument needs to be < 0 due to some
-	// arithmetic being done first, you can always use
-	// 0 OP_MAX OP_CHECKSEQUENCEVERIFY.
-	if stackSequence < 0 {
-		str := fmt.Sprintf("negative sequence: %d", stackSequence)
-		return scriptError(txscript.ErrNegativeLockTime, str)
+	if n.useBig || n.small > int64(math.MaxUint32) {
+		return scriptError(txscript.ErrUnsatisfiedLockTime,
+			"sequence value exceeds uint32")
 	}
-
-	sequence := int64(stackSequence)
+	stackSequence := n.small
 
 	// To provide for future soft-fork extensibility, if the
 	// operand has the disabled lock-time flag set,
 	// CHECKSEQUENCEVERIFY behaves as a NOP.
-	if sequence&int64(wire.SequenceLockTimeDisabled) != 0 {
+	if stackSequence&int64(wire.SequenceLockTimeDisabled) != 0 {
 		return nil
 	}
 
@@ -1070,7 +1025,7 @@ func opcodeCheckSequenceVerify(op *opcode, data []byte, vm *Engine) error {
 	lockTimeMask := int64(wire.SequenceLockTimeIsSeconds |
 		wire.SequenceLockTimeMask)
 	return verifyLockTime(txSequence&lockTimeMask,
-		wire.SequenceLockTimeIsSeconds, sequence&lockTimeMask)
+		wire.SequenceLockTimeIsSeconds, stackSequence&lockTimeMask)
 }
 
 // opcodeToAltStack removes the top item from the main data stack and pushes it
