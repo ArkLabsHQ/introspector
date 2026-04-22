@@ -15,7 +15,6 @@ import (
 
 	//nolint:staticcheck
 	"golang.org/x/crypto/ripemd160"
-	"modernc.org/mathutil"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
@@ -275,18 +274,18 @@ const (
 	OP_INSPECTNUMOUTPUTS = 0xd5 // 213
 	OP_TXWEIGHT          = 0xd6 // 214
 
-	OP_ADD64                         = 0xd7
-	OP_SUB64                         = 0xd8
-	OP_MUL64                         = 0xd9
-	OP_DIV64                         = 0xda
-	OP_NEG64                         = 0xdb
-	OP_LESSTHAN64                    = 0xdc
-	OP_LESSTHANOREQUAL64             = 0xdd
-	OP_GREATERTHAN64                 = 0xde
-	OP_GREATERTHANOREQUAL64          = 0xdf // 223
-	OP_SCRIPTNUMTOLE64               = 0xe0 // 224
-	OP_LE64TOSCRIPTNUM               = 0xe1 // 225
-	OP_LE32TOLE64                    = 0xe2 // 226
+	OP_UNKNOWN215                    = 0xd7 // 215
+	OP_UNKNOWN216                    = 0xd8 // 216
+	OP_UNKNOWN217                    = 0xd9 // 217
+	OP_UNKNOWN218                    = 0xda // 218
+	OP_UNKNOWN219                    = 0xdb // 219
+	OP_UNKNOWN220                    = 0xdc // 220
+	OP_UNKNOWN221                    = 0xdd // 221
+	OP_UNKNOWN222                    = 0xde // 222
+	OP_UNKNOWN223                    = 0xdf // 223
+	OP_UNKNOWN224                    = 0xe0 // 224
+	OP_UNKNOWN225                    = 0xe1 // 225
+	OP_UNKNOWN226                    = 0xe2 // 226
 	OP_ECMULSCALARVERIFY             = 0xe3 // 227
 	OP_TWEAKVERIFY                   = 0xe4 // 228
 	OP_INSPECTNUMASSETGROUPS         = 0xe5 // 229
@@ -576,18 +575,18 @@ var opcodeArray = [256]opcode{
 	OP_INSPECTNUMOUTPUTS: {OP_INSPECTNUMOUTPUTS, "OP_INSPECTNUMOUTPUTS", 1, opcodeInspectNumOutputs},
 	OP_TXWEIGHT:          {OP_TXWEIGHT, "OP_TXWEIGHT", 1, opcodeTxWeight},
 
-	OP_ADD64:                         {OP_ADD64, "OP_ADD64", 1, opcodeAdd64},
-	OP_SUB64:                         {OP_SUB64, "OP_SUB64", 1, opcodeSub64},
-	OP_MUL64:                         {OP_MUL64, "OP_MUL64", 1, opcodeMul64},
-	OP_DIV64:                         {OP_DIV64, "OP_DIV64", 1, opcodeDiv64},
-	OP_NEG64:                         {OP_NEG64, "OP_NEG64", 1, opcodeNeg64},
-	OP_LESSTHAN64:                    {OP_LESSTHAN64, "OP_LESSTHAN64", 1, opcodeLessThan64},
-	OP_LESSTHANOREQUAL64:             {OP_LESSTHANOREQUAL64, "OP_LESSTHANOREQUAL64", 1, opcodeLessThanOrEqual64},
-	OP_GREATERTHAN64:                 {OP_GREATERTHAN64, "OP_GREATERTHAN64", 1, opcodeGreaterThan64},
-	OP_GREATERTHANOREQUAL64:          {OP_GREATERTHANOREQUAL64, "OP_GREATERTHANOREQUAL64", 1, opcodeGreaterThanOrEqual64},
-	OP_SCRIPTNUMTOLE64:               {OP_SCRIPTNUMTOLE64, "OP_SCRIPTNUMTOLE64", 1, opcodeScriptNumToLE64},
-	OP_LE64TOSCRIPTNUM:               {OP_LE64TOSCRIPTNUM, "OP_LE64TOSCRIPTNUM", 1, opcodeLE64ToScriptNum},
-	OP_LE32TOLE64:                    {OP_LE32TOLE64, "OP_LE32TOLE64", 1, opcodeLE32ToLE64},
+	OP_UNKNOWN215:                    {OP_UNKNOWN215, "OP_UNKNOWN215", 1, opcodeInvalid},
+	OP_UNKNOWN216:                    {OP_UNKNOWN216, "OP_UNKNOWN216", 1, opcodeInvalid},
+	OP_UNKNOWN217:                    {OP_UNKNOWN217, "OP_UNKNOWN217", 1, opcodeInvalid},
+	OP_UNKNOWN218:                    {OP_UNKNOWN218, "OP_UNKNOWN218", 1, opcodeInvalid},
+	OP_UNKNOWN219:                    {OP_UNKNOWN219, "OP_UNKNOWN219", 1, opcodeInvalid},
+	OP_UNKNOWN220:                    {OP_UNKNOWN220, "OP_UNKNOWN220", 1, opcodeInvalid},
+	OP_UNKNOWN221:                    {OP_UNKNOWN221, "OP_UNKNOWN221", 1, opcodeInvalid},
+	OP_UNKNOWN222:                    {OP_UNKNOWN222, "OP_UNKNOWN222", 1, opcodeInvalid},
+	OP_UNKNOWN223:                    {OP_UNKNOWN223, "OP_UNKNOWN223", 1, opcodeInvalid},
+	OP_UNKNOWN224:                    {OP_UNKNOWN224, "OP_UNKNOWN224", 1, opcodeInvalid},
+	OP_UNKNOWN225:                    {OP_UNKNOWN225, "OP_UNKNOWN225", 1, opcodeInvalid},
+	OP_UNKNOWN226:                    {OP_UNKNOWN226, "OP_UNKNOWN226", 1, opcodeInvalid},
 	OP_ECMULSCALARVERIFY:             {OP_ECMULSCALARVERIFY, "OP_ECMULSCALARVERIFY", 1, opcodeECMulScalarVerify},
 	OP_TWEAKVERIFY:                   {OP_TWEAKVERIFY, "OP_TWEAKVERIFY", 1, opcodeTweakVerify},
 	OP_INSPECTNUMASSETGROUPS:         {OP_INSPECTNUMASSETGROUPS, "OP_INSPECTNUMASSETGROUPS", 1, opcodeInspectNumAssetGroups},
@@ -2438,355 +2437,6 @@ func opcodeChecksigFromStack(op *opcode, data []byte, vm *Engine) error {
 	return nil
 }
 
-// opcodeAdd64 performs 64-bit addition with overflow checking
-// Stack transformation: [... a b] -> [... sum 1] (no overflow) or [... a b 0] (overflow)
-func opcodeAdd64(op *opcode, data []byte, vm *Engine) error {
-	b, err := vm.dstack.PopByteArray()
-	if err != nil {
-		return err
-	}
-	if len(b) != 8 {
-		return scriptError(txscript.ErrInvalidStackOperation, "OP_ADD64 requires 8-byte operands")
-	}
-
-	a, err := vm.dstack.PopByteArray()
-	if err != nil {
-		return err
-	}
-	if len(a) != 8 {
-		return scriptError(txscript.ErrInvalidStackOperation, "OP_ADD64 requires 8-byte operands")
-	}
-
-	aVal := int64(binary.LittleEndian.Uint64(a))
-	bVal := int64(binary.LittleEndian.Uint64(b))
-
-	sum, overflow := mathutil.AddOverflowInt64(aVal, bVal)
-	if overflow {
-		// overflow : restore original operands and push 0
-		vm.dstack.PushByteArray(a)
-		vm.dstack.PushByteArray(b)
-		vm.dstack.PushInt(0)
-		return nil
-	}
-
-	// no overflow : push result and success scriptNum
-	result := make([]byte, 8)
-	binary.LittleEndian.PutUint64(result, uint64(sum))
-	vm.dstack.PushByteArray(result)
-	vm.dstack.PushInt(1)
-	return nil
-}
-
-// opcodeSub64 performs 64-bit subtraction with overflow checking
-// Stack transformation: [... a b] -> [... diff 1] (no overflow) or [... a b 0] (overflow)
-func opcodeSub64(op *opcode, data []byte, vm *Engine) error {
-	b, err := vm.dstack.PopByteArray()
-	if err != nil {
-		return err
-	}
-	if len(b) != 8 {
-		return scriptError(txscript.ErrInvalidStackOperation, "OP_SUB64 requires 8-byte operands")
-	}
-
-	a, err := vm.dstack.PopByteArray()
-	if err != nil {
-		return err
-	}
-	if len(a) != 8 {
-		return scriptError(txscript.ErrInvalidStackOperation, "OP_SUB64 requires 8-byte operands")
-	}
-
-	aVal := int64(binary.LittleEndian.Uint64(a))
-	bVal := int64(binary.LittleEndian.Uint64(b))
-
-	diff, overflow := mathutil.SubOverflowInt64(aVal, bVal)
-	if overflow {
-		// overflow : restore original operands and push 0
-		vm.dstack.PushByteArray(a)
-		vm.dstack.PushByteArray(b)
-		vm.dstack.PushInt(0)
-		return nil
-	}
-
-	// no overflow : push result and success scriptNum
-	result := make([]byte, 8)
-	binary.LittleEndian.PutUint64(result, uint64(diff))
-	vm.dstack.PushByteArray(result)
-	vm.dstack.PushInt(1)
-	return nil
-}
-
-// opcodeMul64 performs 64-bit multiplication with overflow checking
-// Stack transformation: [... a b] -> [... product 1] (no overflow) or [... a b 0] (overflow)
-func opcodeMul64(op *opcode, data []byte, vm *Engine) error {
-	b, err := vm.dstack.PopByteArray()
-	if err != nil {
-		return err
-	}
-	if len(b) != 8 {
-		return scriptError(txscript.ErrInvalidStackOperation, "OP_MUL64 requires 8-byte operands")
-	}
-
-	a, err := vm.dstack.PopByteArray()
-	if err != nil {
-		return err
-	}
-	if len(a) != 8 {
-		return scriptError(txscript.ErrInvalidStackOperation, "OP_MUL64 requires 8-byte operands")
-	}
-
-	aVal := int64(binary.LittleEndian.Uint64(a))
-	bVal := int64(binary.LittleEndian.Uint64(b))
-
-	product, overflow := mathutil.MulOverflowInt64(aVal, bVal)
-	if overflow {
-		// overflow : restore original operands and push 0
-		vm.dstack.PushByteArray(a)
-		vm.dstack.PushByteArray(b)
-		vm.dstack.PushInt(0)
-		return nil
-	}
-
-	// no overflow : push result and success scriptNum
-	result := make([]byte, 8)
-	binary.LittleEndian.PutUint64(result, uint64(product))
-	vm.dstack.PushByteArray(result)
-	vm.dstack.PushInt(1)
-	return nil
-}
-
-// opcodeDiv64 performs 64-bit division with overflow checking
-// Stack transformation: [... a b] -> [... remainder quotient 1] (no overflow) or [... a b 0] (overflow)
-func opcodeDiv64(op *opcode, data []byte, vm *Engine) error {
-	b, err := vm.dstack.PopByteArray()
-	if err != nil {
-		return err
-	}
-	if len(b) != 8 {
-		return scriptError(txscript.ErrInvalidStackOperation, "OP_DIV64 requires 8-byte operands")
-	}
-
-	a, err := vm.dstack.PopByteArray()
-	if err != nil {
-		return err
-	}
-	if len(a) != 8 {
-		return scriptError(txscript.ErrInvalidStackOperation, "OP_DIV64 requires 8-byte operands")
-	}
-
-	aVal := int64(binary.LittleEndian.Uint64(a))
-	bVal := int64(binary.LittleEndian.Uint64(b))
-
-	if bVal == 0 || (aVal == math.MinInt64 && bVal == -1) {
-		// division by zero or overflow, restore original operands and push 0
-		vm.dstack.PushByteArray(a)
-		vm.dstack.PushByteArray(b)
-		vm.dstack.PushInt(0)
-		return nil
-	}
-
-	quotient := aVal / bVal
-	remainder := aVal % bVal
-
-	// ensure remainder is non-negative and less than |b|
-	if remainder < 0 {
-		remainder += int64(math.Abs(float64(bVal)))
-		quotient -= 1
-	}
-
-	remainderBytes := make([]byte, 8)
-	binary.LittleEndian.PutUint64(remainderBytes, uint64(remainder))
-	vm.dstack.PushByteArray(remainderBytes)
-
-	quotientBytes := make([]byte, 8)
-	binary.LittleEndian.PutUint64(quotientBytes, uint64(quotient))
-	vm.dstack.PushByteArray(quotientBytes)
-
-	vm.dstack.PushInt(1)
-	return nil
-}
-
-// opcodeNeg64 performs 64-bit negation with overflow checking
-// Stack transformation: [... a] -> [... -a 1] (no overflow) or [... a 0] (overflow)
-func opcodeNeg64(op *opcode, data []byte, vm *Engine) error {
-	a, err := vm.dstack.PopByteArray()
-	if err != nil {
-		return err
-	}
-	if len(a) != 8 {
-		return scriptError(txscript.ErrInvalidStackOperation, "OP_NEG64 requires 8-byte operand")
-	}
-
-	aVal := int64(binary.LittleEndian.Uint64(a))
-
-	product, overflow := mathutil.MulOverflowInt64(aVal, -1)
-	if overflow {
-		// overflow : restore original operand and push 0
-		vm.dstack.PushByteArray(a)
-		vm.dstack.PushInt(0)
-		return nil
-	}
-
-	// no overflow : push result and success scriptNum
-	result := make([]byte, 8)
-	binary.LittleEndian.PutUint64(result, uint64(product))
-	vm.dstack.PushByteArray(result)
-	vm.dstack.PushInt(1)
-	return nil
-}
-
-// opcodeLessThan64 performs 64-bit less than comparison
-// Stack transformation: [... a b] -> [... bool]
-func opcodeLessThan64(op *opcode, data []byte, vm *Engine) error {
-	b, err := vm.dstack.PopByteArray()
-	if err != nil {
-		return err
-	}
-	if len(b) != 8 {
-		return scriptError(txscript.ErrInvalidStackOperation, "OP_LESSTHAN64 requires 8-byte operands")
-	}
-
-	a, err := vm.dstack.PopByteArray()
-	if err != nil {
-		return err
-	}
-	if len(a) != 8 {
-		return scriptError(txscript.ErrInvalidStackOperation, "OP_LESSTHAN64 requires 8-byte operands")
-	}
-
-	aVal := int64(binary.LittleEndian.Uint64(a))
-	bVal := int64(binary.LittleEndian.Uint64(b))
-
-	vm.dstack.PushBool(aVal < bVal)
-	return nil
-}
-
-// opcodeLessThanOrEqual64 performs 64-bit less than or equal comparison
-// Stack transformation: [... a b] -> [... bool]
-func opcodeLessThanOrEqual64(op *opcode, data []byte, vm *Engine) error {
-	b, err := vm.dstack.PopByteArray()
-	if err != nil {
-		return err
-	}
-	if len(b) != 8 {
-		return scriptError(txscript.ErrInvalidStackOperation, "OP_LESSTHANOREQUAL64 requires 8-byte operands")
-	}
-
-	a, err := vm.dstack.PopByteArray()
-	if err != nil {
-		return err
-	}
-	if len(a) != 8 {
-		return scriptError(txscript.ErrInvalidStackOperation, "OP_LESSTHANOREQUAL64 requires 8-byte operands")
-	}
-
-	aVal := int64(binary.LittleEndian.Uint64(a))
-	bVal := int64(binary.LittleEndian.Uint64(b))
-
-	vm.dstack.PushBool(aVal <= bVal)
-	return nil
-}
-
-// opcodeGreaterThan64 performs 64-bit greater than comparison
-// Stack transformation: [... a b] -> [... bool]
-func opcodeGreaterThan64(op *opcode, data []byte, vm *Engine) error {
-	b, err := vm.dstack.PopByteArray()
-	if err != nil {
-		return err
-	}
-	if len(b) != 8 {
-		return scriptError(txscript.ErrInvalidStackOperation, "OP_GREATERTHAN64 requires 8-byte operands")
-	}
-
-	a, err := vm.dstack.PopByteArray()
-	if err != nil {
-		return err
-	}
-	if len(a) != 8 {
-		return scriptError(txscript.ErrInvalidStackOperation, "OP_GREATERTHAN64 requires 8-byte operands")
-	}
-
-	aVal := int64(binary.LittleEndian.Uint64(a))
-	bVal := int64(binary.LittleEndian.Uint64(b))
-
-	vm.dstack.PushBool(aVal > bVal)
-	return nil
-}
-
-// opcodeGreaterThanOrEqual64 performs 64-bit greater than or equal comparison
-// Stack transformation: [... a b] -> [... bool]
-func opcodeGreaterThanOrEqual64(op *opcode, data []byte, vm *Engine) error {
-	b, err := vm.dstack.PopByteArray()
-	if err != nil {
-		return err
-	}
-	if len(b) != 8 {
-		return scriptError(txscript.ErrInvalidStackOperation, "OP_GREATERTHANOREQUAL64 requires 8-byte operands")
-	}
-
-	a, err := vm.dstack.PopByteArray()
-	if err != nil {
-		return err
-	}
-	if len(a) != 8 {
-		return scriptError(txscript.ErrInvalidStackOperation, "OP_GREATERTHANOREQUAL64 requires 8-byte operands")
-	}
-
-	aVal := int64(binary.LittleEndian.Uint64(a))
-	bVal := int64(binary.LittleEndian.Uint64(b))
-
-	vm.dstack.PushBool(aVal >= bVal)
-	return nil
-}
-
-// opcodeScriptNumToLE64 converts a minimal CScriptNum to an 8-byte signed LE number
-// Stack transformation: [... num] -> [... le64]
-func opcodeScriptNumToLE64(op *opcode, data []byte, vm *Engine) error {
-	num, err := vm.dstack.PopInt()
-	if err != nil {
-		return err
-	}
-
-	result := make([]byte, 8)
-	binary.LittleEndian.PutUint64(result, uint64(int64(num)))
-	vm.dstack.PushByteArray(result)
-	return nil
-}
-
-// opcodeLE64ToScriptNum converts an 8-byte signed LE number to a minimal CScriptNum
-// Stack transformation: [... le64] -> [... num]
-func opcodeLE64ToScriptNum(op *opcode, data []byte, vm *Engine) error {
-	b, err := vm.dstack.PopByteArray()
-	if err != nil {
-		return err
-	}
-	if len(b) != 8 {
-		return scriptError(txscript.ErrInvalidStackOperation, "OP_LE64TOSCRIPTNUM requires 8-byte operand")
-	}
-
-	val := int64(binary.LittleEndian.Uint64(b))
-	vm.dstack.PushInt(scriptNum(val))
-	return nil
-}
-
-// opcodeLE32ToLE64 converts a 4-byte unsigned LE number to an 8-byte signed LE number
-// Stack transformation: [... le32] -> [... le64]
-func opcodeLE32ToLE64(op *opcode, data []byte, vm *Engine) error {
-	b, err := vm.dstack.PopByteArray()
-	if err != nil {
-		return err
-	}
-	if len(b) != 4 {
-		return scriptError(txscript.ErrInvalidStackOperation, "OP_LE32TOLE64 requires 4-byte operand")
-	}
-
-	val := uint32(binary.LittleEndian.Uint32(b))
-	result := make([]byte, 8)
-	binary.LittleEndian.PutUint64(result, uint64(val))
-	vm.dstack.PushByteArray(result)
-	return nil
-}
-
 // opcodeECMulScalarVerify verifies that Q = k*P where k is a 32-byte big endian scalar
 // and P, Q are compressed EC points on the secp256k1 curve.
 // Stack transformation: [... k P Q] -> [...]
@@ -3086,6 +2736,9 @@ func findPacketByType(tx *wire.MsgTx, packetType uint8) ([]byte, error) {
 		content, err := pkt.Serialize()
 		if err != nil {
 			return nil, fmt.Errorf("failed to serialize packet type %d: %w", packetType, err)
+		}
+		if content == nil {
+			content = []byte{}
 		}
 		return content, nil
 	}

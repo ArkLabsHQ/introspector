@@ -1079,8 +1079,8 @@ func TestIntrospectorRejectsInvalidArkadeScript(t *testing.T) {
 
 	// script verifying that the witness contains 2 numbers that sum to 10
 	arkadeScript, err := txscript.NewScriptBuilder().
-		AddOp(arkade.OP_ADD64).AddOp(arkade.OP_VERIFY).
-		AddData(uint64LE(10)).
+		AddOp(arkade.OP_ADD).
+		AddInt64(10).
 		AddOp(arkade.OP_EQUAL).
 		Script()
 	require.NoError(t, err)

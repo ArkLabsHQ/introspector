@@ -64,8 +64,8 @@ func TestRecursivePolicy(t *testing.T) {
 		// Output 0 value must be <= 1000 sats.
 		AddInt64(0).
 		AddOp(arkade.OP_INSPECTOUTPUTVALUE).
-		AddData(uint64LE(uint64(maxAllowedOutput + 1))).
-		AddOp(arkade.OP_LESSTHAN64).
+		AddInt64(maxAllowedOutput + 1).
+		AddOp(arkade.OP_LESSTHAN).
 		AddOp(arkade.OP_VERIFY).
 		// Output 1 must match input scriptPubKey (recursive covenant).
 		AddInt64(1).
@@ -82,8 +82,7 @@ func TestRecursivePolicy(t *testing.T) {
 		AddOp(arkade.OP_INSPECTINPUTVALUE).
 		AddInt64(0).
 		AddOp(arkade.OP_INSPECTOUTPUTVALUE).
-		AddOp(arkade.OP_SUB64).
-		AddOp(arkade.OP_VERIFY). // check & pop the overflow flag
+		AddOp(arkade.OP_SUB).
 		AddOp(arkade.OP_EQUAL).
 		Script()
 	require.NoError(t, err)

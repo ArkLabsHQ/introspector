@@ -5,7 +5,7 @@
 //   - Only taproot/tapscript execution is supported (segwit v0 and legacy are rejected).
 //   - All opcodes that btcd disables (OP_CAT, OP_SUBSTR, etc.) are re-enabled for arkade script use.
 //   - Custom introspection opcodes are added for transaction input/output inspection,
-//     64-bit arithmetic, SHA256 streaming, elliptic curve operations, and asset introspection.
+//     SHA256 streaming, elliptic curve operations, and asset introspection.
 //
 // When updating btcd dependencies, review upstream txscript changes for security
 // patches that may need to be backported to this fork.

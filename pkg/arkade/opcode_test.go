@@ -70,11 +70,12 @@ func TestOpcodeDisasm(t *testing.T) {
 		0xd1: "OP_INSPECTOUTPUTSCRIPTPUBKEY", 0xd2: "OP_INSPECTVERSION",
 		0xd3: "OP_INSPECTLOCKTIME", 0xd4: "OP_INSPECTNUMINPUTS",
 		0xd5: "OP_INSPECTNUMOUTPUTS", 0xd6: "OP_TXWEIGHT",
-		0xd7: "OP_ADD64", 0xd8: "OP_SUB64", 0xd9: "OP_MUL64",
-		0xda: "OP_DIV64", 0xdb: "OP_NEG64", 0xdc: "OP_LESSTHAN64",
-		0xdd: "OP_LESSTHANOREQUAL64", 0xde: "OP_GREATERTHAN64",
-		0xdf: "OP_GREATERTHANOREQUAL64", 0xe0: "OP_SCRIPTNUMTOLE64",
-		0xe1: "OP_LE64TOSCRIPTNUM", 0xe2: "OP_LE32TOLE64",
+		0xd7: "OP_UNKNOWN215", 0xd8: "OP_UNKNOWN216",
+		0xd9: "OP_UNKNOWN217", 0xda: "OP_UNKNOWN218",
+		0xdb: "OP_UNKNOWN219", 0xdc: "OP_UNKNOWN220",
+		0xdd: "OP_UNKNOWN221", 0xde: "OP_UNKNOWN222",
+		0xdf: "OP_UNKNOWN223", 0xe0: "OP_UNKNOWN224",
+		0xe1: "OP_UNKNOWN225", 0xe2: "OP_UNKNOWN226",
 		0xe3: "OP_ECMULSCALARVERIFY", 0xe4: "OP_TWEAKVERIFY",
 		0xf3: "OP_TXID",
 		0xc8: "OP_INSPECTINPUTARKADESCRIPTHASH",
@@ -132,7 +133,7 @@ func TestOpcodeDisasm(t *testing.T) {
 
 		// OP_UNKNOWN#.
 		case (opcodeVal >= 0xbb && opcodeVal <= 0xc3) || // Unknown range before SHA256 ops
-(opcodeVal == 0xd0) || // Unknown between output ops
+			(opcodeVal == 0xd0) || // Unknown between output ops
 			(opcodeVal >= 0xf6 && opcodeVal <= 0xf9) || // Unknown range after new ops
 			opcodeVal == 0xfc:
 			expectedStr = "OP_UNKNOWN" + strconv.Itoa(opcodeVal)
@@ -209,7 +210,7 @@ func TestOpcodeDisasm(t *testing.T) {
 
 		// OP_UNKNOWN#.
 		case (opcodeVal >= 0xbb && opcodeVal <= 0xc3) || // Unknown range before SHA256 ops
-(opcodeVal == 0xd0) || // Unknown between output ops
+			(opcodeVal == 0xd0) || // Unknown between output ops
 			(opcodeVal >= 0xf6 && opcodeVal <= 0xf9) || // Unknown range after new ops
 			opcodeVal == 0xfc:
 			expectedStr = "OP_UNKNOWN" + strconv.Itoa(opcodeVal)
