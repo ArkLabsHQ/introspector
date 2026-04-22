@@ -1303,108 +1303,80 @@ func opcodeEqualVerify(op *opcode, data []byte, vm *Engine) error {
 	return err
 }
 
-// opcode1Add treats the top item on the data stack as an integer and replaces
-// it with its incremented value (plus 1).
-//
-// Stack transformation: [... x1 x2] -> [... x1 x2+1]
+// opcode1Add treats the top item as a BigNum and replaces it with x+1.
+// Stack transformation: [... x] -> [... x+1]
 func opcode1Add(op *opcode, data []byte, vm *Engine) error {
-	m, err := vm.dstack.PopInt()
+	n, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-
-	vm.dstack.PushInt(m + 1)
-	return nil
+	return vm.dstack.PushBigNum(n.Add(BigNumFromInt64(1)))
 }
 
-// opcode1Sub treats the top item on the data stack as an integer and replaces
-// it with its decremented value (minus 1).
-//
-// Stack transformation: [... x1 x2] -> [... x1 x2-1]
+// opcode1Sub treats the top item as a BigNum and replaces it with x-1.
+// Stack transformation: [... x] -> [... x-1]
 func opcode1Sub(op *opcode, data []byte, vm *Engine) error {
-	m, err := vm.dstack.PopInt()
+	n, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-	vm.dstack.PushInt(m - 1)
-
-	return nil
+	return vm.dstack.PushBigNum(n.Sub(BigNumFromInt64(1)))
 }
 
-// opcodeNegate treats the top item on the data stack as an integer and replaces
-// it with its negation.
-//
-// Stack transformation: [... x1 x2] -> [... x1 -x2]
+// opcodeNegate replaces the top BigNum with its negation.
+// Stack transformation: [... x] -> [... -x]
 func opcodeNegate(op *opcode, data []byte, vm *Engine) error {
-	m, err := vm.dstack.PopInt()
+	n, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-
-	vm.dstack.PushInt(-m)
-	return nil
+	return vm.dstack.PushBigNum(n.Negate())
 }
 
-// opcodeAbs treats the top item on the data stack as an integer and replaces it
-// it with its absolute value.
-//
-// Stack transformation: [... x1 x2] -> [... x1 abs(x2)]
+// opcodeAbs replaces the top BigNum with its absolute value.
+// Stack transformation: [... x] -> [... |x|]
 func opcodeAbs(op *opcode, data []byte, vm *Engine) error {
-	m, err := vm.dstack.PopInt()
+	n, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-
-	if m < 0 {
-		m = -m
-	}
-	vm.dstack.PushInt(m)
-	return nil
+	return vm.dstack.PushBigNum(n.Abs())
 }
 
-// opcodeNot treats the top item on the data stack as an integer and replaces
-// it with its "inverted" value (0 becomes 1, non-zero becomes 0).
-//
+// opcodeNot pushes 1 if the top BigNum is zero, 0 otherwise.
+
 // NOTE: While it would probably make more sense to treat the top item as a
 // boolean, and push the opposite, which is really what the intention of this
 // opcode is, it is extremely important that is not done because integers are
 // interpreted differently than booleans and the consensus rules for this opcode
 // dictate the item is interpreted as an integer.
-//
 // Stack transformation (x2==0): [... x1 0] -> [... x1 1]
 // Stack transformation (x2!=0): [... x1 1] -> [... x1 0]
 // Stack transformation (x2!=0): [... x1 17] -> [... x1 0]
 func opcodeNot(op *opcode, data []byte, vm *Engine) error {
-	m, err := vm.dstack.PopInt()
+	n, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-
-	if m == 0 {
-		vm.dstack.PushInt(scriptNum(1))
-	} else {
-		vm.dstack.PushInt(scriptNum(0))
+	if n.IsZero() {
+		return vm.dstack.PushBigNum(BigNumFromInt64(1))
 	}
-	return nil
+	return vm.dstack.PushBigNum(BigNumFromInt64(0))
 }
 
-// opcode0NotEqual treats the top item on the data stack as an integer and
-// replaces it with either a 0 if it is zero, or a 1 if it is not zero.
-//
+// opcode0NotEqual pushes 0 if the top BigNum is zero, 1 otherwise.
 // Stack transformation (x2==0): [... x1 0] -> [... x1 0]
 // Stack transformation (x2!=0): [... x1 1] -> [... x1 1]
 // Stack transformation (x2!=0): [... x1 17] -> [... x1 1]
 func opcode0NotEqual(op *opcode, data []byte, vm *Engine) error {
-	m, err := vm.dstack.PopInt()
+	n, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-
-	if m != 0 {
-		m = 1
+	if n.IsZero() {
+		return vm.dstack.PushBigNum(BigNumFromInt64(0))
 	}
-	vm.dstack.PushInt(m)
-	return nil
+	return vm.dstack.PushBigNum(BigNumFromInt64(1))
 }
 
 // opcodeAdd treats the top two items on the data stack as integers and replaces
@@ -2426,28 +2398,24 @@ func opcodeXor(op *opcode, data []byte, vm *Engine) error {
 	return nil
 }
 
-// opcode2Mul multiplies a number by 2.
+// opcode2Mul multiplies a BigNum by 2.
 // Stack transformation: [... x] -> [... x*2]
 func opcode2Mul(op *opcode, data []byte, vm *Engine) error {
-	x, err := vm.dstack.PopInt()
+	n, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-
-	vm.dstack.PushInt(x * 2)
-	return nil
+	return vm.dstack.PushBigNum(n.Add(n))
 }
 
-// opcode2Div divides a number by 2.
+// opcode2Div divides a BigNum by 2 (truncated).
 // Stack transformation: [... x] -> [... x/2]
 func opcode2Div(op *opcode, data []byte, vm *Engine) error {
-	x, err := vm.dstack.PopInt()
+	n, err := vm.dstack.PopBigNum(maxBigNumLen)
 	if err != nil {
 		return err
 	}
-
-	vm.dstack.PushInt(x / 2)
-	return nil
+	return vm.dstack.PushBigNum(n.Div(BigNumFromInt64(2)))
 }
 
 // opcodeMul multiplies two numbers.
