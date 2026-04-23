@@ -251,18 +251,18 @@ func addCounterPacket(t *testing.T, ptx *psbt.Packet, value uint64) {
 
 	addExtensionPacket(t, ptx, extension.UnknownPacket{
 		PacketType: counterPacketType,
-		Data:       counterPacketPayload(value),
+		Data:       counterPacketPayload(t, value),
 	})
 }
 
-func counterPacketPayload(value uint64) []byte {
+func counterPacketPayload(t *testing.T, value uint64) []byte {
+	t.Helper()
+
 	// The extension packet format cannot represent an empty data field, while
 	// zero minimally encodes as empty. Store the test counter offset by one so
 	// every payload remains a canonical BigNum and can feed OP_ADD directly.
 	payload, err := arkade.BigNumFromUint64(value + 1).Bytes()
-	if err != nil {
-		panic(err)
-	}
+	require.NoError(t, err)
 	return payload
 }
 
@@ -278,7 +278,7 @@ func requireCounterPacket(t *testing.T, tx *wire.MsgTx, want uint64) {
 		}
 		data, err := packet.Serialize()
 		require.NoError(t, err)
-		require.Equal(t, counterPacketPayload(want), data)
+		require.Equal(t, counterPacketPayload(t, want), data)
 		return
 	}
 
