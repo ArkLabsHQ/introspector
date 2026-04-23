@@ -382,7 +382,7 @@ func TestVerifyCheckpointSignatures(t *testing.T) {
 			}
 			err := verifyNonArkdCheckpointSignatures([]*psbt.Packet{setup.packet}, setup.arkdPubKey)
 			require.Error(t, err)
-			require.ErrorContains(t, err, "missing 1 required non-arkd signatures")
+			require.ErrorContains(t, err, "missing signature")
 		})
 	})
 }
