@@ -1,8 +1,9 @@
 package arkade
 
 import (
-	"encoding/binary"
 	"fmt"
+	"math"
+	"math/big"
 	"testing"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
@@ -10,12 +11,6 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 )
-
-func amountLE64(v uint64) []byte {
-	b := make([]byte, 8)
-	binary.LittleEndian.PutUint64(b, v)
-	return b
-}
 
 func TestAssetOpcodes(t *testing.T) {
 	t.Parallel()
@@ -104,6 +99,32 @@ func TestAssetOpcodes(t *testing.T) {
 			},
 			Outputs: []asset.AssetOutput{
 				{Vout: 0, Amount: 3_000_000_000},
+			},
+		},
+	}
+
+	maxUint64AmountBytes, err := BigNumFromUint64(math.MaxUint64).Bytes()
+	if err != nil {
+		t.Fatalf("max uint64 amount bytes: %v", err)
+	}
+	maxUint64PlusOneBytes, err := (BigNum{
+		big:    new(big.Int).Add(new(big.Int).SetUint64(math.MaxUint64), big.NewInt(1)),
+		useBig: true,
+	}).Bytes()
+	if err != nil {
+		t.Fatalf("max uint64 plus one amount bytes: %v", err)
+	}
+
+	// Packet covering the uint64 amount boundary and a sum above uint64.
+	boundaryAmountPacket := asset.Packet{
+		{
+			AssetId: &asset.AssetId{Txid: assetTxid, Index: 3},
+			Inputs: []asset.AssetInput{
+				{Type: asset.AssetInputTypeLocal, Vin: 0, Amount: math.MaxUint64},
+				{Type: asset.AssetInputTypeLocal, Vin: 1, Amount: 1},
+			},
+			Outputs: []asset.AssetOutput{
+				{Vout: 0, Amount: math.MaxUint64},
 			},
 		},
 	}
@@ -387,7 +408,7 @@ func TestAssetOpcodes(t *testing.T) {
 				AddInt64(0). // item index
 				AddInt64(0). // source=0 (input)
 				AddOp(OP_INSPECTASSETGROUP).
-				AddData(amountLE64(500)). // amount (LE64)
+				AddInt64(500). // amount
 				AddOp(OP_EQUALVERIFY).
 				AddInt64(0). // vin
 				AddOp(OP_EQUALVERIFY).
@@ -405,7 +426,7 @@ func TestAssetOpcodes(t *testing.T) {
 				AddInt64(1). // item index
 				AddInt64(0). // source=0 (input)
 				AddOp(OP_INSPECTASSETGROUP).
-				AddData(amountLE64(300)). // amount (LE64)
+				AddInt64(300). // amount
 				AddOp(OP_EQUALVERIFY).
 				AddInt64(1). // vin
 				AddOp(OP_EQUALVERIFY).
@@ -425,7 +446,7 @@ func TestAssetOpcodes(t *testing.T) {
 				AddInt64(0). // item index
 				AddInt64(1). // source=1 (output)
 				AddOp(OP_INSPECTASSETGROUP).
-				AddData(amountLE64(800)). // amount (LE64)
+				AddInt64(800). // amount
 				AddOp(OP_EQUALVERIFY).
 				AddInt64(0). // vout
 				AddOp(OP_EQUALVERIFY).
@@ -465,7 +486,7 @@ func TestAssetOpcodes(t *testing.T) {
 				AddInt64(0). // group index
 				AddInt64(0). // source=0 (inputs)
 				AddOp(OP_INSPECTASSETGROUPSUM).
-				AddData(amountLE64(800)). // 500 + 300 (LE64)
+				AddInt64(800). // 500 + 300
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{valid: true, assetPacket: twoGroupPacket},
@@ -477,7 +498,7 @@ func TestAssetOpcodes(t *testing.T) {
 				AddInt64(0). // group index
 				AddInt64(1). // source=1 (outputs)
 				AddOp(OP_INSPECTASSETGROUPSUM).
-				AddData(amountLE64(800)). // single output of 800 (LE64)
+				AddInt64(800). // single output of 800
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{valid: true, assetPacket: twoGroupPacket},
@@ -489,9 +510,9 @@ func TestAssetOpcodes(t *testing.T) {
 				AddInt64(0). // group index
 				AddInt64(2). // source=2 (both)
 				AddOp(OP_INSPECTASSETGROUPSUM).
-				AddData(amountLE64(800)). // output sum (LE64)
+				AddInt64(800). // output sum
 				AddOp(OP_EQUALVERIFY).
-				AddData(amountLE64(800)). // input sum (LE64)
+				AddInt64(800). // input sum
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{valid: true, assetPacket: twoGroupPacket},
@@ -503,7 +524,7 @@ func TestAssetOpcodes(t *testing.T) {
 				AddInt64(1). // group 1
 				AddInt64(1). // source=1 (outputs)
 				AddOp(OP_INSPECTASSETGROUPSUM).
-				AddData(amountLE64(3000)). // 1000 + 2000 (LE64)
+				AddInt64(3000). // 1000 + 2000
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{valid: true, assetPacket: twoGroupPacket},
@@ -566,7 +587,7 @@ func TestAssetOpcodes(t *testing.T) {
 				AddInt64(0). // output index
 				AddInt64(0). // asset index
 				AddOp(OP_INSPECTOUTASSETAT).
-				AddData(amountLE64(800)). // amount (LE64)
+				AddInt64(800). // amount
 				AddOp(OP_EQUALVERIFY).
 				AddInt64(0). // gidx (group index in packet)
 				AddOp(OP_EQUALVERIFY).
@@ -597,7 +618,7 @@ func TestAssetOpcodes(t *testing.T) {
 				AddOp(OP_INSPECTOUTASSETLOOKUP).
 				AddOp(OP_1). // verify success flag
 				AddOp(OP_EQUALVERIFY).
-				AddData(amountLE64(800)). // expected amount (LE64)
+				AddInt64(800). // expected amount
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{valid: true, assetPacket: twoGroupPacket},
@@ -612,7 +633,7 @@ func TestAssetOpcodes(t *testing.T) {
 				AddOp(OP_INSPECTOUTASSETLOOKUP).
 				AddOp(OP_NOT). // flag=0 → NOT → true
 				AddOp(OP_VERIFY).
-				AddData(make([]byte, 8)). // expected dummy LE64
+				AddInt64(0). // expected dummy 0
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{valid: true, assetPacket: twoGroupPacket},
@@ -665,7 +686,7 @@ func TestAssetOpcodes(t *testing.T) {
 				AddInt64(0). // input index
 				AddInt64(0). // asset index
 				AddOp(OP_INSPECTINASSETAT).
-				AddData(amountLE64(500)). // amount (LE64)
+				AddInt64(500). // amount
 				AddOp(OP_EQUALVERIFY).
 				AddInt64(0). // gidx (group index)
 				AddOp(OP_EQUALVERIFY).
@@ -683,7 +704,7 @@ func TestAssetOpcodes(t *testing.T) {
 				AddInt64(1). // input index
 				AddInt64(0). // asset index
 				AddOp(OP_INSPECTINASSETAT).
-				AddData(amountLE64(300)). // amount (LE64)
+				AddInt64(300). // amount
 				AddOp(OP_EQUALVERIFY).
 				AddInt64(0). // gidx (group index)
 				AddOp(OP_EQUALVERIFY).
@@ -715,7 +736,7 @@ func TestAssetOpcodes(t *testing.T) {
 				AddOp(OP_INSPECTINASSETLOOKUP).
 				AddOp(OP_1). // verify success flag
 				AddOp(OP_EQUALVERIFY).
-				AddData(amountLE64(500)). // expected amount (LE64)
+				AddInt64(500). // expected amount
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{valid: true, assetPacket: twoGroupPacket},
@@ -731,7 +752,7 @@ func TestAssetOpcodes(t *testing.T) {
 				AddOp(OP_INSPECTINASSETLOOKUP).
 				AddOp(OP_1). // verify success flag
 				AddOp(OP_EQUALVERIFY).
-				AddData(amountLE64(300)). // expected amount (LE64)
+				AddInt64(300). // expected amount
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{valid: true, assetPacket: twoGroupPacket},
@@ -746,7 +767,7 @@ func TestAssetOpcodes(t *testing.T) {
 				AddOp(OP_INSPECTINASSETLOOKUP).
 				AddOp(OP_NOT). // flag=0 → NOT → true
 				AddOp(OP_VERIFY).
-				AddData(make([]byte, 8)). // expected dummy LE64
+				AddInt64(0). // expected dummy 0
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{valid: true, assetPacket: twoGroupPacket},
@@ -760,7 +781,7 @@ func TestAssetOpcodes(t *testing.T) {
 				AddInt64(0). // item index
 				AddInt64(1). // source=1 (output)
 				AddOp(OP_INSPECTASSETGROUP).
-				AddData(amountLE64(3_000_000_000)). // amount (LE64)
+				AddInt64(3_000_000_000). // amount
 				AddOp(OP_EQUALVERIFY).
 				AddInt64(0). // vout
 				AddOp(OP_EQUALVERIFY).
@@ -777,7 +798,7 @@ func TestAssetOpcodes(t *testing.T) {
 				AddInt64(0). // item index
 				AddInt64(0). // source=0 (input)
 				AddOp(OP_INSPECTASSETGROUP).
-				AddData(amountLE64(7_000_000_000)). // amount (LE64)
+				AddInt64(7_000_000_000). // amount
 				AddOp(OP_EQUALVERIFY).
 				AddInt64(0). // vin
 				AddOp(OP_EQUALVERIFY).
@@ -794,39 +815,54 @@ func TestAssetOpcodes(t *testing.T) {
 				AddInt64(0). // group index
 				AddInt64(2). // source=2 (both)
 				AddOp(OP_INSPECTASSETGROUPSUM).
-				AddData(amountLE64(3_000_000_000)). // output sum (LE64)
+				AddInt64(3_000_000_000). // output sum
 				AddOp(OP_EQUALVERIFY).
-				AddData(amountLE64(10_000_000_000)). // input sum: 7B + 3B (LE64)
+				AddInt64(10_000_000_000). // input sum: 7B + 3B
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{valid: true, assetPacket: largeAmountPacket},
 			},
 		},
 		{
-			name: "large_amount_add64",
-			// Verify pushed LE64 amount feeds directly into OP_ADD64.
+			name: "boundary_amount_sum",
+			// MaxUint64 is a legal individual amount, and BigNum sums may
+			// exceed uint64 when multiple amounts are aggregated.
 			script: txscript.NewScriptBuilder().
-				AddInt64(0).                         // group index
-				AddInt64(0).                         // source=0 (inputs)
-				AddOp(OP_INSPECTASSETGROUPSUM).      // pushes 10B as LE64
-				AddData(amountLE64(500_000_000)).    // 0.5B
-				AddOp(OP_ADD64).                     // 10B + 0.5B
-				AddOp(OP_VERIFY).                    // success flag
-				AddData(amountLE64(10_500_000_000)). // expected sum
+				AddInt64(0). // group index
+				AddInt64(2). // source=2 (both)
+				AddOp(OP_INSPECTASSETGROUPSUM).
+				AddData(maxUint64AmountBytes). // output sum
+				AddOp(OP_EQUALVERIFY).
+				AddData(maxUint64PlusOneBytes). // input sum: MaxUint64 + 1
+				AddOp(OP_EQUAL),
+			cases: []testCase{
+				{valid: true, assetPacket: boundaryAmountPacket},
+			},
+		},
+		{
+			name: "large_amount_add",
+			// Verify pushed large amount feeds directly into OP_ADD.
+			script: txscript.NewScriptBuilder().
+				AddInt64(0).                    // group index
+				AddInt64(0).                    // source=0 (inputs)
+				AddOp(OP_INSPECTASSETGROUPSUM). // pushes 10B
+				AddInt64(500_000_000).          // 0.5B
+				AddOp(OP_ADD).                  // 10B + 0.5B
+				AddInt64(10_500_000_000).       // expected sum
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{valid: true, assetPacket: largeAmountPacket},
 			},
 		},
 		{
-			name: "large_amount_comparison64",
-			// Verify pushed LE64 amount works with OP_GREATERTHANOREQUAL64.
+			name: "large_amount_comparison",
+			// Verify pushed large amount works with OP_GREATERTHANOREQUAL.
 			script: txscript.NewScriptBuilder().
 				AddInt64(0). // output index
 				AddInt64(0). // asset index
 				AddOp(OP_INSPECTOUTASSETAT).
-				AddData(amountLE64(2_000_000_000)). // threshold
-				AddOp(OP_GREATERTHANOREQUAL64).     // 3B >= 2B → true
+				AddInt64(2_000_000_000).      // threshold
+				AddOp(OP_GREATERTHANOREQUAL). // 3B >= 2B → true
 				AddOp(OP_VERIFY).
 				AddInt64(0). // gidx
 				AddOp(OP_EQUALVERIFY).
@@ -838,7 +874,7 @@ func TestAssetOpcodes(t *testing.T) {
 		},
 		{
 			name: "large_amount_lookup_found",
-			// Lookup with large amount returns LE64 + flag.
+			// Lookup with large amount returns amount.
 			script: txscript.NewScriptBuilder().
 				AddInt64(0).           // output index
 				AddData(assetTxid[:]). // txid
@@ -846,7 +882,7 @@ func TestAssetOpcodes(t *testing.T) {
 				AddOp(OP_INSPECTOUTASSETLOOKUP).
 				AddOp(OP_1). // verify success flag
 				AddOp(OP_EQUALVERIFY).
-				AddData(amountLE64(3_000_000_000)). // expected amount (LE64)
+				AddInt64(3_000_000_000). // expected amount
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{valid: true, assetPacket: largeAmountPacket},

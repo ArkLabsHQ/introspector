@@ -323,7 +323,7 @@ func mainContractArkadeScript(t *testing.T) []byte {
 		AddOp(arkade.OP_INSPECTINASSETLOOKUP).
 		AddOp(arkade.OP_1).
 		AddOp(arkade.OP_EQUALVERIFY). // found flag == 1
-		AddData(uint64LE(1)).
+		AddInt64(1).
 		AddOp(arkade.OP_EQUALVERIFY). // amount == 1
 
 		// Verify the same group-0 asset is forwarded to output 0.
@@ -333,7 +333,7 @@ func mainContractArkadeScript(t *testing.T) []byte {
 		AddOp(arkade.OP_INSPECTOUTASSETLOOKUP).
 		AddOp(arkade.OP_1).
 		AddOp(arkade.OP_EQUALVERIFY). // found flag == 1
-		AddData(uint64LE(1)).
+		AddInt64(1).
 		AddOp(arkade.OP_EQUALVERIFY). // amount == 1
 
 		// Verify output 0 carries no other assets.
@@ -393,7 +393,7 @@ func readerContractArkadeScript(t *testing.T, mainAssetTxid chainhash.Hash) []by
 		AddOp(arkade.OP_INSPECTINASSETLOOKUP).
 		AddOp(arkade.OP_1).
 		AddOp(arkade.OP_EQUALVERIFY). // found flag == 1
-		AddData(uint64LE(1)).
+		AddInt64(1).
 		AddOp(arkade.OP_EQUALVERIFY). // amount == 1
 
 		// Read and verify state from current transaction packet.

@@ -107,7 +107,7 @@ func TestPayToTwoOutputs(t *testing.T) {
 		// Check output 0 value == aliceAmount
 		AddInt64(0).
 		AddOp(arkade.OP_INSPECTOUTPUTVALUE).
-		AddData(uint64LE(aliceAmount)).
+		AddInt64(aliceAmount).
 		AddOp(arkade.OP_EQUALVERIFY).
 		// Check output 1 scriptPubKey == Bob
 		AddInt64(1).
@@ -119,7 +119,7 @@ func TestPayToTwoOutputs(t *testing.T) {
 		// Check output 1 value == bobAmount
 		AddInt64(1).
 		AddOp(arkade.OP_INSPECTOUTPUTVALUE).
-		AddData(uint64LE(bobAmount)).
+		AddInt64(bobAmount).
 		AddOp(arkade.OP_EQUAL). // final check leaves result on stack
 		Script()
 	require.NoError(t, err)

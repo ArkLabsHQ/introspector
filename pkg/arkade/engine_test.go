@@ -156,6 +156,63 @@ func TestNewOpcodes(t *testing.T) {
 			},
 		},
 		{
+			name: "OP_NUM2BIN",
+			script: txscript.NewScriptBuilder().
+				AddData([]byte{0x85}).
+				AddInt64(4).
+				AddOp(OP_NUM2BIN).
+				AddData([]byte{0x05, 0x00, 0x00, 0x80}).
+				AddOp(OP_EQUAL),
+			cases: []testCase{
+				{
+					valid: true,
+					tx: &wire.MsgTx{
+						Version: 1,
+						TxIn: []*wire.TxIn{
+							{
+								PreviousOutPoint: wire.OutPoint{
+									Hash:  chainhash.Hash{},
+									Index: 0,
+								},
+							},
+						},
+					},
+					txIdx:       0,
+					inputAmount: 0,
+					stack:       nil,
+				},
+			},
+		},
+		{
+			name: "OP_BIN2NUM_feeds_arithmetic",
+			script: txscript.NewScriptBuilder().
+				AddData([]byte{0x05, 0x00, 0x00, 0x00}).
+				AddOp(OP_BIN2NUM).
+				AddInt64(6).
+				AddOp(OP_ADD).
+				AddInt64(11).
+				AddOp(OP_EQUAL),
+			cases: []testCase{
+				{
+					valid: true,
+					tx: &wire.MsgTx{
+						Version: 1,
+						TxIn: []*wire.TxIn{
+							{
+								PreviousOutPoint: wire.OutPoint{
+									Hash:  chainhash.Hash{},
+									Index: 0,
+								},
+							},
+						},
+					},
+					txIdx:       0,
+					inputAmount: 0,
+					stack:       nil,
+				},
+			},
+		},
+		{
 			name:   "OP_MUL",
 			script: txscript.NewScriptBuilder().AddOp(OP_MUL).AddOp(OP_6).AddOp(OP_EQUAL),
 			cases: []testCase{
@@ -496,469 +553,6 @@ func TestNewOpcodes(t *testing.T) {
 			},
 		},
 		{
-			name: "OP_ADD64",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 1 in LE64
-				AddData([]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 2 in LE64
-				AddOp(OP_ADD64).
-				AddOp(OP_1). // success flag
-				AddOp(OP_EQUALVERIFY).
-				AddData([]byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 3 in LE64
-				AddOp(OP_EQUAL),
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_ADD64_OVERFLOW",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F}). // Max positive int64
-				AddData([]byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 1 in LE64
-				AddOp(OP_ADD64).
-				AddData([]byte{0x00}). // overflow flag
-				AddOp(OP_EQUALVERIFY).
-				AddOp(OP_2DROP). // drop restored operands
-				AddOp(OP_TRUE),  // leave truthy value for clean stack
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_SUB64",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 3 in LE64
-				AddData([]byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 1 in LE64
-				AddOp(OP_SUB64).
-				AddOp(OP_1). // success flag
-				AddOp(OP_EQUALVERIFY).
-				AddData([]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 2 in LE64
-				AddOp(OP_EQUAL),
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_SUB64_OVERFLOW",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80}). // Min negative int64 (-9223372036854775808)
-				AddData([]byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 1 in LE64
-				AddOp(OP_SUB64).
-				AddData([]byte{0x00}). // overflow flag
-				AddOp(OP_EQUALVERIFY).
-				AddOp(OP_2DROP). // drop restored operands
-				AddOp(OP_TRUE),  // leave truthy value for clean stack
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_MUL64",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 2 in LE64
-				AddData([]byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 3 in LE64
-				AddOp(OP_MUL64).
-				AddOp(OP_1). // success flag
-				AddOp(OP_EQUALVERIFY).
-				AddData([]byte{0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 6 in LE64
-				AddOp(OP_EQUAL),
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_MUL64_OVERFLOW",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F}). // Max positive int64
-				AddData([]byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 3 in LE64
-				AddOp(OP_MUL64).
-				AddData([]byte{0x00}). // overflow flag
-				AddOp(OP_EQUALVERIFY).
-				AddOp(OP_2DROP). // drop restored operands
-				AddOp(OP_TRUE),  // leave truthy value for clean stack
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_DIV64",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 6 in LE64
-				AddData([]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 2 in LE64
-				AddOp(OP_DIV64).                                                 // stack: [remainder, quotient, flag]
-				AddOp(OP_1).                                                     // success flag
-				AddOp(OP_EQUALVERIFY).                                           // stack: [remainder, quotient]
-				AddData([]byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 3 in LE64 (quotient)
-				AddOp(OP_EQUALVERIFY).                                           // stack: [remainder]
-				AddOp(OP_DROP).                                                  // drop remainder, stack: []
-				AddOp(OP_TRUE),                                                  // leave truthy value for clean stack
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_NEG64",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 3 in LE64
-				AddOp(OP_NEG64).
-				AddOp(OP_1). // success flag
-				AddOp(OP_EQUALVERIFY).
-				AddData([]byte{0xFD, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}). // -3 in LE64
-				AddOp(OP_EQUAL),
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_NEG64_OVERFLOW",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80}). // Min negative int64
-				AddOp(OP_NEG64).                                                 // stack: [a, 0]
-				AddData([]byte{0x00}).                                           // overflow flag
-				AddOp(OP_EQUALVERIFY).                                           // stack: [a]
-				AddOp(OP_DROP).                                                  // drop restored operand
-				AddOp(OP_TRUE),                                                  // leave truthy value for clean stack
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_LESSTHAN64",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 1 in LE64
-				AddData([]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 2 in LE64
-				AddOp(OP_LESSTHAN64).
-				AddData([]byte{0x01}). // true
-				AddOp(OP_EQUAL),
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_LESSTHANOREQUAL64",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 2 in LE64
-				AddData([]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 2 in LE64
-				AddOp(OP_LESSTHANOREQUAL64).
-				AddData([]byte{0x01}). // true
-				AddOp(OP_EQUAL),
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_GREATERTHAN64",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 2 in LE64
-				AddData([]byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 1 in LE64
-				AddOp(OP_GREATERTHAN64).
-				AddData([]byte{0x01}). // true
-				AddOp(OP_EQUAL),
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_GREATERTHANOREQUAL64",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 2 in LE64
-				AddData([]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 2 in LE64
-				AddOp(OP_GREATERTHANOREQUAL64).
-				AddData([]byte{0x01}). // true
-				AddOp(OP_EQUAL),
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_SCRIPTNUMTOLE64",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x03}). // ScriptNum 3
-				AddOp(OP_SCRIPTNUMTOLE64).
-				AddData([]byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 3 in LE64
-				AddOp(OP_EQUAL),
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_LE64TOSCRIPTNUM",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 3 in LE64
-				AddOp(OP_LE64TOSCRIPTNUM).
-				AddData([]byte{0x03}). // ScriptNum 3
-				AddOp(OP_EQUAL),
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_LE32TOLE64",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x03, 0x00, 0x00, 0x00}). // 3 in LE32
-				AddOp(OP_LE32TOLE64).
-				AddData([]byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 3 in LE64
-				AddOp(OP_EQUAL),
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
 			name: "OP_INSPECTINPUTOUTPOINT",
 			script: txscript.NewScriptBuilder().
 				AddData([]byte{0x00}). // success flag
@@ -1023,7 +617,7 @@ func TestNewOpcodes(t *testing.T) {
 			script: txscript.NewScriptBuilder().
 				AddData([]byte{0x00}).
 				AddOp(OP_INSPECTINPUTVALUE).
-				AddData([]byte{0x00, 0xCA, 0x9A, 0x3B, 0x00, 0x00, 0x00, 0x00}). // 1000000000 in LE64
+				AddData([]byte{0x00, 0xCA, 0x9A, 0x3B}).
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{
@@ -1217,7 +811,7 @@ func TestNewOpcodes(t *testing.T) {
 			script: txscript.NewScriptBuilder().
 				AddData([]byte{0x00}).
 				AddOp(OP_INSPECTOUTPUTVALUE).
-				AddData([]byte{0x00, 0xCA, 0x9A, 0x3B, 0x00, 0x00, 0x00, 0x00}). // 1000000000 in LE64
+				AddData([]byte{0x00, 0xCA, 0x9A, 0x3B}).
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{
