@@ -12,7 +12,6 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
-	"github.com/arkade-os/go-sdk/indexer"
 	"github.com/arkade-os/go-sdk/types"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
@@ -76,19 +75,9 @@ func TestContractIdWithAssetIdentity(t *testing.T) {
 		return encodedCheckpoints
 	}
 
-	assertOutput0Preconfirmed := func(candidateTx *psbt.Packet) {
-		opts := indexer.GetVtxosRequestOption{}
-		err := opts.WithOutpoints([]types.Outpoint{{Txid: candidateTx.UnsignedTx.TxID(), VOut: 0}})
-		require.NoError(t, err)
-
-		vtxos, err := indexerSvc.GetVtxos(ctx, opts)
-		require.NoError(t, err)
-		require.Len(t, vtxos.Vtxos, 1)
-		require.True(t, vtxos.Vtxos[0].Preconfirmed)
-		require.False(t, vtxos.Vtxos[0].Spent)
-	}
-
 	submitWithArkd := func(candidateTx *psbt.Packet, checkpoints []*psbt.Packet) {
+		waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, candidateTx, 0)
+
 		encodedTx, err := candidateTx.B64Encode()
 		require.NoError(t, err)
 
@@ -109,17 +98,19 @@ func TestContractIdWithAssetIdentity(t *testing.T) {
 
 		require.NoError(t, grpcClient.FinalizeTx(ctx, txid, finalCheckpoints))
 
-		assertOutput0Preconfirmed(candidateTx)
+		waitForVtxos()
 	}
 
 	submitWithIntrospector := func(candidateTx *psbt.Packet, checkpoints []*psbt.Packet) {
+		waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, candidateTx, 0)
+
 		encodedTx, err := candidateTx.B64Encode()
 		require.NoError(t, err)
 
 		_, _, err = introspectorClient.SubmitTx(ctx, encodedTx, encodeCheckpoints(checkpoints))
 		require.NoError(t, err)
 
-		assertOutput0Preconfirmed(candidateTx)
+		waitForVtxos()
 	}
 
 	// =========================================================================

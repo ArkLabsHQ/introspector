@@ -19,7 +19,6 @@ import (
 	arksdk "github.com/arkade-os/go-sdk"
 	"github.com/arkade-os/go-sdk/client"
 	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
-	"github.com/arkade-os/go-sdk/indexer"
 	"github.com/arkade-os/go-sdk/types"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
@@ -183,20 +182,13 @@ func TestOffchainTxWithAsset(t *testing.T) {
 		encodedValidCheckpoints = append(encodedValidCheckpoints, signed)
 	}
 
+	waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, validTx, 0)
+
 	// Submit to introspector - should succeed as the asset introspection opcodes will validate correctly
 	_, _, err = introspectorClient.SubmitTx(ctx, signedTx, encodedValidCheckpoints)
 	require.NoError(t, err)
 
-	idxr := setupIndexer(t)
-
-	opts := indexer.GetVtxosRequestOption{}
-	err = opts.WithOutpoints([]types.Outpoint{{Txid: validTx.UnsignedTx.TxID(), VOut: 0}})
-	require.NoError(t, err)
-	vtxos, err := idxr.GetVtxos(ctx, opts)
-	require.NoError(t, err)
-	require.Len(t, vtxos.Vtxos, 1)
-	require.True(t, vtxos.Vtxos[0].Preconfirmed)
-	require.False(t, vtxos.Vtxos[0].Spent)
+	waitForVtxos()
 }
 
 // TestSettlementWithAsset tests the settlement flow with an asset packet in the intent.
@@ -358,19 +350,13 @@ func TestSettlementWithAsset(t *testing.T) {
 		encodedMintCheckpoints = append(encodedMintCheckpoints, signed)
 	}
 
+	waitForMintVtxo := watchForPreconfirmedVtxos(t, indexerSvc, mintTx, 0)
+
 	// Submit mint tx to introspector
 	_, _, err = introspectorClient.SubmitTx(ctx, signedMintTx, encodedMintCheckpoints)
 	require.NoError(t, err)
 
-	opts := indexer.GetVtxosRequestOption{}
-	err = opts.WithOutpoints([]types.Outpoint{{Txid: mintTx.UnsignedTx.TxID(), VOut: 0}})
-	require.NoError(t, err)
-
-	vtxos, err := indexerSvc.GetVtxos(ctx, opts)
-	require.NoError(t, err)
-	require.Len(t, vtxos.Vtxos, 1)
-	require.True(t, vtxos.Vtxos[0].Preconfirmed)
-	require.False(t, vtxos.Vtxos[0].Spent)
+	waitForMintVtxo()
 
 	// =========================================================================
 	// Phase 3: Settle the VTXO with a transfer asset packet
