@@ -21,8 +21,8 @@ const maxBigNumLen = txscript.MaxScriptElementSize
 const int64ByteCap = 8
 
 var (
-	errBigNumDivisionByZero = errors.New("division by zero")
-	errBigNumModuloByZero   = errors.New("modulo by zero")
+	ErrBigNumDivisionByZero = errors.New("division by zero")
+	ErrBigNumModuloByZero   = errors.New("modulo by zero")
 )
 
 // BigNum is the unified numeric type used by the arkade VM. It is a tagged
@@ -102,6 +102,15 @@ func (n BigNum) Sign() int {
 	return cmp.Compare(n.small, int64(0))
 }
 
+// BigInt returns n as a fresh *big.Int. The returned value is independent of
+// n's internal state; callers may mutate it freely.
+func (n BigNum) BigInt() *big.Int {
+	if n.useBig {
+		return new(big.Int).Set(n.big)
+	}
+	return big.NewInt(n.small)
+}
+
 // Cmp reports -1/0/+1 comparing n and m.
 func (n BigNum) Cmp(m BigNum) int {
 	if n.useBig || m.useBig {
@@ -178,7 +187,7 @@ func (n BigNum) Mul(m BigNum) BigNum {
 // Div returns truncated n / m. Promotes only on int64 min / -1 overflow.
 func (n BigNum) Div(m BigNum) (BigNum, error) {
 	if m.IsZero() {
-		return BigNum{}, errBigNumDivisionByZero
+		return BigNum{}, ErrBigNumDivisionByZero
 	}
 	if !n.useBig && !m.useBig {
 		if n.small != math.MinInt64 || m.small != -1 {
@@ -191,7 +200,7 @@ func (n BigNum) Div(m BigNum) (BigNum, error) {
 // Mod returns truncated n % m (sign follows dividend).
 func (n BigNum) Mod(m BigNum) (BigNum, error) {
 	if m.IsZero() {
-		return BigNum{}, errBigNumModuloByZero
+		return BigNum{}, ErrBigNumModuloByZero
 	}
 	if !n.useBig && !m.useBig {
 		if n.small != math.MinInt64 || m.small != -1 {
@@ -405,13 +414,4 @@ func encodeBig(v *big.Int) []byte {
 		le[len(le)-1] |= 0x80
 	}
 	return le
-}
-
-// BigInt returns n as a fresh *big.Int. The returned value is independent of
-// n's internal state; callers may mutate it freely.
-func (n BigNum) BigInt() *big.Int {
-	if n.useBig {
-		return new(big.Int).Set(n.big)
-	}
-	return big.NewInt(n.small)
 }
