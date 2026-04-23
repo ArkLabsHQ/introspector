@@ -3,7 +3,6 @@ package application
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -13,12 +12,9 @@ import (
 
 	"github.com/ArkLabsHQ/introspector/pkg/arkade"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
-	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -257,149 +253,24 @@ func (a *finalizerAccumulator) isFinalizer() (bool, error) {
 	return referenceIsLast, nil
 }
 
-// variation of: https://github.com/arkade-os/arkd/blob/v0.9.2/internal/infrastructure/tx-builder/covenantless/builder.go#L63-L221
-// TODO: refactor into a simple loop once we can use the verify function from ark-lib: https://github.com/arkade-os/arkd/issues/1013
 func verifyNonArkdCheckpointSignatures(checkpoints []*psbt.Packet, arkdPubKey *btcec.PublicKey) error {
-	arkdXOnly := schnorr.SerializePubKey(arkdPubKey)
 	for checkpointIndex, ptx := range checkpoints {
 		if len(ptx.Inputs) == 0 || len(ptx.UnsignedTx.TxIn) == 0 {
 			return fmt.Errorf("checkpoint %d: missing input 0", checkpointIndex)
 		}
-		input := ptx.Inputs[0]
-		if len(input.TaprootLeafScript) == 0 || input.TaprootLeafScript[0] == nil {
+		// script.VerifyTapscriptSigs silently skips inputs that do not carry a
+		// taproot leaf script, so we must assert its presence here.
+		if len(ptx.Inputs[0].TaprootLeafScript) == 0 {
 			return fmt.Errorf("checkpoint %d input 0: missing taproot leaf script", checkpointIndex)
-		}
-		if input.WitnessUtxo == nil {
-			return fmt.Errorf("checkpoint %d input 0: missing prevout", checkpointIndex)
 		}
 		prevoutFetcher, err := computePrevoutFetcher(ptx)
 		if err != nil {
-			return fmt.Errorf("checkpoint %d input 0: %w", checkpointIndex, err)
+			return fmt.Errorf("checkpoint %d: %w", checkpointIndex, err)
 		}
-		txSigHashes := txscript.NewTxSigHashes(ptx.UnsignedTx, prevoutFetcher)
-		tapLeaf := input.TaprootLeafScript[0]
-		closure, err := script.DecodeClosure(tapLeaf.Script)
-		if err != nil {
-			return fmt.Errorf("checkpoint %d input 0: %w", checkpointIndex, err)
-		}
-		required := make(map[string]bool)
-		addKeys := func(pubKeys []*btcec.PublicKey) {
-			for _, key := range pubKeys {
-				xonly := schnorr.SerializePubKey(key)
-				if bytes.Equal(xonly, arkdXOnly) {
-					continue
-				}
-				required[hex.EncodeToString(xonly)] = false
-			}
-		}
-		switch c := closure.(type) {
-		case *script.MultisigClosure:
-			addKeys(c.PubKeys)
-		case *script.CSVMultisigClosure:
-			addKeys(c.PubKeys)
-		case *script.CLTVMultisigClosure:
-			addKeys(c.PubKeys)
-		case *script.ConditionMultisigClosure:
-			witnessFields, err := txutils.GetArkPsbtFields(ptx, 0, txutils.ConditionWitnessField)
-			if err != nil {
-				return fmt.Errorf("checkpoint %d input 0: %w", checkpointIndex, err)
-			}
-			witness := make(wire.TxWitness, 0)
-			if len(witnessFields) > 0 {
-				witness = witnessFields[0]
-			}
-			result, err := script.EvaluateScriptToBool(c.Condition, witness)
-			if err != nil {
-				return fmt.Errorf("checkpoint %d input 0: %w", checkpointIndex, err)
-			}
-			if !result {
-				return fmt.Errorf("checkpoint %d input 0: condition not met", checkpointIndex)
-			}
-			addKeys(c.PubKeys)
-		case *script.ConditionCSVMultisigClosure:
-			witnessFields, err := txutils.GetArkPsbtFields(ptx, 0, txutils.ConditionWitnessField)
-			if err != nil {
-				return fmt.Errorf("checkpoint %d input 0: %w", checkpointIndex, err)
-			}
-			witness := make(wire.TxWitness, 0)
-			if len(witnessFields) > 0 {
-				witness = witnessFields[0]
-			}
-			result, err := script.EvaluateScriptToBool(c.Condition, witness)
-			if err != nil {
-				return fmt.Errorf("checkpoint %d input 0: %w", checkpointIndex, err)
-			}
-			if !result {
-				return fmt.Errorf("checkpoint %d input 0: condition not met", checkpointIndex)
-			}
-			addKeys(c.PubKeys)
-		default:
-			return fmt.Errorf("checkpoint %d input 0: unsupported closure type %T", checkpointIndex, closure)
-		}
-		if len(tapLeaf.ControlBlock) == 0 {
-			return fmt.Errorf("checkpoint %d input 0: missing control block", checkpointIndex)
-		}
-		controlBlock, err := txscript.ParseControlBlock(tapLeaf.ControlBlock)
-		if err != nil {
-			return fmt.Errorf("checkpoint %d input 0: %w", checkpointIndex, err)
-		}
-		rootHash := controlBlock.RootHash(tapLeaf.Script)
-		tapKey := txscript.ComputeTaprootOutputKey(script.UnspendableKey(), rootHash[:])
-		expectedPkScript, err := script.P2TRScript(tapKey)
-		if err != nil {
-			return fmt.Errorf("checkpoint %d input 0: %w", checkpointIndex, err)
-		}
-		if !bytes.Equal(expectedPkScript, input.WitnessUtxo.PkScript) {
-			return fmt.Errorf("checkpoint %d input 0: invalid control block", checkpointIndex)
-		}
-		computedKeyIsOdd := tapKey.SerializeCompressed()[0] == 0x03
-		if controlBlock.OutputKeyYIsOdd != computedKeyIsOdd {
-			return fmt.Errorf("checkpoint %d input 0: invalid control block parity", checkpointIndex)
-		}
-		for _, tapScriptSig := range input.TaprootScriptSpendSig {
-			sig, err := schnorr.ParseSignature(tapScriptSig.Signature)
-			if err != nil {
-				return fmt.Errorf("checkpoint %d input 0: %w", checkpointIndex, err)
-			}
-			pubKey, err := schnorr.ParsePubKey(tapScriptSig.XOnlyPubKey)
-			if err != nil {
-				return fmt.Errorf("checkpoint %d input 0: %w", checkpointIndex, err)
-			}
-			preimage, err := txscript.CalcTapscriptSignaturehash(
-				txSigHashes,
-				tapScriptSig.SigHash,
-				ptx.UnsignedTx,
-				0,
-				prevoutFetcher,
-				txscript.NewBaseTapLeaf(tapLeaf.Script),
-			)
-			if err != nil {
-				return fmt.Errorf("checkpoint %d input 0: %w", checkpointIndex, err)
-			}
-			if !sig.Verify(preimage, pubKey) {
-				return fmt.Errorf(
-					"checkpoint %d input 0: invalid signature for pubkey %x",
-					checkpointIndex,
-					pubKey.SerializeCompressed(),
-				)
-			}
-			key := hex.EncodeToString(schnorr.SerializePubKey(pubKey))
-			if _, ok := required[key]; ok {
-				required[key] = true
-			}
-		}
-		missing := 0
-		for _, present := range required {
-			if !present {
-				missing++
-			}
-		}
-		if missing > 0 {
-			return fmt.Errorf(
-				"checkpoint %d input 0: missing %d required non-arkd signatures",
-				checkpointIndex,
-				missing,
-			)
+		if _, err := script.VerifyTapscriptSigs(
+			ptx, prevoutFetcher, script.WithSkipPublicKeys(arkdPubKey),
+		); err != nil {
+			return fmt.Errorf("checkpoint %d: %w", checkpointIndex, err)
 		}
 	}
 	return nil
