@@ -961,7 +961,7 @@ func opcodeCheckLockTimeVerify(op *opcode, data []byte, vm *Engine) error {
 	}
 	// Locktime must fit in uint32. Values on the big path are ≥ 2^63,
 	// which cannot be a valid locktime.
-	if n.useBig || n.small > int64(math.MaxUint32) {
+	if n.useBig || n.small > math.MaxUint32 {
 		return scriptError(txscript.ErrUnsatisfiedLockTime,
 			"locktime value exceeds uint32")
 	}
@@ -988,7 +988,7 @@ func opcodeCheckSequenceVerify(op *opcode, data []byte, vm *Engine) error {
 		return scriptError(txscript.ErrNegativeLockTime,
 			fmt.Sprintf("negative sequence: %s", n.asBig().Text(10)))
 	}
-	if n.useBig || n.small > int64(math.MaxUint32) {
+	if n.useBig || n.small > math.MaxUint32 {
 		return scriptError(txscript.ErrUnsatisfiedLockTime,
 			"sequence value exceeds uint32")
 	}
@@ -2356,7 +2356,11 @@ func opcode2Div(op *opcode, data []byte, vm *Engine) error {
 	if err != nil {
 		return err
 	}
-	return vm.dstack.PushBigNum(n.Div(BigNumFromInt64(2)))
+	result, err := n.Div(BigNumFromInt64(2))
+	if err != nil {
+		return err
+	}
+	return vm.dstack.PushBigNum(result)
 }
 
 // opcodeMul pops two BigNums and pushes their product.
@@ -2385,10 +2389,11 @@ func opcodeDiv(op *opcode, data []byte, vm *Engine) error {
 	if err != nil {
 		return err
 	}
-	if b.IsZero() {
-		return scriptError(txscript.ErrInvalidStackOperation, "division by zero")
+	result, err := a.Div(b)
+	if err != nil {
+		return err
 	}
-	return vm.dstack.PushBigNum(a.Div(b))
+	return vm.dstack.PushBigNum(result)
 }
 
 // opcodeMod pops two BigNums and pushes the truncated remainder (sign of
@@ -2403,10 +2408,11 @@ func opcodeMod(op *opcode, data []byte, vm *Engine) error {
 	if err != nil {
 		return err
 	}
-	if b.IsZero() {
-		return scriptError(txscript.ErrInvalidStackOperation, "modulo by zero")
+	result, err := a.Mod(b)
+	if err != nil {
+		return err
 	}
-	return vm.dstack.PushBigNum(a.Mod(b))
+	return vm.dstack.PushBigNum(result)
 }
 
 // opcodeLshift performs a left shift on BigNum operands. The shift count

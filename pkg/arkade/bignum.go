@@ -1,7 +1,9 @@
 package arkade
 
 import (
+	"errors"
 	"fmt"
+	"math"
 	"math/big"
 
 	"github.com/btcsuite/btcd/txscript"
@@ -14,6 +16,11 @@ const maxBigNumLen = txscript.MaxScriptElementSize
 // int64ByteCap is the largest byte length whose minimal sign-magnitude LE
 // encoding is guaranteed to fit in int64. 9+ bytes require the big.Int path.
 const int64ByteCap = 8
+
+var (
+	errBigNumDivisionByZero = errors.New("division by zero")
+	errBigNumModuloByZero   = errors.New("modulo by zero")
+)
 
 // BigNum is the unified numeric type used by the arkade VM. It is a tagged
 // union: when useBig is false the value lives in small (fast path). When
@@ -34,8 +41,7 @@ func BigNumFromInt64(v int64) BigNum {
 // BigNumFromUint64 constructs a BigNum from an unsigned 64-bit value. Values
 // up to math.MaxInt64 use the int64 fast path; larger values promote to big.
 func BigNumFromUint64(v uint64) BigNum {
-	const int64Max = uint64(1<<63 - 1)
-	if v <= int64Max {
+	if v <= math.MaxInt64 {
 		return BigNum{small: int64(v)}
 	}
 	return BigNum{big: new(big.Int).SetUint64(v), useBig: true}
@@ -69,8 +75,12 @@ func MakeBigNum(v []byte, requireMinimal bool, maxLen int) (BigNum, error) {
 }
 
 // decodeInt64 parses up to 8 bytes of sign-magnitude LE into int64.
-// Pre: 1 ≤ len(v) ≤ 8.
+// Pre: 0 ≤ len(v) ≤ 8.
 func decodeInt64(v []byte) BigNum {
+	if len(v) == 0 {
+		return BigNum{}
+	}
+
 	var result int64
 	for i, b := range v {
 		result |= int64(b) << uint(8*i)
@@ -125,13 +135,17 @@ func encodeInt64(v int64) []byte {
 		return nil
 	}
 	neg := v < 0
+	var mag uint64
 	if neg {
-		v = -v
+		// Avoid overflowing when v == math.MinInt64.
+		mag = uint64(-(v + 1)) + 1
+	} else {
+		mag = uint64(v)
 	}
 	result := make([]byte, 0, 9)
-	for v > 0 {
-		result = append(result, byte(v&0xff))
-		v >>= 8
+	for mag > 0 {
+		result = append(result, byte(mag&0xff))
+		mag >>= 8
 	}
 	if result[len(result)-1]&0x80 != 0 {
 		extra := byte(0x00)
@@ -216,7 +230,21 @@ func (n BigNum) asBig() *big.Int {
 func (n BigNum) Add(m BigNum) BigNum {
 	if !n.useBig && !m.useBig {
 		r := n.small + m.small
-		// Overflow when sign of both operands matches and differs from result.
+		// Detect signed overflow for n.small + m.small.
+		//
+		// In two's complement, overflow occurs iff both operands have the
+		// same sign and the result has the opposite sign. Each XOR below has
+		// its sign bit set when r differs in sign from that operand. If both
+		// sign bits are set, the AND is negative, so the sum overflowed.
+		//
+		// Example:
+		//   n = 01111111...11111111 (MaxInt64)
+		//   m = 00000000...00000001
+		//   r = 10000000...00000000 (wrapped MinInt64)
+		//
+		//   r ^ n = 11111111...11111111
+		//   r ^ m = 10000000...00000001
+		//   AND   = 10000000...00000001 (negative => overflow)
 		if (r^n.small)&(r^m.small) >= 0 {
 			return BigNum{small: r}
 		}
@@ -228,6 +256,20 @@ func (n BigNum) Add(m BigNum) BigNum {
 func (n BigNum) Sub(m BigNum) BigNum {
 	if !n.useBig && !m.useBig {
 		r := n.small - m.small
+		// Detect signed overflow for n.small - m.small.
+		//
+		// Subtraction overflows iff the operands have opposite signs and the
+		// result has the opposite sign from n.small. The first XOR checks the
+		// operand signs; the second checks whether r changed sign from n.
+		//
+		// Example:
+		//   n = 10000000...00000000 (MinInt64)
+		//   m = 00000000...00000001
+		//   r = 01111111...11111111 (wrapped MaxInt64)
+		//
+		//   n ^ m = 10000000...00000001
+		//   n ^ r = 11111111...11111111
+		//   AND   = 10000000...00000001 (negative => overflow)
 		if (n.small^m.small)&(n.small^r) >= 0 {
 			return BigNum{small: r}
 		}
@@ -249,32 +291,36 @@ func (n BigNum) Mul(m BigNum) BigNum {
 	return BigNum{big: new(big.Int).Mul(n.asBig(), m.asBig()), useBig: true}
 }
 
-// Div returns truncated n / m. Caller MUST verify m is non-zero first.
-// Promotes only on int64 min / -1 overflow.
-func (n BigNum) Div(m BigNum) BigNum {
+// Div returns truncated n / m. Promotes only on int64 min / -1 overflow.
+func (n BigNum) Div(m BigNum) (BigNum, error) {
+	if m.IsZero() {
+		return BigNum{}, errBigNumDivisionByZero
+	}
 	if !n.useBig && !m.useBig {
-		if !(n.small == -9223372036854775808 && m.small == -1) {
-			return BigNum{small: n.small / m.small}
+		if n.small != math.MinInt64 || m.small != -1 {
+			return BigNum{small: n.small / m.small}, nil
 		}
 	}
-	return BigNum{big: new(big.Int).Quo(n.asBig(), m.asBig()), useBig: true}
+	return BigNum{big: new(big.Int).Quo(n.asBig(), m.asBig()), useBig: true}, nil
 }
 
-// Mod returns truncated n % m (sign follows dividend). Caller MUST verify
-// m is non-zero first.
-func (n BigNum) Mod(m BigNum) BigNum {
+// Mod returns truncated n % m (sign follows dividend).
+func (n BigNum) Mod(m BigNum) (BigNum, error) {
+	if m.IsZero() {
+		return BigNum{}, errBigNumModuloByZero
+	}
 	if !n.useBig && !m.useBig {
-		if !(n.small == -9223372036854775808 && m.small == -1) {
-			return BigNum{small: n.small % m.small}
+		if n.small != math.MinInt64 || m.small != -1 {
+			return BigNum{small: n.small % m.small}, nil
 		}
 	}
-	return BigNum{big: new(big.Int).Rem(n.asBig(), m.asBig()), useBig: true}
+	return BigNum{big: new(big.Int).Rem(n.asBig(), m.asBig()), useBig: true}, nil
 }
 
 // Negate returns -n. Promotes on int64 min.
 func (n BigNum) Negate() BigNum {
 	if !n.useBig {
-		if n.small != -9223372036854775808 {
+		if n.small != math.MinInt64 {
 			return BigNum{small: -n.small}
 		}
 	}
@@ -287,7 +333,7 @@ func (n BigNum) Abs() BigNum {
 		if n.small >= 0 {
 			return n
 		}
-		if n.small != -9223372036854775808 {
+		if n.small != math.MinInt64 {
 			return BigNum{small: -n.small}
 		}
 	}

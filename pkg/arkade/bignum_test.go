@@ -2,6 +2,9 @@ package arkade
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
+	"math"
 	"math/big"
 	"testing"
 
@@ -31,8 +34,8 @@ func TestMakeBigNumDecoding(t *testing.T) {
 		{"neg 128", []byte{0x80, 0x80}, -128, false, "", 0},
 		// int64 boundary (max positive and min negative that fit in 8
 		// minimally-encoded bytes)
-		{"int64 max 8 bytes", []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f}, 9223372036854775807, false, "", 0},
-		{"int64 min plus one 8 bytes", []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}, -9223372036854775807, false, "", 0},
+		{"int64 max 8 bytes", []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f}, math.MaxInt64, false, "", 0},
+		{"int64 min plus one 8 bytes", []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}, math.MinInt64 + 1, false, "", 0},
 		// 9 bytes → big path. 2^63 has magnitude requiring 9 bytes
 		// (sign-extension byte).
 		{"2^63 as 9 bytes", nil, 0, true, "8000000000000000", 1},
@@ -140,8 +143,8 @@ func TestBigNumBytesEncoding(t *testing.T) {
 		{"neg 128", BigNumFromInt64(-128), []byte{0x80, 0x80}},
 		{"255", BigNumFromInt64(255), []byte{0xff, 0x00}},
 		{"neg 255", BigNumFromInt64(-255), []byte{0xff, 0x80}},
-		{"int64 max", BigNumFromInt64(9223372036854775807), []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f}},
-		{"int64 min plus one", BigNumFromInt64(-9223372036854775807), []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}},
+		{"int64 max", BigNumFromInt64(math.MaxInt64), []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f}},
+		{"int64 min plus one", BigNumFromInt64(math.MinInt64 + 1), []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -156,11 +159,87 @@ func TestBigNumBytesEncoding(t *testing.T) {
 	}
 }
 
+func TestDecodeInt64AcceptsEmptyZero(t *testing.T) {
+	t.Parallel()
+
+	got := decodeInt64(encodeInt64(0))
+	if got.useBig || got.small != 0 {
+		t.Fatalf("decodeInt64(encodeInt64(0)) = %+v, want zero on int64 path", got)
+	}
+}
+
+func TestInt64EncodingRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	tests := []int64{
+		math.MinInt64,
+		math.MinInt64 + 1,
+		-1,
+		0,
+		1,
+		math.MaxInt64,
+	}
+	for _, want := range tests {
+		t.Run(fmt.Sprintf("%d", want), func(t *testing.T) {
+			got, err := MakeBigNum(encodeInt64(want), true, testMaxBigNumLen)
+			if err != nil {
+				t.Fatalf("MakeBigNum: %v", err)
+			}
+			if got.asBig().Cmp(big.NewInt(want)) != 0 {
+				t.Fatalf("roundtrip = %s, want %d", got.asBig(), want)
+			}
+		})
+	}
+}
+
+func TestBigIntEncodingRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	maxInt64PlusOne := new(big.Int).SetUint64(math.MaxInt64 + 1)
+	minInt64MinusOne := new(big.Int).Neg(new(big.Int).SetUint64(math.MaxInt64 + 2))
+	maxUint64PlusOne := new(big.Int).Add(new(big.Int).SetUint64(math.MaxUint64), big.NewInt(1))
+
+	max520ByteMagnitude := new(big.Int).Lsh(big.NewInt(1), uint(testMaxBigNumLen*8-2))
+	negMax520ByteMagnitude := new(big.Int).Neg(new(big.Int).Set(max520ByteMagnitude))
+
+	tests := []struct {
+		name string
+		want *big.Int
+	}{
+		{"zero", big.NewInt(0)},
+		{"max int64", big.NewInt(math.MaxInt64)},
+		{"max int64 plus one", maxInt64PlusOne},
+		{"min int64", big.NewInt(math.MinInt64)},
+		{"min int64 minus one", minInt64MinusOne},
+		{"max uint64", new(big.Int).SetUint64(math.MaxUint64)},
+		{"max uint64 plus one", maxUint64PlusOne},
+		{"max 520-byte positive", max520ByteMagnitude},
+		{"max 520-byte negative", negMax520ByteMagnitude},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			src := BigNum{big: new(big.Int).Set(tc.want), useBig: true}
+			encoded, err := src.Bytes()
+			if err != nil {
+				t.Fatalf("Bytes: %v", err)
+			}
+			got, err := MakeBigNum(encoded, true, testMaxBigNumLen)
+			if err != nil {
+				t.Fatalf("MakeBigNum: %v", err)
+			}
+			if got.asBig().Cmp(tc.want) != 0 {
+				t.Fatalf("roundtrip = %s, want %s", got.asBig(), tc.want)
+			}
+		})
+	}
+}
+
 func TestBigNumBytesBigPath(t *testing.T) {
 	t.Parallel()
 	// 2^63 as big.Int → minimal sign-magnitude LE is 9 bytes: magnitude plus
 	// 0x00 sign ext.
-	n := BigNum{big: new(big.Int).SetUint64(1 << 63), useBig: true}
+	n := BigNum{big: new(big.Int).SetUint64(math.MaxInt64 + 1), useBig: true}
 	got, err := n.Bytes()
 	if err != nil {
 		t.Fatalf("Bytes: %v", err)
@@ -170,7 +249,7 @@ func TestBigNumBytesBigPath(t *testing.T) {
 		t.Fatalf("Bytes() = %x, want %x", got, want)
 	}
 	// -(2^63)
-	neg := BigNum{big: new(big.Int).Neg(new(big.Int).SetUint64(1 << 63)), useBig: true}
+	neg := BigNum{big: new(big.Int).Neg(new(big.Int).SetUint64(math.MaxInt64 + 1)), useBig: true}
 	got, err = neg.Bytes()
 	if err != nil {
 		t.Fatalf("Bytes: %v", err)
@@ -203,12 +282,29 @@ func TestBigNumFromUint64(t *testing.T) {
 	if n.small != 12345 {
 		t.Fatalf("small = %d, want 12345", n.small)
 	}
+	// Value at int64 max still uses the int64 path.
+	n = BigNumFromUint64(math.MaxInt64)
+	if n.useBig {
+		t.Fatalf("max int64 should be on int64 path")
+	}
+	if n.small != math.MaxInt64 {
+		t.Fatalf("small = %d, want %d", n.small, math.MaxInt64)
+	}
+	// Value just above int64 max must use big path.
+	n = BigNumFromUint64(math.MaxInt64 + 1)
+	if !n.useBig {
+		t.Fatalf("max int64 plus one must use big path")
+	}
+	want := new(big.Int).SetUint64(math.MaxInt64 + 1)
+	if n.big.Cmp(want) != 0 {
+		t.Fatalf("big = %s, want %s", n.big, want)
+	}
 	// Value at uint64 max (> int64 max) must use big path.
-	n = BigNumFromUint64(^uint64(0))
+	n = BigNumFromUint64(math.MaxUint64)
 	if !n.useBig {
 		t.Fatalf("max uint64 must use big path")
 	}
-	want := new(big.Int).SetUint64(^uint64(0))
+	want = new(big.Int).SetUint64(math.MaxUint64)
 	if n.big.Cmp(want) != 0 {
 		t.Fatalf("big = %s, want %s", n.big, want)
 	}
@@ -226,13 +322,13 @@ func TestBigNumAddFastPath(t *testing.T) {
 
 func TestBigNumAddOverflowPromotes(t *testing.T) {
 	t.Parallel()
-	a := BigNumFromInt64(9223372036854775807) // int64 max
+	a := BigNumFromInt64(math.MaxInt64)
 	b := BigNumFromInt64(1)
 	got := a.Add(b)
 	if !got.useBig {
 		t.Fatalf("expected promotion to big, got %+v", got)
 	}
-	want := new(big.Int).Add(big.NewInt(9223372036854775807), big.NewInt(1))
+	want := new(big.Int).Add(big.NewInt(math.MaxInt64), big.NewInt(1))
 	if got.big.Cmp(want) != 0 {
 		t.Fatalf("got %s, want %s", got.big, want)
 	}
@@ -240,7 +336,7 @@ func TestBigNumAddOverflowPromotes(t *testing.T) {
 
 func TestBigNumSubOverflowPromotes(t *testing.T) {
 	t.Parallel()
-	a := BigNumFromInt64(-9223372036854775808) // int64 min
+	a := BigNumFromInt64(math.MinInt64)
 	b := BigNumFromInt64(1)
 	got := a.Sub(b)
 	if !got.useBig {
@@ -268,27 +364,53 @@ func TestBigNumMulFastPathAndOverflow(t *testing.T) {
 func TestBigNumDivAndModSignSemantics(t *testing.T) {
 	t.Parallel()
 	// Truncated division: sign of remainder follows dividend.
-	q := BigNumFromInt64(-7).Div(BigNumFromInt64(2))
-	r := BigNumFromInt64(-7).Mod(BigNumFromInt64(2))
+	q, err := BigNumFromInt64(-7).Div(BigNumFromInt64(2))
+	if err != nil {
+		t.Fatalf("Div: %v", err)
+	}
+	r, err := BigNumFromInt64(-7).Mod(BigNumFromInt64(2))
+	if err != nil {
+		t.Fatalf("Mod: %v", err)
+	}
 	if q.small != -3 || r.small != -1 {
 		t.Fatalf("got q=%d r=%d, want q=-3 r=-1", q.small, r.small)
 	}
 	// 7 / -2 = -3 (truncated), 7 % -2 = 1.
-	q = BigNumFromInt64(7).Div(BigNumFromInt64(-2))
-	r = BigNumFromInt64(7).Mod(BigNumFromInt64(-2))
+	q, err = BigNumFromInt64(7).Div(BigNumFromInt64(-2))
+	if err != nil {
+		t.Fatalf("Div: %v", err)
+	}
+	r, err = BigNumFromInt64(7).Mod(BigNumFromInt64(-2))
+	if err != nil {
+		t.Fatalf("Mod: %v", err)
+	}
 	if q.small != -3 || r.small != 1 {
 		t.Fatalf("got q=%d r=%d, want q=-3 r=1", q.small, r.small)
 	}
 }
 
+func TestBigNumDivAndModByZero(t *testing.T) {
+	t.Parallel()
+
+	_, err := BigNumFromInt64(7).Div(BigNumFromInt64(0))
+	if !errors.Is(err, errBigNumDivisionByZero) {
+		t.Fatalf("Div by zero: want errBigNumDivisionByZero, got %v", err)
+	}
+
+	_, err = BigNumFromInt64(7).Mod(BigNumFromInt64(0))
+	if !errors.Is(err, errBigNumModuloByZero) {
+		t.Fatalf("Mod by zero: want errBigNumModuloByZero, got %v", err)
+	}
+}
+
 func TestBigNumNegateOverflowPromotes(t *testing.T) {
 	t.Parallel()
-	a := BigNumFromInt64(-9223372036854775808) // int64 min; -min overflows
+	a := BigNumFromInt64(math.MinInt64)
 	got := a.Negate()
 	if !got.useBig {
 		t.Fatalf("expected promotion, got %+v", got)
 	}
-	want := new(big.Int).Neg(big.NewInt(-9223372036854775808))
+	want := new(big.Int).Neg(big.NewInt(math.MinInt64))
 	if got.big.Cmp(want) != 0 {
 		t.Fatalf("got %s, want %s", got.big, want)
 	}
@@ -300,7 +422,7 @@ func TestBigNumAbs(t *testing.T) {
 		t.Fatalf("abs(-5) wrong")
 	}
 	// abs of int64 min must promote.
-	got := BigNumFromInt64(-9223372036854775808).Abs()
+	got := BigNumFromInt64(math.MinInt64).Abs()
 	if !got.useBig {
 		t.Fatalf("abs(int64 min) must promote")
 	}

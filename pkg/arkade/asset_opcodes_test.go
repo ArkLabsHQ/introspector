@@ -2,6 +2,8 @@ package arkade
 
 import (
 	"fmt"
+	"math"
+	"math/big"
 	"testing"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
@@ -97,6 +99,32 @@ func TestAssetOpcodes(t *testing.T) {
 			},
 			Outputs: []asset.AssetOutput{
 				{Vout: 0, Amount: 3_000_000_000},
+			},
+		},
+	}
+
+	maxUint64AmountBytes, err := BigNumFromUint64(math.MaxUint64).Bytes()
+	if err != nil {
+		t.Fatalf("max uint64 amount bytes: %v", err)
+	}
+	maxUint64PlusOneBytes, err := (BigNum{
+		big:    new(big.Int).Add(new(big.Int).SetUint64(math.MaxUint64), big.NewInt(1)),
+		useBig: true,
+	}).Bytes()
+	if err != nil {
+		t.Fatalf("max uint64 plus one amount bytes: %v", err)
+	}
+
+	// Packet covering the uint64 amount boundary and a sum above uint64.
+	boundaryAmountPacket := asset.Packet{
+		{
+			AssetId: &asset.AssetId{Txid: assetTxid, Index: 3},
+			Inputs: []asset.AssetInput{
+				{Type: asset.AssetInputTypeLocal, Vin: 0, Amount: math.MaxUint64},
+				{Type: asset.AssetInputTypeLocal, Vin: 1, Amount: 1},
+			},
+			Outputs: []asset.AssetOutput{
+				{Vout: 0, Amount: math.MaxUint64},
 			},
 		},
 	}
@@ -793,6 +821,22 @@ func TestAssetOpcodes(t *testing.T) {
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{valid: true, assetPacket: largeAmountPacket},
+			},
+		},
+		{
+			name: "boundary_amount_sum",
+			// MaxUint64 is a legal individual amount, and BigNum sums may
+			// exceed uint64 when multiple amounts are aggregated.
+			script: txscript.NewScriptBuilder().
+				AddInt64(0). // group index
+				AddInt64(2). // source=2 (both)
+				AddOp(OP_INSPECTASSETGROUPSUM).
+				AddData(maxUint64AmountBytes). // output sum
+				AddOp(OP_EQUALVERIFY).
+				AddData(maxUint64PlusOneBytes). // input sum: MaxUint64 + 1
+				AddOp(OP_EQUAL),
+			cases: []testCase{
+				{valid: true, assetPacket: boundaryAmountPacket},
 			},
 		},
 		{

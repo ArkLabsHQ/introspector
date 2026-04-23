@@ -302,40 +302,27 @@ func opcodeInspectAssetGroupSum(op *opcode, data []byte, vm *Engine) error {
 
 	switch source {
 	case 0:
-		sum := safeSumInputs(group.Inputs)
-		if !sum.IsUint64() {
-			return scriptError(txscript.ErrInvalidStackOperation, "amount overflow")
-		}
-		if err := vm.dstack.PushBigNum(BigNumFromUint64(sum.Uint64())); err != nil {
-			return err
-		}
+		return pushBigIntAsBigNum(vm, safeSumInputs(group.Inputs))
 	case 1:
-		sum := safeSumOutputs(group.Outputs)
-		if !sum.IsUint64() {
-			return scriptError(txscript.ErrInvalidStackOperation, "amount overflow")
-		}
-		if err := vm.dstack.PushBigNum(BigNumFromUint64(sum.Uint64())); err != nil {
-			return err
-		}
+		return pushBigIntAsBigNum(vm, safeSumOutputs(group.Outputs))
 	case 2:
-		inSum := safeSumInputs(group.Inputs)
-		if !inSum.IsUint64() {
-			return scriptError(txscript.ErrInvalidStackOperation, "amount overflow")
-		}
-		if err := vm.dstack.PushBigNum(BigNumFromUint64(inSum.Uint64())); err != nil {
+		if err := pushBigIntAsBigNum(vm, safeSumInputs(group.Inputs)); err != nil {
 			return err
 		}
-		outSum := safeSumOutputs(group.Outputs)
-		if !outSum.IsUint64() {
-			return scriptError(txscript.ErrInvalidStackOperation, "amount overflow")
-		}
-		if err := vm.dstack.PushBigNum(BigNumFromUint64(outSum.Uint64())); err != nil {
+		if err := pushBigIntAsBigNum(vm, safeSumOutputs(group.Outputs)); err != nil {
 			return err
 		}
 	default:
 		return scriptError(txscript.ErrInvalidStackOperation, "invalid source value")
 	}
 	return nil
+}
+
+func pushBigIntAsBigNum(vm *Engine, n *big.Int) error {
+	return vm.dstack.PushBigNum(BigNum{
+		big:    new(big.Int).Set(n),
+		useBig: true,
+	})
 }
 
 // opcodeInspectOutAssetCount pops an output index o and pushes the number of asset entries at that output.
@@ -681,4 +668,3 @@ func safeSumOutputs(outputs []asset.AssetOutput) *big.Int {
 	}
 	return sum
 }
-
