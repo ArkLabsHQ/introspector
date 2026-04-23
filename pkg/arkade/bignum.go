@@ -129,6 +129,39 @@ func (n BigNum) Bytes() ([]byte, error) {
 	return out, nil
 }
 
+// FixedBytes returns n encoded as exactly size bytes in sign-magnitude
+// little-endian form. It pads with zero bytes between the magnitude and sign
+// bit, and fails if the minimally encoded value cannot fit in size bytes.
+func (n BigNum) FixedBytes(size int) ([]byte, error) {
+	if size < 0 {
+		return nil, fmt.Errorf("negative fixed size %d", size)
+	}
+
+	encoded, err := n.Bytes()
+	if err != nil {
+		return nil, err
+	}
+	if len(encoded) > size {
+		return nil, fmt.Errorf("number needs %d bytes, size=%d", len(encoded), size)
+	}
+
+	out := make([]byte, size)
+	if len(encoded) == 0 {
+		return out, nil
+	}
+
+	sign := encoded[len(encoded)-1] & 0x80
+	magnitude := append([]byte(nil), encoded...)
+	magnitude[len(magnitude)-1] &= 0x7f
+	if magnitude[len(magnitude)-1] == 0 {
+		magnitude = magnitude[:len(magnitude)-1]
+	}
+
+	copy(out, magnitude)
+	out[len(out)-1] |= sign
+	return out, nil
+}
+
 // encodeInt64 reproduces the legacy scriptNum.Bytes() algorithm for int64.
 func encodeInt64(v int64) []byte {
 	if v == 0 {

@@ -159,6 +159,47 @@ func TestBigNumBytesEncoding(t *testing.T) {
 	}
 }
 
+func TestBigNumFixedBytes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		src        BigNum
+		size       int
+		want       []byte
+		shouldFail bool
+	}{
+		{"5 as 4 bytes", BigNumFromInt64(5), 4, []byte{0x05, 0x00, 0x00, 0x00}, false},
+		{"-5 as 4 bytes", BigNumFromInt64(-5), 4, []byte{0x05, 0x00, 0x00, 0x80}, false},
+		{"-5 as 1 byte", BigNumFromInt64(-5), 1, []byte{0x85}, false},
+		{"0 as 4 bytes", BigNumFromInt64(0), 4, []byte{0x00, 0x00, 0x00, 0x00}, false},
+		{"0 as 0 bytes", BigNumFromInt64(0), 0, []byte{}, false},
+		{"128 as 2 bytes", BigNumFromInt64(128), 2, []byte{0x80, 0x00}, false},
+		{"-128 as 2 bytes", BigNumFromInt64(-128), 2, []byte{0x80, 0x80}, false},
+		{"255 as 1 byte fails", BigNumFromInt64(255), 1, nil, true},
+		{"128 as 1 byte fails", BigNumFromInt64(128), 1, nil, true},
+		{"negative size fails", BigNumFromInt64(0), -1, nil, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := tc.src.FixedBytes(tc.size)
+			if tc.shouldFail {
+				if err == nil {
+					t.Fatalf("expected failure, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("FixedBytes: %v", err)
+			}
+			if !bytes.Equal(got, tc.want) {
+				t.Fatalf("FixedBytes() = %x, want %x", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDecodeInt64AcceptsEmptyZero(t *testing.T) {
 	t.Parallel()
 

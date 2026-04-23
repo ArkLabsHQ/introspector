@@ -1623,30 +1623,10 @@ func opcodeNum2Bin(op *opcode, data []byte, vm *Engine) error {
 	if err != nil {
 		return err
 	}
-	encoded, err := num.Bytes()
+	out, err := num.FixedBytes(int(size))
 	if err != nil {
-		return err
+		return scriptError(txscript.ErrNumberTooBig, fmt.Sprintf("OP_NUM2BIN: %v", err))
 	}
-	if len(encoded) > int(size) {
-		return scriptError(txscript.ErrNumberTooBig,
-			fmt.Sprintf("OP_NUM2BIN: number needs %d bytes, size=%d", len(encoded), size))
-	}
-
-	out := make([]byte, int(size))
-	if len(encoded) == 0 {
-		vm.dstack.PushByteArray(out)
-		return nil
-	}
-
-	sign := encoded[len(encoded)-1] & 0x80
-	magnitude := append([]byte(nil), encoded...)
-	magnitude[len(magnitude)-1] &= 0x7f
-	if magnitude[len(magnitude)-1] == 0 {
-		magnitude = magnitude[:len(magnitude)-1]
-	}
-
-	copy(out, magnitude)
-	out[len(out)-1] |= sign
 	vm.dstack.PushByteArray(out)
 	return nil
 }
