@@ -11,11 +11,7 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 )
 
-// testMaxBigNumLen is the arithmetic-operand byte ceiling used across all
-// BigNum opcodes: 520 bytes, matching txscript.MaxScriptElementSize.
-const testMaxBigNumLen = 520
-
-func TestMakeBigNumDecoding(t *testing.T) {
+func TestBigNumFromBytesDecoding(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -57,7 +53,7 @@ func TestMakeBigNumDecoding(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := MakeBigNum(tc.serialized, true, testMaxBigNumLen)
+			got, err := BigNumFromBytes(tc.serialized)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -85,34 +81,29 @@ func TestMakeBigNumDecoding(t *testing.T) {
 	}
 }
 
-func TestMakeBigNumRejectsOversized(t *testing.T) {
+func TestBigNumFromBytesRejectsOversized(t *testing.T) {
 	t.Parallel()
-	oversized := make([]byte, 521)
-	_, err := MakeBigNum(oversized, true, testMaxBigNumLen)
+	oversized := make([]byte, maxBigNumLen+1)
+	_, err := BigNumFromBytes(oversized)
 	if err == nil {
-		t.Fatalf("expected error for 521-byte operand")
+		t.Fatalf("expected error for %d-byte operand", maxBigNumLen+1)
 	}
 	if !isScriptError(err, txscript.ErrNumberTooBig) {
 		t.Fatalf("want ErrNumberTooBig, got %v", err)
 	}
 }
 
-func TestMakeBigNumRejectsNonMinimal(t *testing.T) {
+func TestBigNumFromBytesRejectsNonMinimal(t *testing.T) {
 	t.Parallel()
 	// Non-minimal: [0x01, 0x00] should be [0x01].
-	_, err := MakeBigNum([]byte{0x01, 0x00}, true, testMaxBigNumLen)
+	_, err := BigNumFromBytes([]byte{0x01, 0x00})
 	if !isScriptError(err, txscript.ErrMinimalData) {
 		t.Fatalf("want ErrMinimalData, got %v", err)
 	}
 	// Negative zero is not minimal.
-	_, err = MakeBigNum([]byte{0x80}, true, testMaxBigNumLen)
+	_, err = BigNumFromBytes([]byte{0x80})
 	if !isScriptError(err, txscript.ErrMinimalData) {
 		t.Fatalf("want ErrMinimalData for negative zero, got %v", err)
-	}
-	// Without the flag, non-minimal input is accepted.
-	n, err := MakeBigNum([]byte{0x01, 0x00}, false, testMaxBigNumLen)
-	if err != nil || n.useBig || n.small != 1 {
-		t.Fatalf("non-minimal path: got (%+v, %v)", n, err)
 	}
 }
 
@@ -222,12 +213,12 @@ func TestInt64EncodingRoundTrip(t *testing.T) {
 	}
 	for _, want := range tests {
 		t.Run(fmt.Sprintf("%d", want), func(t *testing.T) {
-			got, err := MakeBigNum(encodeInt64(want), true, testMaxBigNumLen)
+			got, err := BigNumFromBytes(encodeInt64(want))
 			if err != nil {
-				t.Fatalf("MakeBigNum: %v", err)
+				t.Fatalf("BigNumFromBytes: %v", err)
 			}
-			if got.asBig().Cmp(big.NewInt(want)) != 0 {
-				t.Fatalf("roundtrip = %s, want %d", got.asBig(), want)
+			if got.BigInt().Cmp(big.NewInt(want)) != 0 {
+				t.Fatalf("roundtrip = %s, want %d", got.BigInt(), want)
 			}
 		})
 	}
@@ -240,7 +231,7 @@ func TestBigIntEncodingRoundTrip(t *testing.T) {
 	minInt64MinusOne := new(big.Int).Neg(new(big.Int).SetUint64(math.MaxInt64 + 2))
 	maxUint64PlusOne := new(big.Int).Add(new(big.Int).SetUint64(math.MaxUint64), big.NewInt(1))
 
-	max520ByteMagnitude := new(big.Int).Lsh(big.NewInt(1), uint(testMaxBigNumLen*8-2))
+	max520ByteMagnitude := new(big.Int).Lsh(big.NewInt(1), uint(maxBigNumLen*8-2))
 	negMax520ByteMagnitude := new(big.Int).Neg(new(big.Int).Set(max520ByteMagnitude))
 
 	tests := []struct {
@@ -265,12 +256,12 @@ func TestBigIntEncodingRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Bytes: %v", err)
 			}
-			got, err := MakeBigNum(encoded, true, testMaxBigNumLen)
+			got, err := BigNumFromBytes(encoded)
 			if err != nil {
-				t.Fatalf("MakeBigNum: %v", err)
+				t.Fatalf("BigNumFromBytes: %v", err)
 			}
-			if got.asBig().Cmp(tc.want) != 0 {
-				t.Fatalf("roundtrip = %s, want %s", got.asBig(), tc.want)
+			if got.BigInt().Cmp(tc.want) != 0 {
+				t.Fatalf("roundtrip = %s, want %s", got.BigInt(), tc.want)
 			}
 		})
 	}
@@ -487,7 +478,7 @@ func TestBigNumLshift(t *testing.T) {
 			t.Fatalf("Lshift(%d, %d): %v", tc.in, tc.shift, err)
 		}
 		if got.useBig {
-			if got.asBig().Cmp(big.NewInt(tc.want)) != 0 {
+			if got.BigInt().Cmp(big.NewInt(tc.want)) != 0 {
 				t.Fatalf("Lshift(%d, %d) big = %s, want %d", tc.in, tc.shift, got.big, tc.want)
 			}
 			continue
@@ -525,8 +516,8 @@ func TestBigNumRshiftArithmetic(t *testing.T) {
 	}
 	for _, tc := range tests {
 		got := BigNumFromInt64(tc.in).Rshift(uint(tc.shift))
-		if got.asBig().Cmp(big.NewInt(tc.want)) != 0 {
-			t.Fatalf("Rshift(%d, %d) = %s, want %d", tc.in, tc.shift, got.asBig(), tc.want)
+		if got.BigInt().Cmp(big.NewInt(tc.want)) != 0 {
+			t.Fatalf("Rshift(%d, %d) = %s, want %d", tc.in, tc.shift, got.BigInt(), tc.want)
 		}
 	}
 }
@@ -547,13 +538,13 @@ func TestMinimallyEncode(t *testing.T) {
 		{[]byte{0x00, 0x80}, nil},                      // -0 two-byte → zero
 	}
 	for i, tc := range tests {
-		got := MinimallyEncode(tc.in)
+		got := minimallyEncode(tc.in)
 		want := tc.want
 		if want == nil {
 			want = []byte{}
 		}
 		if !bytes.Equal(got, want) {
-			t.Fatalf("case %d: MinimallyEncode(%x) = %x, want %x", i, tc.in, got, want)
+			t.Fatalf("case %d: minimallyEncode(%x) = %x, want %x", i, tc.in, got, want)
 		}
 	}
 }

@@ -957,7 +957,7 @@ func TestStackPushPopBigNum(t *testing.T) {
 	if err := s.PushBigNum(BigNumFromInt64(12345)); err != nil {
 		t.Fatalf("PushBigNum: %v", err)
 	}
-	got, err := s.PopBigNum(maxBigNumLen)
+	got, err := s.PopBigNum()
 	if err != nil {
 		t.Fatalf("PopBigNum: %v", err)
 	}
@@ -970,7 +970,7 @@ func TestStackPopBigNumRejectsNonMinimal(t *testing.T) {
 	t.Parallel()
 	s := stack{verifyMinimalData: true}
 	s.PushByteArray([]byte{0x01, 0x00}) // non-minimal
-	_, err := s.PopBigNum(maxBigNumLen)
+	_, err := s.PopBigNum()
 	if !isScriptError(err, txscript.ErrMinimalData) {
 		t.Fatalf("want ErrMinimalData, got %v", err)
 	}
@@ -994,7 +994,7 @@ func TestStackPeekBigNum(t *testing.T) {
 	if err := s.PushBigNum(BigNumFromInt64(42)); err != nil {
 		t.Fatalf("push: %v", err)
 	}
-	got, err := s.PeekBigNum(0, maxBigNumLen)
+	got, err := s.PeekBigNum(0)
 	if err != nil {
 		t.Fatalf("peek: %v", err)
 	}

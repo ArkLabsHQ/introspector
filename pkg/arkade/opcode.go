@@ -951,13 +951,13 @@ func verifyLockTime(txLockTime, threshold, lockTime int64) error {
 // The script fails if the value is negative, does not fit in uint32, or the
 // locktime requirement is not satisfied.
 func opcodeCheckLockTimeVerify(op *opcode, data []byte, vm *Engine) error {
-	n, err := vm.dstack.PeekBigNum(0, maxBigNumLen)
+	n, err := vm.dstack.PeekBigNum(0)
 	if err != nil {
 		return err
 	}
 	if n.Sign() < 0 {
 		return scriptError(txscript.ErrNegativeLockTime,
-			fmt.Sprintf("negative lock time: %s", n.asBig().Text(10)))
+			fmt.Sprintf("negative lock time: %s", n.BigInt().Text(10)))
 	}
 	// Locktime must fit in uint32. Values on the big path are ≥ 2^63,
 	// which cannot be a valid locktime.
@@ -980,13 +980,13 @@ func opcodeCheckLockTimeVerify(op *opcode, data []byte, vm *Engine) error {
 // sequence number of the transaction input. The item is peeked as a BigNum.
 // The script fails if the value is negative or does not fit in uint32.
 func opcodeCheckSequenceVerify(op *opcode, data []byte, vm *Engine) error {
-	n, err := vm.dstack.PeekBigNum(0, maxBigNumLen)
+	n, err := vm.dstack.PeekBigNum(0)
 	if err != nil {
 		return err
 	}
 	if n.Sign() < 0 {
 		return scriptError(txscript.ErrNegativeLockTime,
-			fmt.Sprintf("negative sequence: %s", n.asBig().Text(10)))
+			fmt.Sprintf("negative sequence: %s", n.BigInt().Text(10)))
 	}
 	if n.useBig || n.small > math.MaxUint32 {
 		return scriptError(txscript.ErrUnsatisfiedLockTime,
@@ -1259,7 +1259,7 @@ func opcodeEqualVerify(op *opcode, data []byte, vm *Engine) error {
 // opcode1Add treats the top item as a BigNum and replaces it with x+1.
 // Stack transformation: [... x] -> [... x+1]
 func opcode1Add(op *opcode, data []byte, vm *Engine) error {
-	n, err := vm.dstack.PopBigNum(maxBigNumLen)
+	n, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
@@ -1269,7 +1269,7 @@ func opcode1Add(op *opcode, data []byte, vm *Engine) error {
 // opcode1Sub treats the top item as a BigNum and replaces it with x-1.
 // Stack transformation: [... x] -> [... x-1]
 func opcode1Sub(op *opcode, data []byte, vm *Engine) error {
-	n, err := vm.dstack.PopBigNum(maxBigNumLen)
+	n, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
@@ -1279,7 +1279,7 @@ func opcode1Sub(op *opcode, data []byte, vm *Engine) error {
 // opcodeNegate replaces the top BigNum with its negation.
 // Stack transformation: [... x] -> [... -x]
 func opcodeNegate(op *opcode, data []byte, vm *Engine) error {
-	n, err := vm.dstack.PopBigNum(maxBigNumLen)
+	n, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
@@ -1289,7 +1289,7 @@ func opcodeNegate(op *opcode, data []byte, vm *Engine) error {
 // opcodeAbs replaces the top BigNum with its absolute value.
 // Stack transformation: [... x] -> [... |x|]
 func opcodeAbs(op *opcode, data []byte, vm *Engine) error {
-	n, err := vm.dstack.PopBigNum(maxBigNumLen)
+	n, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
@@ -1307,7 +1307,7 @@ func opcodeAbs(op *opcode, data []byte, vm *Engine) error {
 // Stack transformation (x2!=0): [... x1 1] -> [... x1 0]
 // Stack transformation (x2!=0): [... x1 17] -> [... x1 0]
 func opcodeNot(op *opcode, data []byte, vm *Engine) error {
-	n, err := vm.dstack.PopBigNum(maxBigNumLen)
+	n, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
@@ -1322,7 +1322,7 @@ func opcodeNot(op *opcode, data []byte, vm *Engine) error {
 // Stack transformation (x2!=0): [... x1 1] -> [... x1 1]
 // Stack transformation (x2!=0): [... x1 17] -> [... x1 1]
 func opcode0NotEqual(op *opcode, data []byte, vm *Engine) error {
-	n, err := vm.dstack.PopBigNum(maxBigNumLen)
+	n, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
@@ -1335,11 +1335,11 @@ func opcode0NotEqual(op *opcode, data []byte, vm *Engine) error {
 // opcodeAdd pops two BigNums and pushes their sum.
 // Stack transformation: [... x1 x2] -> [... x1+x2]
 func opcodeAdd(op *opcode, data []byte, vm *Engine) error {
-	b, err := vm.dstack.PopBigNum(maxBigNumLen)
+	b, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
-	a, err := vm.dstack.PopBigNum(maxBigNumLen)
+	a, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
@@ -1349,11 +1349,11 @@ func opcodeAdd(op *opcode, data []byte, vm *Engine) error {
 // opcodeSub pops two BigNums and pushes x1 - x2.
 // Stack transformation: [... x1 x2] -> [... x1-x2]
 func opcodeSub(op *opcode, data []byte, vm *Engine) error {
-	b, err := vm.dstack.PopBigNum(maxBigNumLen)
+	b, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
-	a, err := vm.dstack.PopBigNum(maxBigNumLen)
+	a, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
@@ -1368,11 +1368,11 @@ func opcodeSub(op *opcode, data []byte, vm *Engine) error {
 // Stack transformation (x1==0, x2!=0): [... 0 7] -> [... 0]
 // Stack transformation (x1!=0, x2!=0): [... 4 8] -> [... 1]
 func opcodeBoolAnd(op *opcode, data []byte, vm *Engine) error {
-	b, err := vm.dstack.PopBigNum(maxBigNumLen)
+	b, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
-	a, err := vm.dstack.PopBigNum(maxBigNumLen)
+	a, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
@@ -1390,11 +1390,11 @@ func opcodeBoolAnd(op *opcode, data []byte, vm *Engine) error {
 // Stack transformation (x1==0, x2!=0): [... 0 7] -> [... 1]
 // Stack transformation (x1!=0, x2!=0): [... 4 8] -> [... 1]
 func opcodeBoolOr(op *opcode, data []byte, vm *Engine) error {
-	b, err := vm.dstack.PopBigNum(maxBigNumLen)
+	b, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
-	a, err := vm.dstack.PopBigNum(maxBigNumLen)
+	a, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
@@ -1410,11 +1410,11 @@ func opcodeBoolOr(op *opcode, data []byte, vm *Engine) error {
 // Stack transformation (x1==x2): [... 5 5] -> [... 1]
 // Stack transformation (x1!=x2): [... 5 7] -> [... 0]
 func opcodeNumEqual(op *opcode, data []byte, vm *Engine) error {
-	b, err := vm.dstack.PopBigNum(maxBigNumLen)
+	b, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
-	a, err := vm.dstack.PopBigNum(maxBigNumLen)
+	a, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
@@ -1446,11 +1446,11 @@ func opcodeNumEqualVerify(op *opcode, data []byte, vm *Engine) error {
 // Stack transformation (x1==x2): [... 5 5] -> [... 0]
 // Stack transformation (x1!=x2): [... 5 7] -> [... 1]
 func opcodeNumNotEqual(op *opcode, data []byte, vm *Engine) error {
-	b, err := vm.dstack.PopBigNum(maxBigNumLen)
+	b, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
-	a, err := vm.dstack.PopBigNum(maxBigNumLen)
+	a, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
@@ -1466,11 +1466,11 @@ func opcodeNumNotEqual(op *opcode, data []byte, vm *Engine) error {
 //
 // Stack transformation: [... x1 x2] -> [... bool]
 func opcodeLessThan(op *opcode, data []byte, vm *Engine) error {
-	b, err := vm.dstack.PopBigNum(maxBigNumLen)
+	b, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
-	a, err := vm.dstack.PopBigNum(maxBigNumLen)
+	a, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
@@ -1486,11 +1486,11 @@ func opcodeLessThan(op *opcode, data []byte, vm *Engine) error {
 //
 // Stack transformation: [... x1 x2] -> [... bool]
 func opcodeGreaterThan(op *opcode, data []byte, vm *Engine) error {
-	b, err := vm.dstack.PopBigNum(maxBigNumLen)
+	b, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
-	a, err := vm.dstack.PopBigNum(maxBigNumLen)
+	a, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
@@ -1506,11 +1506,11 @@ func opcodeGreaterThan(op *opcode, data []byte, vm *Engine) error {
 //
 // Stack transformation: [... x1 x2] -> [... bool]
 func opcodeLessThanOrEqual(op *opcode, data []byte, vm *Engine) error {
-	b, err := vm.dstack.PopBigNum(maxBigNumLen)
+	b, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
-	a, err := vm.dstack.PopBigNum(maxBigNumLen)
+	a, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
@@ -1526,11 +1526,11 @@ func opcodeLessThanOrEqual(op *opcode, data []byte, vm *Engine) error {
 //
 // Stack transformation: [... x1 x2] -> [... bool]
 func opcodeGreaterThanOrEqual(op *opcode, data []byte, vm *Engine) error {
-	b, err := vm.dstack.PopBigNum(maxBigNumLen)
+	b, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
-	a, err := vm.dstack.PopBigNum(maxBigNumLen)
+	a, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
@@ -1545,11 +1545,11 @@ func opcodeGreaterThanOrEqual(op *opcode, data []byte, vm *Engine) error {
 //
 // Stack transformation: [... x1 x2] -> [... min(x1, x2)]
 func opcodeMin(op *opcode, data []byte, vm *Engine) error {
-	b, err := vm.dstack.PopBigNum(maxBigNumLen)
+	b, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
-	a, err := vm.dstack.PopBigNum(maxBigNumLen)
+	a, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
@@ -1564,11 +1564,11 @@ func opcodeMin(op *opcode, data []byte, vm *Engine) error {
 //
 // Stack transformation: [... x1 x2] -> [... max(x1, x2)]
 func opcodeMax(op *opcode, data []byte, vm *Engine) error {
-	b, err := vm.dstack.PopBigNum(maxBigNumLen)
+	b, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
-	a, err := vm.dstack.PopBigNum(maxBigNumLen)
+	a, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
@@ -1587,15 +1587,15 @@ func opcodeMax(op *opcode, data []byte, vm *Engine) error {
 //
 // Stack transformation: [... x1 min max] -> [... bool]
 func opcodeWithin(op *opcode, data []byte, vm *Engine) error {
-	maxVal, err := vm.dstack.PopBigNum(maxBigNumLen)
+	maxVal, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
-	minVal, err := vm.dstack.PopBigNum(maxBigNumLen)
+	minVal, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
-	x, err := vm.dstack.PopBigNum(maxBigNumLen)
+	x, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
@@ -1619,7 +1619,7 @@ func opcodeNum2Bin(op *opcode, data []byte, vm *Engine) error {
 			fmt.Sprintf("invalid OP_NUM2BIN size %d", size))
 	}
 
-	num, err := vm.dstack.PopBigNum(maxBigNumLen)
+	num, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
@@ -1645,7 +1645,7 @@ func opcodeBin2Num(op *opcode, data []byte, vm *Engine) error {
 			fmt.Sprintf("OP_BIN2NUM input exceeds %d bytes", maxBigNumLen))
 	}
 
-	vm.dstack.PushByteArray(MinimallyEncode(b))
+	vm.dstack.PushByteArray(minimallyEncode(b))
 	return nil
 }
 
@@ -2322,7 +2322,7 @@ func opcodeXor(op *opcode, data []byte, vm *Engine) error {
 // opcode2Mul multiplies a BigNum by 2.
 // Stack transformation: [... x] -> [... x*2]
 func opcode2Mul(op *opcode, data []byte, vm *Engine) error {
-	n, err := vm.dstack.PopBigNum(maxBigNumLen)
+	n, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
@@ -2332,7 +2332,7 @@ func opcode2Mul(op *opcode, data []byte, vm *Engine) error {
 // opcode2Div divides a BigNum by 2 (truncated).
 // Stack transformation: [... x] -> [... x/2]
 func opcode2Div(op *opcode, data []byte, vm *Engine) error {
-	n, err := vm.dstack.PopBigNum(maxBigNumLen)
+	n, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
@@ -2346,11 +2346,11 @@ func opcode2Div(op *opcode, data []byte, vm *Engine) error {
 // opcodeMul pops two BigNums and pushes their product.
 // Stack transformation: [... x1 x2] -> [... x1*x2]
 func opcodeMul(op *opcode, data []byte, vm *Engine) error {
-	b, err := vm.dstack.PopBigNum(maxBigNumLen)
+	b, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
-	a, err := vm.dstack.PopBigNum(maxBigNumLen)
+	a, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
@@ -2361,11 +2361,11 @@ func opcodeMul(op *opcode, data []byte, vm *Engine) error {
 // script on division by zero.
 // Stack transformation: [... x1 x2] -> [... x1/x2]
 func opcodeDiv(op *opcode, data []byte, vm *Engine) error {
-	b, err := vm.dstack.PopBigNum(maxBigNumLen)
+	b, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
-	a, err := vm.dstack.PopBigNum(maxBigNumLen)
+	a, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
@@ -2380,11 +2380,11 @@ func opcodeDiv(op *opcode, data []byte, vm *Engine) error {
 // result follows dividend). Fails the script on modulo by zero.
 // Stack transformation: [... x1 x2] -> [... x1%x2]
 func opcodeMod(op *opcode, data []byte, vm *Engine) error {
-	b, err := vm.dstack.PopBigNum(maxBigNumLen)
+	b, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
-	a, err := vm.dstack.PopBigNum(maxBigNumLen)
+	a, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
@@ -2407,7 +2407,7 @@ func opcodeLshift(op *opcode, data []byte, vm *Engine) error {
 	if shiftNum < 0 {
 		return scriptError(txscript.ErrInvalidIndex, "negative shift count")
 	}
-	x, err := vm.dstack.PopBigNum(maxBigNumLen)
+	x, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
@@ -2431,7 +2431,7 @@ func opcodeRshift(op *opcode, data []byte, vm *Engine) error {
 	if shiftNum < 0 {
 		return scriptError(txscript.ErrInvalidIndex, "negative shift count")
 	}
-	x, err := vm.dstack.PopBigNum(maxBigNumLen)
+	x, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}

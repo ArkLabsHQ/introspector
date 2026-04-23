@@ -1,10 +1,13 @@
 package arkade
 
 import (
+	"bytes"
+	"cmp"
 	"errors"
 	"fmt"
 	"math"
 	"math/big"
+	"slices"
 
 	"github.com/btcsuite/btcd/txscript"
 )
@@ -93,30 +96,18 @@ func (n BigNum) IsZero() bool {
 
 // Sign returns -1, 0, or +1.
 func (n BigNum) Sign() int {
-	if !n.useBig {
-		switch {
-		case n.small < 0:
-			return -1
-		case n.small > 0:
-			return 1
-		}
-		return 0
+	if n.useBig {
+		return n.big.Sign()
 	}
-	return n.big.Sign()
+	return cmp.Compare(n.small, int64(0))
 }
 
 // Cmp reports -1/0/+1 comparing n and m.
 func (n BigNum) Cmp(m BigNum) int {
-	if !n.useBig && !m.useBig {
-		switch {
-		case n.small < m.small:
-			return -1
-		case n.small > m.small:
-			return 1
-		}
-		return 0
+	if n.useBig || m.useBig {
+		return n.BigInt().Cmp(m.BigInt())
 	}
-	return n.asBig().Cmp(m.asBig())
+	return cmp.Compare(n.small, m.small)
 }
 
 // Add returns n + m. Promotes to big on int64 overflow.
@@ -142,7 +133,7 @@ func (n BigNum) Add(m BigNum) BigNum {
 			return BigNum{small: r}
 		}
 	}
-	return BigNum{big: new(big.Int).Add(n.asBig(), m.asBig()), useBig: true}
+	return BigNum{big: new(big.Int).Add(n.BigInt(), m.BigInt()), useBig: true}
 }
 
 // Sub returns n - m. Promotes to big on int64 overflow.
@@ -167,7 +158,7 @@ func (n BigNum) Sub(m BigNum) BigNum {
 			return BigNum{small: r}
 		}
 	}
-	return BigNum{big: new(big.Int).Sub(n.asBig(), m.asBig()), useBig: true}
+	return BigNum{big: new(big.Int).Sub(n.BigInt(), m.BigInt()), useBig: true}
 }
 
 // Mul returns n * m. Promotes to big on int64 overflow.
@@ -181,7 +172,7 @@ func (n BigNum) Mul(m BigNum) BigNum {
 			return BigNum{small: r}
 		}
 	}
-	return BigNum{big: new(big.Int).Mul(n.asBig(), m.asBig()), useBig: true}
+	return BigNum{big: new(big.Int).Mul(n.BigInt(), m.BigInt()), useBig: true}
 }
 
 // Div returns truncated n / m. Promotes only on int64 min / -1 overflow.
@@ -194,7 +185,7 @@ func (n BigNum) Div(m BigNum) (BigNum, error) {
 			return BigNum{small: n.small / m.small}, nil
 		}
 	}
-	return BigNum{big: new(big.Int).Quo(n.asBig(), m.asBig()), useBig: true}, nil
+	return BigNum{big: new(big.Int).Quo(n.BigInt(), m.BigInt()), useBig: true}, nil
 }
 
 // Mod returns truncated n % m (sign follows dividend).
@@ -207,7 +198,7 @@ func (n BigNum) Mod(m BigNum) (BigNum, error) {
 			return BigNum{small: n.small % m.small}, nil
 		}
 	}
-	return BigNum{big: new(big.Int).Rem(n.asBig(), m.asBig()), useBig: true}, nil
+	return BigNum{big: new(big.Int).Rem(n.BigInt(), m.BigInt()), useBig: true}, nil
 }
 
 // Negate returns -n. Promotes on int64 min.
@@ -217,7 +208,7 @@ func (n BigNum) Negate() BigNum {
 			return BigNum{small: -n.small}
 		}
 	}
-	return BigNum{big: new(big.Int).Neg(n.asBig()), useBig: true}
+	return BigNum{big: new(big.Int).Neg(n.BigInt()), useBig: true}
 }
 
 // Abs returns |n|. Promotes on int64 min.
@@ -230,7 +221,7 @@ func (n BigNum) Abs() BigNum {
 			return BigNum{small: -n.small}
 		}
 	}
-	return BigNum{big: new(big.Int).Abs(n.asBig()), useBig: true}
+	return BigNum{big: new(big.Int).Abs(n.BigInt()), useBig: true}
 }
 
 // Lshift returns n << shift. Fails if the minimal encoding of the result
@@ -244,7 +235,7 @@ func (n BigNum) Lshift(shift uint) (BigNum, error) {
 		return BigNum{}, scriptError(txscript.ErrNumberTooBig,
 			fmt.Sprintf("LSHIFT result would exceed %d bytes", maxBigNumLen))
 	}
-	res := new(big.Int).Lsh(n.asBig(), shift)
+	res := new(big.Int).Lsh(n.BigInt(), shift)
 	out := BigNum{big: res, useBig: true}
 	if _, err := out.Bytes(); err != nil {
 		return BigNum{}, err
@@ -262,7 +253,7 @@ func (n BigNum) Rshift(shift uint) BigNum {
 	}
 	// big.Int.Rsh operates on two's-complement representation and rounds
 	// toward negative infinity for negative values, matching our spec.
-	res := new(big.Int).Rsh(n.asBig(), shift)
+	res := new(big.Int).Rsh(n.BigInt(), shift)
 	return BigNum{big: res, useBig: true}
 }
 
@@ -280,23 +271,21 @@ func BigNumFromUint64(v uint64) BigNum {
 	return BigNum{big: new(big.Int).SetUint64(v), useBig: true}
 }
 
-// MakeBigNum decodes a sign-magnitude little-endian byte slice into a BigNum.
-// If requireMinimal is true, inputs that are not minimally encoded are
-// rejected (including the negative-zero encoding [0x80]). If len(v) > maxLen
-// an ErrNumberTooBig is returned.
+// BigNumFromBytes decodes a sign-magnitude little-endian byte slice into a
+// BigNum. Inputs longer than maxBigNumLen bytes are rejected with
+// ErrNumberTooBig. Non-minimal encodings (including negative zero [0x80])
+// are rejected with ErrMinimalData.
 //
 // Values with len(v) ≤ 8 land on the int64 fast path; ≥ 9 bytes land on the
 // big.Int path.
-func MakeBigNum(v []byte, requireMinimal bool, maxLen int) (BigNum, error) {
-	if len(v) > maxLen {
+func BigNumFromBytes(v []byte) (BigNum, error) {
+	if len(v) > maxBigNumLen {
 		return BigNum{}, scriptError(txscript.ErrNumberTooBig,
 			fmt.Sprintf("numeric value encoded as %x is %d bytes which exceeds the max allowed of %d",
-				v, len(v), maxLen))
+				v, len(v), maxBigNumLen))
 	}
-	if requireMinimal {
-		if err := checkMinimalDataEncoding(v); err != nil {
-			return BigNum{}, err
-		}
+	if err := checkMinimalDataEncoding(v); err != nil {
+		return BigNum{}, err
 	}
 	if len(v) == 0 {
 		return BigNum{}, nil
@@ -307,11 +296,11 @@ func MakeBigNum(v []byte, requireMinimal bool, maxLen int) (BigNum, error) {
 	return decodeBig(v), nil
 }
 
-// MinimallyEncode returns the minimal sign-magnitude LE encoding of the
+// minimallyEncode returns the minimal sign-magnitude LE encoding of the
 // byte slice v (interpreting v as sign-magnitude LE). It strips trailing
 // zero-bytes while preserving the sign bit, and normalises negative zero
 // ([0x80], [0x00, 0x00, 0x80], etc.) to the empty slice.
-func MinimallyEncode(v []byte) []byte {
+func minimallyEncode(v []byte) []byte {
 	if len(v) == 0 {
 		return []byte{}
 	}
@@ -319,10 +308,7 @@ func MinimallyEncode(v []byte) []byte {
 	sign := out[len(out)-1] & 0x80
 	// Clear sign bit from MSB so we can detect an all-zero magnitude.
 	out[len(out)-1] &= 0x7f
-	// Strip trailing zero-bytes.
-	for len(out) > 0 && out[len(out)-1] == 0 {
-		out = out[:len(out)-1]
-	}
+	out = bytes.TrimRight(out, "\x00")
 	if len(out) == 0 {
 		return []byte{}
 	}
@@ -363,9 +349,7 @@ func decodeBig(v []byte) BigNum {
 	copy(mag, v)
 	mag[len(mag)-1] = msb & 0x7f
 	// Reverse to big-endian for big.Int.SetBytes.
-	for i, j := 0, len(mag)-1; i < j; i, j = i+1, j-1 {
-		mag[i], mag[j] = mag[j], mag[i]
-	}
+	slices.Reverse(mag)
 	b := new(big.Int).SetBytes(mag)
 	if negative {
 		b.Neg(b)
@@ -408,11 +392,8 @@ func encodeBig(v *big.Int) []byte {
 	if v.Sign() == 0 {
 		return nil
 	}
-	mag := new(big.Int).Abs(v).Bytes() // big-endian magnitude
-	le := make([]byte, len(mag))
-	for i, b := range mag {
-		le[len(mag)-1-i] = b
-	}
+	le := new(big.Int).Abs(v).Bytes() // big-endian magnitude
+	slices.Reverse(le)
 	neg := v.Sign() < 0
 	if le[len(le)-1]&0x80 != 0 {
 		extra := byte(0x00)
@@ -426,10 +407,11 @@ func encodeBig(v *big.Int) []byte {
 	return le
 }
 
-// asBig materialises a *big.Int view of n regardless of current path.
-func (n BigNum) asBig() *big.Int {
+// BigInt returns n as a fresh *big.Int. The returned value is independent of
+// n's internal state; callers may mutate it freely.
+func (n BigNum) BigInt() *big.Int {
 	if n.useBig {
-		return n.big
+		return new(big.Int).Set(n.big)
 	}
 	return big.NewInt(n.small)
 }

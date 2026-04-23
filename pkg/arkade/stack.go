@@ -148,27 +148,26 @@ func (s *stack) PushBigNum(n BigNum) error {
 	return nil
 }
 
-// PopBigNum pops the top stack item and decodes it as a BigNum with the
-// given maxLen. Minimal-encoding is enforced iff the stack's
-// verifyMinimalData flag is set.
+// PopBigNum pops the top stack item and decodes it as a BigNum. Inputs
+// longer than maxBigNumLen or non-minimally encoded are rejected.
 //
 // Stack transformation: [... x1 x2 x3] -> [... x1 x2]
-func (s *stack) PopBigNum(maxLen int) (BigNum, error) {
+func (s *stack) PopBigNum() (BigNum, error) {
 	so, err := s.PopByteArray()
 	if err != nil {
 		return BigNum{}, err
 	}
-	return MakeBigNum(so, s.verifyMinimalData, maxLen)
+	return BigNumFromBytes(so)
 }
 
 // PeekBigNum returns the Nth item on the stack as a BigNum without removing
 // it.
-func (s *stack) PeekBigNum(idx int32, maxLen int) (BigNum, error) {
+func (s *stack) PeekBigNum(idx int32) (BigNum, error) {
 	so, err := s.PeekByteArray(idx)
 	if err != nil {
 		return BigNum{}, err
 	}
-	return MakeBigNum(so, s.verifyMinimalData, maxLen)
+	return BigNumFromBytes(so)
 }
 
 // nipN is an internal function that removes the nth item on the stack and
