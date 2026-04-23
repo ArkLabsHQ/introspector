@@ -10,7 +10,6 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
-	"github.com/arkade-os/go-sdk/indexer"
 	"github.com/arkade-os/go-sdk/types"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
@@ -185,6 +184,8 @@ func TestRecursivePolicy(t *testing.T) {
 	require.NoError(t, err)
 
 	submitAndFinalize := func(candidateTx *psbt.Packet, checkpoints []*psbt.Packet) {
+		waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, candidateTx, 0, 1)
+
 		encodedTx, err := candidateTx.B64Encode()
 		require.NoError(t, err)
 
@@ -203,20 +204,8 @@ func TestRecursivePolicy(t *testing.T) {
 
 		_, _, err = introspectorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
 		require.NoError(t, err)
-		indexerOpts := setupIndexer(t)
-		opts := indexer.GetVtxosRequestOption{}
-		err = opts.WithOutpoints([]types.Outpoint{
-			{Txid: candidateTx.UnsignedTx.TxID(), VOut: 0},
-			{Txid: candidateTx.UnsignedTx.TxID(), VOut: 1},
-		})
-		require.NoError(t, err)
-		vtxos, err := indexerOpts.GetVtxos(ctx, opts)
-		require.NoError(t, err)
-		require.Len(t, vtxos.Vtxos, 2)
-		for _, vtxo := range vtxos.Vtxos {
-			require.True(t, vtxo.Preconfirmed)
-			require.False(t, vtxo.Spent)
-		}
+
+		waitForVtxos()
 	}
 
 	submitAndExpectFailure := func(inputs []offchain.VtxoInput, outputs []*wire.TxOut) {

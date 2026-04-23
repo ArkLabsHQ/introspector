@@ -958,6 +958,10 @@ func (env *crossInputTestEnv) submitAndExpectFailure(t *testing.T, candidateTx *
 func (env *crossInputTestEnv) submitAndFinalize(t *testing.T, candidateTx *psbt.Packet, checkpoints []*psbt.Packet) {
 	t.Helper()
 
+	// Subscribe to output 0's script BEFORE submit so the event arrives once the
+	// async projection pipeline writes the vtxo.
+	waitForVtxos := watchForPreconfirmedVtxos(t, env.indexerSvc, candidateTx, 0)
+
 	// Step 1: Sign the candidate tx locally and sign every checkpoint.
 	encodedTx, err := candidateTx.B64Encode()
 	require.NoError(t, err)
@@ -979,14 +983,6 @@ func (env *crossInputTestEnv) submitAndFinalize(t *testing.T, candidateTx *psbt.
 	_, _, err = env.introspectorClient.SubmitTx(env.ctx, signedTx, signedCheckpoints)
 	require.NoError(t, err)
 
-	// Step 3: Verify the finalized output via the indexer.
-	opts := indexer.GetVtxosRequestOption{}
-	err = opts.WithOutpoints([]types.Outpoint{{Txid: candidateTx.UnsignedTx.TxID(), VOut: 0}})
-	require.NoError(t, err)
-
-	vtxos, err := env.indexerSvc.GetVtxos(env.ctx, opts)
-	require.NoError(t, err)
-	require.Len(t, vtxos.Vtxos, 1)
-	require.True(t, vtxos.Vtxos[0].Preconfirmed)
-	require.False(t, vtxos.Vtxos[0].Spent)
+	// Step 3: Wait for the subscription event and assert preconfirmed/unspent.
+	waitForVtxos()
 }

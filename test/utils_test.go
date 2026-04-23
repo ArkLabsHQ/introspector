@@ -626,24 +626,77 @@ func submitWithArkd(
 	require.NoError(t, grpcClient.FinalizeTx(ctx, txid, finalCheckpoints))
 }
 
-func requirePreconfirmedVtxo(
+// watchForPreconfirmedVtxos subscribes to the output scripts of candidateTx at the
+// given vouts BEFORE the tx is submitted, and returns a wait function.
+func watchForPreconfirmedVtxos(
 	t *testing.T,
-	ctx context.Context,
 	indexerSvc indexer.Indexer,
 	candidateTx *psbt.Packet,
-	vout uint32,
-) {
+	vouts ...uint32,
+) func() {
 	t.Helper()
 
-	opts := indexer.GetVtxosRequestOption{}
-	err := opts.WithOutpoints([]types.Outpoint{{Txid: candidateTx.UnsignedTx.TxID(), VOut: vout}})
+	ctx := t.Context()
+
+	hexScripts := make([]string, 0, len(vouts))
+	wantedVouts := make(map[uint32]struct{}, len(vouts))
+	for _, vout := range vouts {
+		hexScripts = append(
+			hexScripts,
+			hex.EncodeToString(candidateTx.UnsignedTx.TxOut[vout].PkScript),
+		)
+		wantedVouts[vout] = struct{}{}
+	}
+
+	subId, err := indexerSvc.SubscribeForScripts(ctx, "", hexScripts)
 	require.NoError(t, err)
 
-	vtxos, err := indexerSvc.GetVtxos(ctx, opts)
+	eventCh, closeFn, err := indexerSvc.GetSubscription(ctx, subId)
 	require.NoError(t, err)
-	require.Len(t, vtxos.Vtxos, 1)
-	require.True(t, vtxos.Vtxos[0].Preconfirmed)
-	require.False(t, vtxos.Vtxos[0].Spent)
+
+	return func() {
+		t.Helper()
+		defer func() {
+			// nolint:errcheck
+			indexerSvc.UnsubscribeForScripts(ctx, subId, hexScripts)
+			closeFn()
+		}()
+
+		txid := candidateTx.UnsignedTx.TxID()
+		got := make(map[uint32]types.Vtxo, len(vouts))
+
+		timeout := time.After(10 * time.Second)
+		for len(got) < len(vouts) {
+			select {
+			case event, ok := <-eventCh:
+				if !ok {
+					require.FailNow(t, "subscription channel closed before all vtxos received")
+					return
+				}
+				require.NoError(t, event.Err)
+				for _, v := range event.NewVtxos {
+					if v.Txid != txid {
+						continue
+					}
+					if _, ok := wantedVouts[v.VOut]; ok {
+						got[v.VOut] = v
+					}
+				}
+			case <-timeout:
+				require.FailNowf(
+					t,
+					"timeout waiting for vtxo subscription event",
+					"got %d/%d", len(got), len(vouts),
+				)
+				return
+			}
+		}
+
+		for _, v := range got {
+			require.True(t, v.Preconfirmed, "vtxo %s:%d must be preconfirmed", v.Txid, v.VOut)
+			require.False(t, v.Spent, "vtxo %s:%d must not be spent", v.Txid, v.VOut)
+		}
+	}
 }
 
 // createIssuanceAssetPacket creates a simple asset issuance packet with one output

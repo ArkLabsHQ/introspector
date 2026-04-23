@@ -57,6 +57,8 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 	counterPkScript := p2trScriptForVtxoScript(t, counterVtxoScript)
 
 	submitAndFinalize := func(candidateTx *psbt.Packet, checkpoints []*psbt.Packet) {
+		waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, candidateTx, 0)
+
 		encodedTx, err := candidateTx.B64Encode()
 		require.NoError(t, err)
 
@@ -65,7 +67,7 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		requirePreconfirmedVtxo(t, ctx, indexerSvc, candidateTx, 0)
+		waitForVtxos()
 	}
 
 	submitExpectIntrospectorFailure := func(candidateTx *psbt.Packet, checkpoints []*psbt.Packet) {
@@ -177,8 +179,10 @@ func deployCounterFromWallet(
 	)
 	addCounterPacket(t, deployTx, 0)
 	requireCounterPacket(t, deployTx.UnsignedTx, 0)
+
+	waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, deployTx, 0)
 	submitWithArkd(t, ctx, deployTx, deployCheckpoints, aliceWallet, grpcClient)
-	requirePreconfirmedVtxo(t, ctx, indexerSvc, deployTx, 0)
+	waitForVtxos()
 
 	return deployTx
 }

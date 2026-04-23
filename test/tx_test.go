@@ -169,18 +169,6 @@ func TestSubmitOffchain(t *testing.T) {
 		require.Contains(t, err.Error(), "failed to process transaction")
 	}
 
-	assertPreconfirmed := func(t *testing.T, idxr indexer.Indexer, txid string, vout uint32) {
-		t.Helper()
-		opts := indexer.GetVtxosRequestOption{}
-		err := opts.WithOutpoints([]types.Outpoint{{Txid: txid, VOut: vout}})
-		require.NoError(t, err)
-		vtxos, err := idxr.GetVtxos(t.Context(), opts)
-		require.NoError(t, err)
-		require.Len(t, vtxos.Vtxos, 1)
-		require.True(t, vtxos.Vtxos[0].Preconfirmed)
-		require.False(t, vtxos.Vtxos[0].Spent)
-	}
-
 	t.Run("single_input_invalid_script", func(t *testing.T) {
 		fundAndSettleAlice(t, ctx, alice, 10000)
 
@@ -347,9 +335,10 @@ func TestSubmitOffchain(t *testing.T) {
 			require.NoError(t, err)
 			signedValidCheckpoints = append(signedValidCheckpoints, signed)
 		}
+		waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, validTx, 0)
 		_, _, err = introspectorClient.SubmitTx(ctx, signedTx, signedValidCheckpoints)
 		require.NoError(t, err)
-		assertPreconfirmed(t, indexerSvc, validTx.UnsignedTx.TxID(), 0)
+		waitForVtxos()
 	})
 
 	t.Run("multi_input_same_introspector_success", func(t *testing.T) {
@@ -401,9 +390,10 @@ func TestSubmitOffchain(t *testing.T) {
 			require.NoError(t, err)
 			signedCheckpoints = append(signedCheckpoints, signed)
 		}
+		waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, validTx, 0)
 		_, _, err = introspectorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
 		require.NoError(t, err)
-		assertPreconfirmed(t, indexerSvc, validTx.UnsignedTx.TxID(), 0)
+		waitForVtxos()
 	})
 
 	t.Run("not_finalizer_on_all_owned_inputs", func(t *testing.T) {
@@ -571,9 +561,10 @@ func TestSubmitOffchain(t *testing.T) {
 		signedCheckpoints[1] = introBSigned
 		signedTx, err = altIntroWallet.SignTransaction(ctx, explorer, signedTx)
 		require.NoError(t, err)
+		waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, candidateTx, 0)
 		_, _, err = introspectorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
 		require.NoError(t, err)
-		assertPreconfirmed(t, indexerSvc, candidateTx.UnsignedTx.TxID(), 0)
+		waitForVtxos()
 	})
 }
 

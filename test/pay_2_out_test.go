@@ -13,7 +13,6 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
-	"github.com/arkade-os/go-sdk/indexer"
 	inmemorystoreconfig "github.com/arkade-os/go-sdk/store/inmemory"
 	"github.com/arkade-os/go-sdk/types"
 	singlekeywallet "github.com/arkade-os/go-sdk/wallet/singlekey"
@@ -337,21 +336,10 @@ func TestPayToTwoOutputs(t *testing.T) {
 		encodedValidCheckpoints = append(encodedValidCheckpoints, signed)
 	}
 
+	waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, validTx, 0, 1)
+
 	_, _, err = introspectorClient.SubmitTx(ctx, signedTx, encodedValidCheckpoints)
 	require.NoError(t, err)
 
-	indexerOpts := setupIndexer(t)
-	opts := indexer.GetVtxosRequestOption{}
-	err = opts.WithOutpoints([]types.Outpoint{
-		{Txid: validTx.UnsignedTx.TxID(), VOut: 0},
-		{Txid: validTx.UnsignedTx.TxID(), VOut: 1},
-	})
-	require.NoError(t, err)
-	vtxos, err := indexerOpts.GetVtxos(ctx, opts)
-	require.NoError(t, err)
-	require.Len(t, vtxos.Vtxos, 2)
-	for _, vtxo := range vtxos.Vtxos {
-		require.True(t, vtxo.Preconfirmed)
-		require.False(t, vtxo.Spent)
-	}
+	waitForVtxos()
 }
