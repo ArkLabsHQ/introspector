@@ -57,7 +57,7 @@ const (
 //	OP_1 OP_EQUALVERIFY            # force taproot
 //	<receiver_or_sender_witness_program> OP_EQUALVERIFY
 //	OP_INSPECTOUTPUTVALUE
-//	<amount_le64> OP_EQUAL
+//	<amount> OP_EQUAL
 //
 // Claim path — ConditionMultisigClosure with a HASH160 condition over the
 // preimage. Condition witness: [preimage].
@@ -303,7 +303,7 @@ func enforcePayTo(t *testing.T, pkScript []byte, amount int64) []byte {
 		AddData(pkScript[2:]).        // witness program
 		AddOp(arkade.OP_EQUALVERIFY).
 		AddOp(arkade.OP_INSPECTOUTPUTVALUE).
-		AddData(uint64LE(uint64(amount))).
+		AddInt64(amount).
 		AddOp(arkade.OP_EQUAL).
 		Script()
 	require.NoError(t, err)
