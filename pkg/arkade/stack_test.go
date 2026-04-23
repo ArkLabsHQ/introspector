@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"math/big"
 	"reflect"
 	"testing"
 
@@ -947,5 +948,60 @@ func TestStack(t *testing.T) {
 				break
 			}
 		}
+	}
+}
+
+func TestStackPushPopBigNum(t *testing.T) {
+	t.Parallel()
+	s := stack{verifyMinimalData: true}
+	if err := s.PushBigNum(BigNumFromInt64(12345)); err != nil {
+		t.Fatalf("PushBigNum: %v", err)
+	}
+	got, err := s.PopBigNum()
+	if err != nil {
+		t.Fatalf("PopBigNum: %v", err)
+	}
+	if got.useBig || got.small != 12345 {
+		t.Fatalf("roundtrip gave %+v", got)
+	}
+}
+
+func TestStackPopBigNumRejectsNonMinimal(t *testing.T) {
+	t.Parallel()
+	s := stack{verifyMinimalData: true}
+	s.PushByteArray([]byte{0x01, 0x00}) // non-minimal
+	_, err := s.PopBigNum()
+	if !isScriptError(err, txscript.ErrMinimalData) {
+		t.Fatalf("want ErrMinimalData, got %v", err)
+	}
+}
+
+func TestStackPushBigNumRejectsOversizedResult(t *testing.T) {
+	t.Parallel()
+	s := stack{verifyMinimalData: true}
+	// Build a BigNum whose encoding is 521 bytes.
+	mag := new(big.Int).Lsh(big.NewInt(1), 520*8)
+	n := BigNum{big: mag, useBig: true}
+	err := s.PushBigNum(n)
+	if !isScriptError(err, txscript.ErrNumberTooBig) {
+		t.Fatalf("want ErrNumberTooBig, got %v", err)
+	}
+}
+
+func TestStackPeekBigNum(t *testing.T) {
+	t.Parallel()
+	s := stack{verifyMinimalData: true}
+	if err := s.PushBigNum(BigNumFromInt64(42)); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	got, err := s.PeekBigNum(0)
+	if err != nil {
+		t.Fatalf("peek: %v", err)
+	}
+	if got.small != 42 {
+		t.Fatalf("peek got %+v", got)
+	}
+	if s.Depth() != 1 {
+		t.Fatalf("Peek modified depth: %d", s.Depth())
 	}
 }

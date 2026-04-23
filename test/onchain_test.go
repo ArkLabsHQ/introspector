@@ -61,7 +61,7 @@ func TestSubmitOnchainTx(t *testing.T) {
 		AddOp(arkade.OP_EQUALVERIFY).
 		AddInt64(0).
 		AddOp(arkade.OP_INSPECTOUTPUTVALUE).
-		AddData(uint64LE(uint64(spendAmount))).
+		AddInt64(spendAmount).
 		AddOp(arkade.OP_EQUAL).
 		Script()
 	require.NoError(t, err)

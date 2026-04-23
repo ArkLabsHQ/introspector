@@ -325,6 +325,10 @@ The following opcodes are supported by the Arkade script engine. They extend Bit
 
 ### Arithmetic
 
+Arithmetic operands and results use the VM's minimally encoded BigNum format
+and can be up to the maximum script element size. `OP_NUM2BIN` and
+`OP_BIN2NUM` bridge between BigNum values and fixed-width byte strings.
+
 | Word | Opcode | Hex | Input | Output | Description |
 |------|--------|-----|-------|--------|-------------|
 | OP_2MUL | 141 | 0x8d | x | x*2 | Multiplies the input by 2. |
@@ -334,6 +338,8 @@ The following opcodes are supported by the Arkade script engine. They extend Bit
 | OP_MOD | 151 | 0x97 | a b | a%b | Returns the remainder after dividing a by b. Fails if b is zero. |
 | OP_LSHIFT | 152 | 0x98 | x n | x<<n | Logical left shift by n bits. Sign data is discarded. |
 | OP_RSHIFT | 153 | 0x99 | x n | x>>n | Logical right shift by n bits. Sign data is discarded. |
+| OP_NUM2BIN | 215 | 0xd7 | num size | bytes | Pads a BigNum to exactly size bytes. Fails if the number does not fit or size is negative or greater than the maximum script element size. |
+| OP_BIN2NUM | 216 | 0xd8 | bytes | num | Normalizes a byte string into a minimally encoded BigNum. |
 
 ### Cryptography
 
@@ -341,30 +347,6 @@ The following opcodes are supported by the Arkade script engine. They extend Bit
 |------|--------|-----|-------|--------|-------------|
 | OP_CHECKSIGFROMSTACK | 204 | 0xcc | sig pubkey message | True/false | Verifies a Schnorr signature. Pops signature (64 bytes), public key (32 bytes), and message from the stack. Returns 1 if valid, 0 otherwise. If signature is empty, pushes empty vector. |
 | OP_MERKLEBRANCHVERIFY | 179 | 0xb3 | leaf_tag branch_tag proof leaf_data | computed_root | Computes a Merkle root using BIP-341 tagged hashes. If leaf_tag is empty, leaf_data (32 bytes) is used as a raw hash; otherwise computes `tagged_hash(leaf_tag, leaf_data)`. Walks the proof path with lexicographic sibling ordering. Pushes the 32-byte computed root. Use with `OP_EQUALVERIFY` to verify against an expected root. |
-
-### 64-bit Arithmetic Operations
-
-These opcodes perform 64-bit arithmetic with overflow checking. All operands must be 8-byte little-endian values.
-
-| Word | Opcode | Hex | Input | Output | Description |
-|------|--------|-----|-------|--------|-------------|
-| OP_ADD64 | 215 | 0xd7 | a b | sum 1 (or a b 0) | Adds two 64-bit signed integers. On success: pushes sum and 1. On overflow: restores operands and pushes 0. |
-| OP_SUB64 | 216 | 0xd8 | a b | diff 1 (or a b 0) | Subtracts b from a (64-bit signed). On success: pushes difference and 1. On overflow: restores operands and pushes 0. |
-| OP_MUL64 | 217 | 0xd9 | a b | product 1 (or a b 0) | Multiplies two 64-bit signed integers. On success: pushes product and 1. On overflow: restores operands and pushes 0. |
-| OP_DIV64 | 218 | 0xda | a b | remainder quotient 1 (or a b 0) | Divides a by b (64-bit signed). On success: pushes remainder, quotient, and 1. On division by zero or overflow: restores operands and pushes 0. |
-| OP_NEG64 | 219 | 0xdb | x | -x 1 (or x 0) | Negates a 64-bit signed integer. On success: pushes result and 1. On overflow: restores operand and pushes 0. |
-| OP_LESSTHAN64 | 220 | 0xdc | a b | 1/0 | Returns 1 if a < b (64-bit signed), 0 otherwise. |
-| OP_LESSTHANOREQUAL64 | 221 | 0xdd | a b | 1/0 | Returns 1 if a ≤ b (64-bit signed), 0 otherwise. |
-| OP_GREATERTHAN64 | 222 | 0xde | a b | 1/0 | Returns 1 if a > b (64-bit signed), 0 otherwise. |
-| OP_GREATERTHANOREQUAL64 | 223 | 0xdf | a b | 1/0 | Returns 1 if a ≥ b (64-bit signed), 0 otherwise. |
-
-### Conversion Operations
-
-| Word | Opcode | Hex | Input | Output | Description |
-|------|--------|-----|-------|--------|-------------|
-| OP_SCRIPTNUMTOLE64 | 224 | 0xe0 | scriptNum | le64 | Converts a scriptNum to an 8-byte little-endian value. |
-| OP_LE64TOSCRIPTNUM | 225 | 0xe1 | le64 | scriptNum | Converts an 8-byte little-endian value to a scriptNum. |
-| OP_LE32TOLE64 | 226 | 0xe2 | le32 | le64 | Converts a 4-byte little-endian value to an 8-byte little-endian value (sign-extended). |
 
 ### Elliptic Curve Operations
 
@@ -407,26 +389,26 @@ These opcodes provide access to the Arkade Asset V1 packet embedded in the trans
 | Word | Opcode | Hex | Input | Output | Description |
 |------|--------|-----|-------|--------|-------------|
 | OP_INSPECTASSETGROUPNUM | 234 | 0xea | k source_u8 | count_u16 or in_u16 out_u16 | Returns count of inputs/outputs. source: 0=inputs, 1=outputs, 2=both. |
-| OP_INSPECTASSETGROUP | 235 | 0xeb | k j source_u8 | type_u8 [data...] amount_u64 | Returns j-th input/output of group k. source: 0=input, 1=output. |
-| OP_INSPECTASSETGROUPSUM | 236 | 0xec | k source_u8 | sum_u64 or in_u64 out_u64 | Returns sum of amounts with overflow safety. source: 0=inputs, 1=outputs, 2=both. |
+| OP_INSPECTASSETGROUP | 235 | 0xeb | k j source_u8 | type_u8 [data...] amount | Returns j-th input/output of group k. source: 0=input, 1=output. Amounts are pushed as BigNums. |
+| OP_INSPECTASSETGROUPSUM | 236 | 0xec | k source_u8 | sum or in_sum out_sum | Returns sum of amounts with overflow safety. source: 0=inputs, 1=outputs, 2=both. Amounts are pushed as BigNums. |
 
 **OP_INSPECTASSETGROUP return values by type:**
-- LOCAL input (0x01): `type_u8 input_index_u32 amount_u64`
-- INTENT input (0x02): `type_u8 txid_32 output_index_u32 amount_u64`
-- LOCAL output (0x01): `type_u8 output_index_u32 amount_u64`
+- LOCAL input (0x01): `type_u8 input_index_u32 amount`
+- INTENT input (0x02): `type_u8 txid_32 output_index_u32 amount`
+- LOCAL output (0x01): `type_u8 output_index_u32 amount`
 
 #### Cross-Output (Multi-Asset per UTXO)
 
 | Word | Opcode | Hex | Input | Output | Description |
 |------|--------|-----|-------|--------|-------------|
 | OP_INSPECTOUTASSETCOUNT | 237 | 0xed | o | n | Returns number of asset entries assigned to output o. |
-| OP_INSPECTOUTASSETAT | 238 | 0xee | o t | txid32 gidx_u16 amount_u64 | Returns t-th asset at output o. |
-| OP_INSPECTOUTASSETLOOKUP | 239 | 0xef | o txid32 gidx_u16 | amount_u64 or -1 | Returns amount of asset at output o, or -1 if not found. |
+| OP_INSPECTOUTASSETAT | 238 | 0xee | o t | txid32 gidx_u16 amount | Returns t-th asset at output o. Amount is pushed as a BigNum. |
+| OP_INSPECTOUTASSETLOOKUP | 239 | 0xef | o txid32 gidx_u16 | amount or -1 | Returns amount of asset at output o, or -1 if not found. Amount is pushed as a BigNum. |
 
 #### Cross-Input (Packet-Declared)
 
 | Word | Opcode | Hex | Input | Output | Description |
 |------|--------|-----|-------|--------|-------------|
 | OP_INSPECTINASSETCOUNT | 240 | 0xf0 | i | n | Returns number of assets declared for input i. |
-| OP_INSPECTINASSETAT | 241 | 0xf1 | i t | txid32 gidx_u16 amount_u64 | Returns t-th asset declared for input i. |
-| OP_INSPECTINASSETLOOKUP | 242 | 0xf2 | i txid32 gidx_u16 | amount_u64 or -1 | Returns declared amount for asset at input i, or -1 if not found. |
+| OP_INSPECTINASSETAT | 241 | 0xf1 | i t | txid32 gidx_u16 amount | Returns t-th asset declared for input i. Amount is pushed as a BigNum. |
+| OP_INSPECTINASSETLOOKUP | 242 | 0xf2 | i txid32 gidx_u16 | amount or -1 | Returns declared amount for asset at input i, or -1 if not found. Amount is pushed as a BigNum. |
