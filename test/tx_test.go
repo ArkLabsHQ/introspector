@@ -169,7 +169,6 @@ func TestSubmitOffchain(t *testing.T) {
 		require.Contains(t, err.Error(), "failed to process transaction")
 	}
 
-
 	t.Run("single_input_invalid_script", func(t *testing.T) {
 		fundAndSettleAlice(t, ctx, alice, 10000)
 
