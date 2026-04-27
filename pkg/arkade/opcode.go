@@ -2861,6 +2861,10 @@ func opcodeInspectInputPacket(op *opcode, data []byte, vm *Engine) error {
 		return scriptError(txscript.ErrInvalidStackOperation, "packet type out of range")
 	}
 
+	if vm.prevOutFetcher == nil {
+		return scriptError(txscript.ErrInvalidIndex, "previous output fetcher not set")
+	}
+
 	outpoint := vm.tx.TxIn[int(index)].PreviousOutPoint
 	prevTx := vm.prevOutFetcher.FetchPrevOutArkTx(outpoint)
 	if prevTx == nil {
