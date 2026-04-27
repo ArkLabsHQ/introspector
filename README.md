@@ -6,85 +6,12 @@
 
 _Introspector is a signing service for the [Arkade](https://docs.arkadeos.com/) protocol, executing [Arkade Script](https://docs.arkadeos.com/experimental/arkade-script)._
 
-This is achieved by signing any Ark transaction (offchain or intent proof) expecting the signature of a [tweaked public key](pkg/arkade/tweak.go). The tweaked key is `introspector_key + hash(arkade_script)`, where the script hash is a [tagged hash](pkg/arkade/tweak.go#L15) (`"ArkScriptHash"`). The Arkade script is revealed via an [Introspector Packet](pkg/arkade/introspector_packet.go) committed in a transaction OP_RETURN output. The packet is a TLV (Type-Length-Value) stream with magic bytes `ARK` (`0x41524b`), containing per-input entries with the script bytecode and optional witness arguments.
+This is achieved by signing any Ark transaction (offchain or intent proof) expecting the signature of a [tweaked public key](pkg/arkade/tweak.go). The tweaked key is `introspector_key + hash(arkade_script)`, where the script hash is a [tagged hash](pkg/arkade/tweak.go) (`"ArkScriptHash"`). The Arkade script is revealed via an [Introspector Packet](pkg/arkade/introspector_packet.go) committed inside an ARK extension OP_RETURN output. An ARK extension is a TLV stream prefixed with magic bytes `ARK` (`0x41524b`); the Introspector Packet is one of its packet types (`0x01`), containing per-input entries with the script bytecode and optional witness arguments.
 
-## Example: Pay-to-Two-Outputs
+## ArkadeScript examples
 
-This example builds a VTXO that can only be spent if two specific outputs are created with exact amounts. The introspector enforces these conditions via an Arkade script. See the full test in [`test/pay_2_out_test.go`](test/pay_2_out_test.go).
-
-### 1. Build the Arkade script
-
-The script uses introspection opcodes to verify the transaction outputs match the expected addresses and amounts:
-
-```go
-arkadeScript, _ := txscript.NewScriptBuilder().
-    // output 0 must pay to alice
-    AddInt64(0).AddOp(arkade.OP_INSPECTOUTPUTSCRIPTPUBKEY).
-    AddOp(arkade.OP_1).AddOp(arkade.OP_EQUALVERIFY).       // segwit v1
-    AddData(alicePkScript[2:]).AddOp(arkade.OP_EQUALVERIFY). // witness program
-    // output 0 must have exact amount
-    AddInt64(0).AddOp(arkade.OP_INSPECTOUTPUTVALUE).
-    AddData(uint64LE(aliceAmount)).AddOp(arkade.OP_EQUALVERIFY).
-    // output 1 must pay to bob
-    AddInt64(1).AddOp(arkade.OP_INSPECTOUTPUTSCRIPTPUBKEY).
-    AddOp(arkade.OP_1).AddOp(arkade.OP_EQUALVERIFY).
-    AddData(bobPkScript[2:]).AddOp(arkade.OP_EQUALVERIFY).
-    // output 1 must have exact amount
-    AddInt64(1).AddOp(arkade.OP_INSPECTOUTPUTVALUE).
-    AddData(uint64LE(bobAmount)).AddOp(arkade.OP_EQUAL).
-    Script()
-```
-
-### 2. Compute the tweaked key and build the VTXO tapscript
-
-The VTXO uses a `MultisigClosure` with three keys: the ark server, the user and the introspector's tweaked key.
-
-```go
-scriptHash := arkade.ArkadeScriptHash(arkadeScript)
-tweakedKey := arkade.ComputeArkadeScriptPublicKey(introspectorPubKey, scriptHash)
-
-vtxoScript := script.TapscriptsVtxoScript{
-    Closures: []script.Closure{
-        &script.MultisigClosure{
-            PubKeys: []*btcec.PublicKey{aliceKey, tweakedKey, serverKey},
-        },
-    },
-}
-vtxoTapKey, _, _ := vtxoScript.TapTree()
-```
-
-### 3. Build the PSBT and attach the Introspector Packet
-
-Build the offchain transaction with outputs matching the script, then commit the Arkade script in an OP_RETURN Introspector Packet:
-
-```go
-tx, checkpoints, _ := offchain.BuildTxs(
-    []offchain.VtxoInput{vtxoInput},
-    []*wire.TxOut{
-        {Value: aliceAmount, PkScript: alicePkScript},
-        {Value: bobAmount, PkScript: bobPkScript},
-    },
-    checkpointScript,
-)
-
-// build the introspector packet with script for input 0
-packet := &arkade.IntrospectorPacket{
-    Entries: []arkade.IntrospectorEntry{
-        {Vin: 0, Script: arkadeScript},
-    },
-}
-opReturnScript, _ := arkade.BuildOpReturnScript(nil, packet)
-tx.UnsignedTx.AddTxOut(&wire.TxOut{Value: 0, PkScript: opReturnScript})
-tx.Outputs = append(tx.Outputs, psbt.POutput{})
-```
-
-### 4. Submit to the introspector
-
-The introspector [decodes the tapscript](internal/application/utils.go), verifies it is a `MultisigClosure` containing the expected tweaked key, [executes the Arkade script](internal/application/tx.go) against the Ark transaction, and signs both the matching Ark input and checkpoint if it passes. If it is the last required non-`arkd` signer for all owned inputs matched by the introspector packet, it then submits the transaction set to `arkd`, merges `arkd`'s checkpoint signatures, and finalizes the transaction:
-
-```go
-signedTx, signedCheckpoints, _ := introspectorClient.SubmitTx(ctx, encodedTx, encodedCheckpoints)
-```
+- [`test/htlc_test.go`](test/htlc_test.go) — **Non-interactive HTLC.** A 2-of-2 (`arkd` + introspector-tweaked) VTXO with a claim path gated by HASH160(preimage) and a refund path gated by absolute timelock. Neither the receiver nor the sender ever signs — an arkade covenant enforcing destination + amount replaces both their signatures.
+- [`test/delegate_test.go`](test/delegate_test.go) — **Non-interactive delegate.** A 2-of-2 (`arkd` + introspector-tweaked) VTXO refreshed through batch settlement by any solver, with a CSV exit leaf reserved for the user. The arkade covenant is a self-send (preserves the input's scriptPubKey + value on output 0) gated to intent-proof transactions (`OP_INSPECTVERSION` == 2) so it cannot be drained via off-chain self-send loops.
 
 ## API
 
@@ -209,6 +136,44 @@ Inputs whose tapscript closure also contains the `arkd` signer pubkey are reject
 }
 ```
 
+## Introspector Packet
+
+The Introspector Packet is the data structure that reveals which inputs of a transaction must be checked by the introspector, the Arkade script bytecode to execute for each, and any witness arguments the script consumes. It lives inside an [ARK extension](https://github.com/arkade-os/arkd/tree/master/pkg/ark-lib/extension) — an OP_RETURN output whose payload starts with the magic prefix `ARK` (`0x41 0x52 0x4b`) followed by a sequence of `(type, length, value)` packets. The introspector packet has type byte `0x01` and shares the envelope with other ARK packets (e.g. the asset packet, type `0x00`); a single OP_RETURN can carry both, and helpers like [`addIntrospectorPacket`](test/utils_test.go) merge the introspector packet into an existing extension when one is already present.
+
+The packet content (the value side of the outer TLV) has the following layout — `varint` denotes a Bitcoin-style compact size integer:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `entry_count` | varint | Number of entries. Must be `>= 1` and `<= 1000`. |
+| `entry[0..entry_count]` | per-entry block (below) | Repeated `entry_count` times. |
+
+Each entry block is:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `vin` | u16 LE | Input index this entry applies to. Must be unique across the packet. |
+| `script_len` | varint | Length of `script` in bytes. Must be `>= 1` and `<= 10_000`. |
+| `script` | bytes | Arkade Script bytecode. |
+| `witness_len` | varint | Length of the encoded `witness` blob in bytes. Must be `<= 1_000_000`. |
+| `witness` | bytes | Witness blob (see below). May be empty (`witness_len = 0`). |
+
+The `witness` blob is encoded with `psbt.WriteTxWitness` / `txutils.ReadTxWitness`, **not** raw Bitcoin wire-format witness. Concretely, the blob is `varint(num_items)` followed by `varint(item_len) + item_bytes` for each stack item.
+
+The serialized packet is the value of an outer TLV record `(0x01, varint(content_len), content)` written into the ARK extension, which itself is wrapped in an OP_RETURN output. The encoder bypasses `txscript.ScriptBuilder`'s 520-byte data push cap so the OP_RETURN can hold the full extension regardless of size.
+
+### Validation rules
+
+`Validate()` enforces, and any non-Go decoder must enforce:
+
+- `1 <= entry_count <= 1000`
+- For every entry: `1 <= len(script) <= 10_000`, `len(witness_blob) <= 1_000_000`
+- `vin` is unique across the packet (an entry per vin, never two)
+- No trailing bytes after the last entry
+
+### Consensus relevance
+
+The Arkade opcodes `OP_INSPECTPACKET` (`0xf4`) and `OP_INSPECTINPUTPACKET` (`0xf5`) read the raw packet bytes for a given type from the current transaction or a previous Ark transaction's extension. Any Arkade script that uses these opcodes is sensitive to the exact serialized form of the packet — i.e. the wire format above is part of the consensus surface for those scripts, and changes to it must be treated as a protocol change.
+
 ## Configuration
 
 The service can be configured using environment variables:
@@ -217,7 +182,7 @@ The service can be configured using environment variables:
 |----------|-------------|---------|
 | `INTROSPECTOR_SECRET_KEY` | Private key for signing (hex encoded) | Required |
 | `INTROSPECTOR_DATADIR` | Data directory path | OS-specific app data dir |
-| `INTROSPECTOR_PORT` | gRPC server port | 7073 |
+| `INTROSPECTOR_PORT` | Server port (gRPC + HTTP REST gateway) | 7073 |
 | `INTROSPECTOR_NO_TLS` | Disable TLS encryption | false |
 | `INTROSPECTOR_TLS_EXTRA_IPS` | Additional IPs for TLS cert | [] |
 | `INTROSPECTOR_TLS_EXTRA_DOMAINS` | Additional domains for TLS cert | [] |
@@ -228,7 +193,7 @@ The service can be configured using environment variables:
 
 ### Prerequisites
 
-- Go 1.25+
+- Go 1.26+
 - Docker and Docker Compose
 - Buf CLI (for protocol buffer generation)
 - [Nigiri](https://nigiri.vulpem.com) (for integration testing)
@@ -274,7 +239,7 @@ The following opcodes are supported by the Arkade script engine. They extend Bit
 |------|--------|-----|-------|--------|-------------|
 | OP_INSPECTINPUTOUTPOINT | 199 | 0xc7 | index | txid index | Pushes the transaction ID (32 bytes) and output index (scriptNum) of the input at the given index onto the stack. |
 | OP_INSPECTINPUTARKADESCRIPTHASH | 200 | 0xc8 | index | script_hash | Pushes the 32-byte Arkade script hash (`tagged_hash("ArkScriptHash", script)`) of the IntrospectorEntry for the input at the given index. This is the same hash used as the tweak scalar in `ComputeArkadeScriptPublicKey`. Fails if no entry exists. |
-| OP_INSPECTINPUTVALUE | 201 | 0xc9 | index | value | Pushes the value (8 bytes, little-endian) of the previous output spent by the input at the given index. |
+| OP_INSPECTINPUTVALUE | 201 | 0xc9 | index | value | Pushes the satoshi value of the previous output spent by the input at the given index, as a minimally-encoded BigNum. |
 | OP_INSPECTINPUTSCRIPTPUBKEY | 202 | 0xca | index | program version | For witness programs: pushes the witness program (2-40 bytes) and segwit version (scriptNum). For non-native segwit: pushes SHA256 hash of scriptPubKey and -1. |
 | OP_INSPECTINPUTSEQUENCE | 203 | 0xcb | index | sequence | Pushes the sequence number (4 bytes, little-endian) of the input at the given index. |
 | OP_PUSHCURRENTINPUTINDEX | 205 | 0xcd | Nothing | index | Pushes the current input index (scriptNum) being evaluated onto the stack. |
@@ -284,7 +249,7 @@ The following opcodes are supported by the Arkade script engine. They extend Bit
 
 | Word | Opcode | Hex | Input | Output | Description |
 |------|--------|-----|-------|--------|-------------|
-| OP_INSPECTOUTPUTVALUE | 207 | 0xcf | index | value | Pushes the value (8 bytes, little-endian) of the output at the given index. |
+| OP_INSPECTOUTPUTVALUE | 207 | 0xcf | index | value | Pushes the satoshi value of the output at the given index, as a minimally-encoded BigNum. |
 | OP_INSPECTOUTPUTSCRIPTPUBKEY | 209 | 0xd1 | index | program version | For witness programs: pushes the witness program (2-40 bytes) and segwit version (scriptNum). For non-native segwit: pushes SHA256 hash of scriptPubKey and -1. |
 
 ### Transaction Introspection (Transaction)
