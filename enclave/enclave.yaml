@@ -15,8 +15,8 @@ is_kms_key_locked: false         # false (default): grant AWS root kms:PutKeyPol
 # The supervisor handles attestation, secrets, PCR extension, and signing
 # middleware automatically. Your app is a plain HTTP server with zero runtime imports.
 runtime:
-  rev: "v0.0.71"
-  hash: "sha256-4WQaXyPCVg0ysUHqhnHTBVTPlhNFlPplJqtzVp1ZHV4="
+  rev: "v0.0.72"
+  hash: "sha256-l1Zz4Bzz/lUI5dw267UoFgtUarYhABjKKnornzcEGA0="
   vendor_hash: "sha256-2ZX9x2voIwVkUsmrZvhJssAQqnCh8/HLwopL5HpiaOg="
 
 app:
