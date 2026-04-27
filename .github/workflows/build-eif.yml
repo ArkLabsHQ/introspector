@@ -47,25 +47,41 @@ jobs:
             .enclave/artifacts/supervisor
           retention-days: 7
 
-      - name: Upload to latest release
+      - name: Publish EIF releases (immutable + latest)
         env:
           GH_TOKEN: ${{ github.token }}
           PCR0: ${{ steps.pcr.outputs.pcr0 }}
           COMMIT_SHA: ${{ github.sha }}
         run: |
-          TAG="eif-latest"
-          gh release delete "$TAG" --yes 2>/dev/null || true
-          gh release create "$TAG" \
+          IMMUTABLE_TAG="eif-${COMMIT_SHA::12}"
+          NOTES="Auto-built EIF from commit ${COMMIT_SHA::8}
+          PCR0: ${PCR0}"
+
+          # Immutable, per-commit release. Production deployments should pin to
+          # this tag (or its commit-specific release_tag) for a stable PCR0.
+          if ! gh release view "$IMMUTABLE_TAG" >/dev/null 2>&1; then
+            gh release create "$IMMUTABLE_TAG" \
+              --title "EIF ${COMMIT_SHA::8}" \
+              --notes "$NOTES" \
+              --prerelease \
+              .enclave/artifacts/image.eif \
+              .enclave/artifacts/pcr.json \
+              .enclave/artifacts/supervisor
+          else
+            echo "Immutable release ${IMMUTABLE_TAG} already exists, skipping."
+          fi
+
+          # Mutable 'eif-latest' for dev iteration. Prod must NOT pin here.
+          gh release delete eif-latest --yes 2>/dev/null || true
+          gh release create eif-latest \
             --title "EIF (latest)" \
-            --notes "Auto-built EIF from commit ${COMMIT_SHA::8}
-          PCR0: ${PCR0}" \
+            --notes "$NOTES" \
             --prerelease \
             .enclave/artifacts/image.eif \
             .enclave/artifacts/pcr.json \
             .enclave/artifacts/supervisor
 
       - name: Publish build manifest
-        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}

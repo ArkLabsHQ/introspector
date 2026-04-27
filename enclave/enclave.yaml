@@ -41,6 +41,8 @@ app:
   # Template vars: {{region}}, {{prefix}}, {{version}}
   env:
     INTROSPECTOR_PORT: "7074"
+    INTROSPECTOR_NO_TLS: "true"
+    INTROSPECTOR_ARKD_URL: "{{arkd_url}}"
 
 secrets:
   - name: signing_key
