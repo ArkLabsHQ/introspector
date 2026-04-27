@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/ArkLabsHQ/introspector/pkg/arkade"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -62,7 +63,7 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 			if err != nil {
 				return nil, err
 			}
-			if err := s.signer.signInput(forfeit, inputIndex, arkadeScript.hash, prevoutFetcher); err != nil {
+			if err := s.signer.signInput(forfeit, inputIndex, arkadeScript.Hash(), prevoutFetcher); err != nil {
 				return nil, fmt.Errorf("failed to sign input %d: %w", inputIndex, err)
 			}
 			signedForfeits = append(signedForfeits, forfeit)
@@ -74,8 +75,8 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 		Forfeits: signedForfeits,
 	}
 
-	if len(signedForfeits) == len(signedInputs) {
-		// all forfeits are signed, it means no boarding inputs, we can return
+	if len(signedInputs) == 0 {
+		// all signed inputs were matched to forfeits, no boarding inputs remain
 		return signedBatchFinalization, nil
 	}
 
@@ -93,7 +94,7 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 		}
 
 		if err := s.signer.signInput(
-			finalization.CommitmentTx, inputIndex, arkadeScript.hash, prevoutFetcher,
+			finalization.CommitmentTx, inputIndex, arkadeScript.Hash(), prevoutFetcher,
 		); err != nil {
 			return nil, fmt.Errorf("failed to sign input %d: %w", inputIndex, err)
 		}
@@ -108,20 +109,32 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 }
 
 // getSignedInputs iterates over tapscript sigs to find arkade script inputs with valid signature
-func getSignedInputs(ptx psbt.Packet, signerPublicKey *btcec.PublicKey) (map[wire.OutPoint]*arkadeScript, error) {
+func getSignedInputs(ptx psbt.Packet, signerPublicKey *btcec.PublicKey) (map[wire.OutPoint]*arkade.ArkadeScript, error) {
 	prevoutFetcher, err := computePrevoutFetcher(&ptx)
 	if err != nil {
 		return nil, err
 	}
 	sighashes := txscript.NewTxSigHashes(ptx.UnsignedTx, prevoutFetcher)
 
-	signedInputs := make(map[wire.OutPoint]*arkadeScript)
+	signedInputs := make(map[wire.OutPoint]*arkade.ArkadeScript)
 
 	if len(ptx.Inputs) != len(ptx.UnsignedTx.TxIn) {
 		return nil, fmt.Errorf("malformed psbt")
 	}
 
-	for inputIndex, input := range ptx.Inputs {
+	// Parse IntrospectorPacket from the transaction's OP_RETURN output
+	packet, err := arkade.FindIntrospectorPacket(ptx.UnsignedTx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse introspector packet: %w", err)
+	}
+
+	if len(packet) == 0 {
+		return nil, fmt.Errorf("no introspector packet found in transaction")
+	}
+
+	for _, entry := range packet {
+		inputIndex := int(entry.Vin)
+
 		if inputIndex == 0 {
 			// in intent proof, input index 0 is the message input
 			// it is not a valid vtxo output : no forfeit will be associated to it
@@ -129,16 +142,21 @@ func getSignedInputs(ptx psbt.Packet, signerPublicKey *btcec.PublicKey) (map[wir
 			continue
 		}
 
+		if inputIndex >= len(ptx.Inputs) {
+			continue
+		}
+
+		input := ptx.Inputs[inputIndex]
 		if len(input.TaprootScriptSpendSig) == 0 {
 			continue // not signed: skip
 		}
 
-		script, err := readArkadeScript(&ptx, inputIndex, signerPublicKey)
+		script, err := arkade.ReadArkadeScript(&ptx, signerPublicKey, entry)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read arkade script: %w", err)
 		}
 
-		xOnlyPubKey := schnorr.SerializePubKey(script.pubkey)
+		xOnlyPubKey := schnorr.SerializePubKey(script.PubKey())
 
 		for _, sig := range input.TaprootScriptSpendSig {
 			if !bytes.Equal(sig.XOnlyPubKey, xOnlyPubKey) {
@@ -151,13 +169,13 @@ func getSignedInputs(ptx psbt.Packet, signerPublicKey *btcec.PublicKey) (map[wir
 			}
 
 			message, err := txscript.CalcTapscriptSignaturehash(
-				sighashes, sig.SigHash, ptx.UnsignedTx, inputIndex, prevoutFetcher, script.tapLeaf,
+				sighashes, sig.SigHash, ptx.UnsignedTx, inputIndex, prevoutFetcher, script.TapLeaf(),
 			)
 			if err != nil {
 				return nil, fmt.Errorf("failed to calculate tapscript signature hash: %w", err)
 			}
 
-			if !tapscriptSig.Verify(message, script.pubkey) {
+			if !tapscriptSig.Verify(message, script.PubKey()) {
 				return nil, fmt.Errorf("invalid signature for input %d", inputIndex)
 			}
 

@@ -1,0 +1,134 @@
+{
+  "valid": [
+    {
+      "name": "multisig closure (checksig)",
+      "signerPublicKey": "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+      "psbt": "cHNidP8BAFICAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////AegDAAAAAAAAFgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZq0g0jHBebSFpXbjA9Dk50Bdv1PRbqKWwJAw9xEERODAz2uswAAA",
+      "entry": {
+        "vin": 0,
+        "script": "51",
+        "witness": []
+      }
+    },
+    {
+      "name": "multisig closure (checksigadd)",
+      "signerPublicKey": "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+      "psbt": "cHNidP8BAFICAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////AegDAAAAAAAAFgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARyBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqwg0jHBebSFpXbjA9Dk50Bdv1PRbqKWwJAw9xEERODAz2u6UpzAAAA=",
+      "entry": {
+        "vin": 0,
+        "script": "51",
+        "witness": []
+      }
+    },
+    {
+      "name": "csv multisig closure",
+      "signerPublicKey": "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+      "psbt": "cHNidP8BAFICAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////AegDAAAAAAAAFgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrASFqydSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZq0g0jHBebSFpXbjA9Dk50Bdv1PRbqKWwJAw9xEERODAz2uswAAA",
+      "entry": {
+        "vin": 0,
+        "script": "51",
+        "witness": []
+      }
+    },
+    {
+      "name": "cltv multisig closure",
+      "signerPublicKey": "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+      "psbt": "cHNidP8BAFICAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////AegDAAAAAAAAFgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrASQFksXUgTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2atINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrMAAAA==",
+      "entry": {
+        "vin": 0,
+        "script": "51",
+        "witness": []
+      }
+    },
+    {
+      "name": "condition multisig closure",
+      "signerPublicKey": "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+      "psbt": "cHNidP8BAFICAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////AegDAAAAAAAAFgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrAR1FpIE1LbNE2EDLKm9KuudkAqk1F2erYCslCM3TEUaclTQdmrSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa6zAAAA=",
+      "entry": {
+        "vin": 0,
+        "script": "51",
+        "witness": []
+      }
+    },
+    {
+      "name": "condition csv multisig closure",
+      "signerPublicKey": "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+      "psbt": "cHNidP8BAFICAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////AegDAAAAAAAAFgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrASlFpWrJ1IE1LbNE2EDLKm9KuudkAqk1F2erYCslCM3TEUaclTQdmrSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa6zAAAA=",
+      "entry": {
+        "vin": 0,
+        "script": "51",
+        "witness": []
+      }
+    },
+    {
+      "name": "with witness data",
+      "signerPublicKey": "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+      "psbt": "cHNidP8BAFICAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////AegDAAAAAAAAFgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswAAA",
+      "entry": {
+        "vin": 0,
+        "script": "51",
+        "witness": [
+          "deadbeef",
+          "cafebabe"
+        ]
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "input index out of range",
+      "signerPublicKey": "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+      "psbt": "cHNidP8BAFICAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////AegDAAAAAAAAFgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZq0g0jHBebSFpXbjA9Dk50Bdv1PRbqKWwJAw9xEERODAz2uswAAA",
+      "entry": {
+        "vin": 2,
+        "script": "51",
+        "witness": []
+      },
+      "errorContains": "input index out of range"
+    },
+    {
+      "name": "no taproot leaf script",
+      "signerPublicKey": "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+      "psbt": "cHNidP8BAFICAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////AegDAAAAAAAAFgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "entry": {
+        "vin": 0,
+        "script": "51",
+        "witness": []
+      },
+      "errorContains": "TaprootLeafScript"
+    },
+    {
+      "name": "invalid tapscript",
+      "signerPublicKey": "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+      "psbt": "cHNidP8BAFICAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////AegDAAAAAAAAFgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrABd6tvu/AAAA=",
+      "entry": {
+        "vin": 0,
+        "script": "51",
+        "witness": []
+      },
+      "errorContains": "failed to decode tapscript"
+    },
+    {
+      "name": "tweaked pubkey not found (wrong signer)",
+      "signerPublicKey": "462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b",
+      "psbt": "cHNidP8BAFICAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////AegDAAAAAAAAFgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZq0g0jHBebSFpXbjA9Dk50Bdv1PRbqKWwJAw9xEERODAz2uswAAA",
+      "entry": {
+        "vin": 0,
+        "script": "51",
+        "witness": []
+      },
+      "errorContains": "tweaked arkade script public key not found"
+    },
+    {
+      "name": "tweaked pubkey not found (wrong arkade script)",
+      "signerPublicKey": "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+      "psbt": "cHNidP8BAFICAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////AegDAAAAAAAAFgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZq0gUx/mBoE0UD0nIxMyJ8hnrI+myDxTfppEw8W9vcsf4zeswAAA",
+      "entry": {
+        "vin": 0,
+        "script": "51",
+        "witness": []
+      },
+      "errorContains": "tweaked arkade script public key not found"
+    }
+  ]
+}

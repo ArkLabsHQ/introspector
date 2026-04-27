@@ -1,0 +1,66 @@
+{
+  "valid": [
+    {
+      "name": "single entry",
+      "encoded": "010000030102030401020405",
+      "entries": [
+        {"vin": 0, "script": "010203", "witness": ["0405"]}
+      ]
+    },
+    {
+      "name": "multiple entries",
+      "encoded": "0300000101030101020100020304050201050106050001070100",
+      "entries": [
+        {"vin": 0, "script": "01", "witness": ["02"]},
+        {"vin": 1, "script": "0304", "witness": ["05", "06"]},
+        {"vin": 5, "script": "07", "witness": []}
+      ]
+    },
+    {
+      "name": "large vin",
+      "encoded": "01ffff010103010102",
+      "entries": [
+        {"vin": 65535, "script": "01", "witness": ["02"]}
+      ]
+    }
+  ],
+  "invalid": [
+    {
+      "name": "empty packet",
+      "entries": []
+    },
+    {
+      "name": "empty script",
+      "entries": [
+        {"vin": 0, "script": "", "witness": []}
+      ]
+    },
+    {
+      "name": "duplicate vin",
+      "entries": [
+        {"vin": 0, "script": "01", "witness": []},
+        {"vin": 0, "script": "02", "witness": []}
+      ]
+    },
+    {
+      "name": "trailing bytes",
+      "encoded": "0000000101ff"
+    },
+    {
+      "name": "truncated entry",
+      "encoded": "0100"
+    },
+    {
+      "name": "entry count exceeds max",
+      "encoded": "fde903"
+    },
+    {
+      "name": "script length exceeds max",
+      "encoded": "010000fd1127"
+    },
+    {
+      "name": "witness length exceeds max",
+      "encoded": "0100000101fe41420f00"
+    }
+  ]
+}

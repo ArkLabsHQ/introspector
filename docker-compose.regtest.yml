@@ -8,8 +8,10 @@ services:
     ports:
       - 7073:7073
     environment:
-      - INTROSPECTOR_SECRET_KEY=f40f6e7a5cf262f4093d4605b8f40cbaf9da9e59bf32f24bb27a4ffc74f71eab
+       # public key has odd y
+      - INTROSPECTOR_SECRET_KEY=5646b2e23bbb82491fb4ef262079ff17594d5e873fc6bcea5f1453edbe1029b1
       - INTROSPECTOR_NO_TLS=true
+      - INTROSPECTOR_ARKD_URL=arkd:7070
     volumes:
       - type: tmpfs
         target: /app/data
@@ -20,7 +22,7 @@ services:
     image: postgres:16
     container_name: pgnbxplorer
     ports:
-      - 5432:5432
+      - 5433:5432
     environment:
       - POSTGRES_HOST_AUTH_METHOD=trust
     volumes:
@@ -60,7 +62,7 @@ services:
 
   arkd-wallet:
     restart: unless-stopped
-    image: ghcr.io/arkade-os/arkd-wallet:v0.8.11
+    image: ghcr.io/arkade-os/arkd-wallet:v0.9.3
     container_name: arkd-wallet
     depends_on:
       - nbxplorer
@@ -76,7 +78,9 @@ services:
       - type: tmpfs
         target: /app/data
   arkd:
-    image: ghcr.io/arkade-os/arkd:v0.8.11
+    build:
+      context: https://github.com/arkade-os/arkd.git#v0.9.3
+      dockerfile: Dockerfile
     container_name: arkd
     restart: unless-stopped
     depends_on:
@@ -87,11 +91,11 @@ services:
     environment:
       - ARKD_LOG_LEVEL=6
       - ARKD_NO_MACAROONS=true
-      - ARKD_VTXO_TREE_EXPIRY=20
+      - ARKD_VTXO_TREE_EXPIRY=512
       - ARKD_SCHEDULER_TYPE=block
       - ARKD_UNILATERAL_EXIT_DELAY=512
       - ARKD_BOARDING_EXIT_DELAY=1024
-      - ARKD_CHECKPOINT_EXIT_DELAY=10
+      - ARKD_CHECKPOINT_EXIT_DELAY=512
       - ARKD_DATADIR=./data/regtest
       - ARKD_WALLET_ADDR=arkd-wallet:6060
       - ARKD_ESPLORA_URL=http://chopsticks:3000

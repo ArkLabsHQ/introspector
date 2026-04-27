@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	introspectorv1 "github.com/ArkLabsHQ/introspector/api-spec/protobuf/gen/introspector/v1"
+	"github.com/ArkLabsHQ/introspector/internal/application"
 	"github.com/ArkLabsHQ/introspector/internal/config"
 	interfaces "github.com/ArkLabsHQ/introspector/internal/interface"
 	"github.com/ArkLabsHQ/introspector/internal/interface/grpc/handlers"
@@ -33,6 +34,7 @@ type service struct {
 	version    string
 	config     Config
 	cfg        *config.Config
+	appSvc     application.Service
 	server     *http.Server
 	grpcServer *grpc.Server
 }
@@ -78,8 +80,16 @@ func (s *service) Start() error {
 }
 
 func (s *service) Stop() {
-	withAppSvc := true
-	s.stop(withAppSvc)
+	if s.appSvc != nil {
+		s.appSvc.Close()
+	}
+	if s.grpcServer != nil {
+		s.grpcServer.Stop()
+	}
+	if s.server != nil {
+		// nolint
+		s.server.Shutdown(context.Background())
+	}
 	log.Info("shutdown service")
 }
 
@@ -105,18 +115,6 @@ func (s *service) start() error {
 	return nil
 }
 
-func (s *service) stop(withAppSvc bool) {
-	if withAppSvc {
-		appSvc, _ := s.cfg.AppService()
-		if appSvc != nil {
-			log.Info("stopped app service")
-		}
-		s.grpcServer.Stop()
-	}
-	// nolint
-	s.server.Shutdown(context.Background())
-}
-
 func (s *service) newServer(tlsConfig *tls.Config) error {
 	ctx := context.Background()
 
@@ -136,10 +134,11 @@ func (s *service) newServer(tlsConfig *tls.Config) error {
 	// Server grpc.
 	grpcServer := grpc.NewServer(grpcConfig...)
 
-	appSvc, err := s.cfg.AppService()
+	appSvc, err := s.cfg.AppService(ctx)
 	if err != nil {
 		return err
 	}
+	s.appSvc = appSvc
 	appHandler := handlers.New(s.version, appSvc)
 	introspectorv1.RegisterIntrospectorServiceServer(grpcServer, appHandler)
 

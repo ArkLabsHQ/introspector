@@ -6,432 +6,17 @@
 package arkade
 
 import (
-	"encoding/hex"
-	"errors"
+	"bytes"
 	"fmt"
-	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
+	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 )
-
-// TestBadPC sets the pc to a deliberately bad result then confirms that Step
-// and Disasm fail correctly.
-func TestBadPC(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		scriptIdx int
-	}{
-		{scriptIdx: 2},
-		{scriptIdx: 3},
-	}
-
-	// tx with almost empty scripts.
-	tx := &wire.MsgTx{
-		Version: 1,
-		TxIn: []*wire.TxIn{
-			{
-				PreviousOutPoint: wire.OutPoint{
-					Hash: chainhash.Hash([32]byte{
-						0xc9, 0x97, 0xa5, 0xe5,
-						0x6e, 0x10, 0x41, 0x02,
-						0xfa, 0x20, 0x9c, 0x6a,
-						0x85, 0x2d, 0xd9, 0x06,
-						0x60, 0xa2, 0x0b, 0x2d,
-						0x9c, 0x35, 0x24, 0x23,
-						0xed, 0xce, 0x25, 0x85,
-						0x7f, 0xcd, 0x37, 0x04,
-					}),
-					Index: 0,
-				},
-				SignatureScript: mustParseShortForm("NOP"),
-				Sequence:        4294967295,
-			},
-		},
-		TxOut: []*wire.TxOut{{
-			Value:    1000000000,
-			PkScript: nil,
-		}},
-		LockTime: 0,
-	}
-	pkScript := mustParseShortForm("NOP")
-
-	for _, test := range tests {
-		vm, err := NewEngine(pkScript, tx, 0, 0, nil, nil, -1, nil)
-		if err != nil {
-			t.Errorf("Failed to create script: %v", err)
-		}
-
-		// Set to after all scripts.
-		vm.scriptIdx = test.scriptIdx
-
-		// Ensure attempting to step fails.
-		_, err = vm.Step()
-		if err == nil {
-			t.Errorf("Step with invalid pc (%v) succeeds!", test)
-			continue
-		}
-
-		// Ensure attempting to disassemble the current program counter fails.
-		_, err = vm.DisasmPC()
-		if err == nil {
-			t.Errorf("DisasmPC with invalid pc (%v) succeeds!", test)
-		}
-	}
-}
-
-// TestCheckErrorCondition tests the execute early test in CheckErrorCondition()
-// since most code paths are tested elsewhere.
-func TestCheckErrorCondition(t *testing.T) {
-	t.Parallel()
-
-	// tx with almost empty scripts.
-	tx := &wire.MsgTx{
-		Version: 1,
-		TxIn: []*wire.TxIn{{
-			PreviousOutPoint: wire.OutPoint{
-				Hash: chainhash.Hash([32]byte{
-					0xc9, 0x97, 0xa5, 0xe5,
-					0x6e, 0x10, 0x41, 0x02,
-					0xfa, 0x20, 0x9c, 0x6a,
-					0x85, 0x2d, 0xd9, 0x06,
-					0x60, 0xa2, 0x0b, 0x2d,
-					0x9c, 0x35, 0x24, 0x23,
-					0xed, 0xce, 0x25, 0x85,
-					0x7f, 0xcd, 0x37, 0x04,
-				}),
-				Index: 0,
-			},
-			SignatureScript: nil,
-			Sequence:        4294967295,
-		}},
-		TxOut: []*wire.TxOut{{
-			Value:    1000000000,
-			PkScript: nil,
-		}},
-		LockTime: 0,
-	}
-	pkScript := mustParseShortForm("NOP NOP NOP NOP NOP NOP NOP NOP NOP" +
-		" NOP TRUE")
-
-	vm, err := NewEngine(pkScript, tx, 0, 0, nil, nil, 0, nil)
-	if err != nil {
-		t.Errorf("failed to create script: %v", err)
-	}
-
-	for i := 0; i < len(pkScript)-1; i++ {
-		done, err := vm.Step()
-		if err != nil {
-			t.Fatalf("failed to step %dth time: %v", i, err)
-		}
-		if done {
-			t.Fatalf("finished early on %dth time", i)
-		}
-
-		err = vm.CheckErrorCondition(false)
-		if !txscript.IsErrorCode(err, txscript.ErrScriptUnfinished) {
-			t.Fatalf("got unexpected error %v on %dth iteration",
-				err, i)
-		}
-	}
-	done, err := vm.Step()
-	if err != nil {
-		t.Fatalf("final step failed %v", err)
-	}
-	if !done {
-		t.Fatalf("final step isn't done!")
-	}
-
-	err = vm.CheckErrorCondition(false)
-	if err != nil {
-		t.Errorf("unexpected error %v on final check", err)
-	}
-}
-
-// TestInvalidFlagCombinations ensures the script engine returns the expected
-// error when disallowed flag combinations are specified.
-func TestInvalidFlagCombinations(t *testing.T) {
-	t.Parallel()
-
-	tests := []txscript.ScriptFlags{
-		txscript.ScriptVerifyCleanStack,
-	}
-
-	// tx with almost empty scripts.
-	tx := &wire.MsgTx{
-		Version: 1,
-		TxIn: []*wire.TxIn{
-			{
-				PreviousOutPoint: wire.OutPoint{
-					Hash: chainhash.Hash([32]byte{
-						0xc9, 0x97, 0xa5, 0xe5,
-						0x6e, 0x10, 0x41, 0x02,
-						0xfa, 0x20, 0x9c, 0x6a,
-						0x85, 0x2d, 0xd9, 0x06,
-						0x60, 0xa2, 0x0b, 0x2d,
-						0x9c, 0x35, 0x24, 0x23,
-						0xed, 0xce, 0x25, 0x85,
-						0x7f, 0xcd, 0x37, 0x04,
-					}),
-					Index: 0,
-				},
-				SignatureScript: []uint8{OP_NOP},
-				Sequence:        4294967295,
-			},
-		},
-		TxOut: []*wire.TxOut{
-			{
-				Value:    1000000000,
-				PkScript: nil,
-			},
-		},
-		LockTime: 0,
-	}
-	pkScript := []byte{OP_NOP}
-
-	for i, test := range tests {
-		_, err := NewEngine(pkScript, tx, 0, test, nil, nil, -1, nil)
-		if !txscript.IsErrorCode(err, txscript.ErrInvalidFlags) {
-			t.Fatalf("TestInvalidFlagCombinations #%d unexpected "+
-				"error: %v", i, err)
-		}
-	}
-}
-
-// TestCheckPubKeyEncoding ensures the internal checkPubKeyEncoding function
-// works as expected.
-func TestCheckPubKeyEncoding(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		key     []byte
-		isValid bool
-	}{
-		{
-			name: "uncompressed ok",
-			key: hexToBytes("0411db93e1dcdb8a016b49840f8c53bc1eb68" +
-				"a382e97b1482ecad7b148a6909a5cb2e0eaddfb84ccf" +
-				"9744464f82e160bfa9b8b64f9d4c03f999b8643f656b" +
-				"412a3"),
-			isValid: true,
-		},
-		{
-			name: "compressed ok",
-			key: hexToBytes("02ce0b14fb842b1ba549fdd675c98075f12e9" +
-				"c510f8ef52bd021a9a1f4809d3b4d"),
-			isValid: true,
-		},
-		{
-			name: "compressed ok",
-			key: hexToBytes("032689c7c2dab13309fb143e0e8fe39634252" +
-				"1887e976690b6b47f5b2a4b7d448e"),
-			isValid: true,
-		},
-		{
-			name: "hybrid",
-			key: hexToBytes("0679be667ef9dcbbac55a06295ce870b07029" +
-				"bfcdb2dce28d959f2815b16f81798483ada7726a3c46" +
-				"55da4fbfc0e1108a8fd17b448a68554199c47d08ffb1" +
-				"0d4b8"),
-			isValid: false,
-		},
-		{
-			name:    "empty",
-			key:     nil,
-			isValid: false,
-		},
-	}
-
-	vm := Engine{flags: txscript.ScriptVerifyStrictEncoding}
-	for _, test := range tests {
-		err := vm.checkPubKeyEncoding(test.key)
-		if err != nil && test.isValid {
-			t.Errorf("checkSignatureEncoding test '%s' failed "+
-				"when it should have succeeded: %v", test.name,
-				err)
-		} else if err == nil && !test.isValid {
-			t.Errorf("checkSignatureEncooding test '%s' succeeded "+
-				"when it should have failed", test.name)
-		}
-	}
-
-}
-
-// TestCheckSignatureEncoding ensures the internal checkSignatureEncoding
-// function works as expected.
-func TestCheckSignatureEncoding(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		sig     []byte
-		isValid bool
-	}{
-		{
-			name: "valid signature",
-			sig: hexToBytes("304402204e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd41022018152" +
-				"2ec8eca07de4860a4acdd12909d831cc56cbbac46220" +
-				"82221a8768d1d09"),
-			isValid: true,
-		},
-		{
-			name:    "empty.",
-			sig:     nil,
-			isValid: false,
-		},
-		{
-			name: "bad magic",
-			sig: hexToBytes("314402204e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd41022018152" +
-				"2ec8eca07de4860a4acdd12909d831cc56cbbac46220" +
-				"82221a8768d1d09"),
-			isValid: false,
-		},
-		{
-			name: "bad 1st int marker magic",
-			sig: hexToBytes("304403204e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd41022018152" +
-				"2ec8eca07de4860a4acdd12909d831cc56cbbac46220" +
-				"82221a8768d1d09"),
-			isValid: false,
-		},
-		{
-			name: "bad 2nd int marker",
-			sig: hexToBytes("304402204e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd41032018152" +
-				"2ec8eca07de4860a4acdd12909d831cc56cbbac46220" +
-				"82221a8768d1d09"),
-			isValid: false,
-		},
-		{
-			name: "short len",
-			sig: hexToBytes("304302204e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd41022018152" +
-				"2ec8eca07de4860a4acdd12909d831cc56cbbac46220" +
-				"82221a8768d1d09"),
-			isValid: false,
-		},
-		{
-			name: "long len",
-			sig: hexToBytes("304502204e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd41022018152" +
-				"2ec8eca07de4860a4acdd12909d831cc56cbbac46220" +
-				"82221a8768d1d09"),
-			isValid: false,
-		},
-		{
-			name: "long X",
-			sig: hexToBytes("304402424e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd41022018152" +
-				"2ec8eca07de4860a4acdd12909d831cc56cbbac46220" +
-				"82221a8768d1d09"),
-			isValid: false,
-		},
-		{
-			name: "long Y",
-			sig: hexToBytes("304402204e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd41022118152" +
-				"2ec8eca07de4860a4acdd12909d831cc56cbbac46220" +
-				"82221a8768d1d09"),
-			isValid: false,
-		},
-		{
-			name: "short Y",
-			sig: hexToBytes("304402204e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd41021918152" +
-				"2ec8eca07de4860a4acdd12909d831cc56cbbac46220" +
-				"82221a8768d1d09"),
-			isValid: false,
-		},
-		{
-			name: "trailing crap",
-			sig: hexToBytes("304402204e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd41022018152" +
-				"2ec8eca07de4860a4acdd12909d831cc56cbbac46220" +
-				"82221a8768d1d0901"),
-			isValid: false,
-		},
-		{
-			name: "X == N ",
-			sig: hexToBytes("30440220fffffffffffffffffffffffffffff" +
-				"ffebaaedce6af48a03bbfd25e8cd0364141022018152" +
-				"2ec8eca07de4860a4acdd12909d831cc56cbbac46220" +
-				"82221a8768d1d09"),
-			isValid: false,
-		},
-		{
-			name: "X == N ",
-			sig: hexToBytes("30440220fffffffffffffffffffffffffffff" +
-				"ffebaaedce6af48a03bbfd25e8cd0364142022018152" +
-				"2ec8eca07de4860a4acdd12909d831cc56cbbac46220" +
-				"82221a8768d1d09"),
-			isValid: false,
-		},
-		{
-			name: "Y == N",
-			sig: hexToBytes("304402204e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd410220fffff" +
-				"ffffffffffffffffffffffffffebaaedce6af48a03bb" +
-				"fd25e8cd0364141"),
-			isValid: false,
-		},
-		{
-			name: "Y > N",
-			sig: hexToBytes("304402204e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd410220fffff" +
-				"ffffffffffffffffffffffffffebaaedce6af48a03bb" +
-				"fd25e8cd0364142"),
-			isValid: false,
-		},
-		{
-			name: "0 len X",
-			sig: hexToBytes("302402000220181522ec8eca07de4860a4acd" +
-				"d12909d831cc56cbbac4622082221a8768d1d09"),
-			isValid: false,
-		},
-		{
-			name: "0 len Y",
-			sig: hexToBytes("302402204e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd410200"),
-			isValid: false,
-		},
-		{
-			name: "extra R padding",
-			sig: hexToBytes("30450221004e45e16932b8af514961a1d3a1a" +
-				"25fdf3f4f7732e9d624c6c61548ab5fb8cd410220181" +
-				"522ec8eca07de4860a4acdd12909d831cc56cbbac462" +
-				"2082221a8768d1d09"),
-			isValid: false,
-		},
-		{
-			name: "extra S padding",
-			sig: hexToBytes("304502204e45e16932b8af514961a1d3a1a25" +
-				"fdf3f4f7732e9d624c6c61548ab5fb8cd41022100181" +
-				"522ec8eca07de4860a4acdd12909d831cc56cbbac462" +
-				"2082221a8768d1d09"),
-			isValid: false,
-		},
-	}
-
-	vm := Engine{flags: txscript.ScriptVerifyStrictEncoding}
-	for _, test := range tests {
-		err := vm.checkSignatureEncoding(test.sig)
-		if err != nil && test.isValid {
-			t.Errorf("checkSignatureEncoding test '%s' failed "+
-				"when it should have succeeded: %v", test.name,
-				err)
-		} else if err == nil && !test.isValid {
-			t.Errorf("checkSignatureEncooding test '%s' succeeded "+
-				"when it should have failed", test.name)
-		}
-	}
-}
 
 func TestNewOpcodes(t *testing.T) {
 	t.Parallel()
@@ -442,6 +27,7 @@ func TestNewOpcodes(t *testing.T) {
 		txIdx       int
 		inputAmount int64
 		stack       [][]byte
+		errText     string
 	}
 
 	type fixture struct {
@@ -450,21 +36,57 @@ func TestNewOpcodes(t *testing.T) {
 		cases  []testCase
 	}
 
-	prevoutFetcher := txscript.NewMultiPrevOutFetcher(map[wire.OutPoint]*wire.TxOut{
-		{
-			Hash:  chainhash.Hash{},
-			Index: 0,
-		}: {
-			Value: 1000000000,
-			PkScript: []byte{
-				OP_1, OP_DATA_32,
-				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	outpoint := wire.OutPoint{
+		Hash:  chainhash.Hash{},
+		Index: 0,
+	}
+
+	prevoutFetcher := newTestArkPrevOutFetcher(
+		txscript.NewMultiPrevOutFetcher(map[wire.OutPoint]*wire.TxOut{
+			outpoint: {
+				Value: 1000000000,
+				PkScript: []byte{
+					OP_1, OP_DATA_32,
+					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				},
+			},
+		}), map[wire.OutPoint]*wire.MsgTx{
+			outpoint: {
+				Version: 1,
+				TxOut: []*wire.TxOut{
+					{
+						Value: 1000000000,
+						PkScript: []byte{
+							OP_1, OP_DATA_32,
+							0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+							0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+							0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+							0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+						},
+					},
+				},
+			}}, map[wire.OutPoint]uint32{outpoint: 0},
+	)
+
+	// Pre-compute the expected tx hash for OP_TXID tests
+	txForHash := &wire.MsgTx{
+		Version: 1,
+		TxIn: []*wire.TxIn{
+			{
+				PreviousOutPoint: wire.OutPoint{
+					Hash:  chainhash.Hash{},
+					Index: 0,
+				},
 			},
 		},
-	})
+	}
+	expectedTxHash := txForHash.TxHash()
+
+	// A wrong hash to test negative case
+	wrongHash := chainhash.Hash{0x01}
 
 	tests := []fixture{
 		{
@@ -530,6 +152,63 @@ func TestNewOpcodes(t *testing.T) {
 						{0x00}, // Divisor of 0 should fail
 						{0x01},
 					},
+				},
+			},
+		},
+		{
+			name: "OP_NUM2BIN",
+			script: txscript.NewScriptBuilder().
+				AddData([]byte{0x85}).
+				AddInt64(4).
+				AddOp(OP_NUM2BIN).
+				AddData([]byte{0x05, 0x00, 0x00, 0x80}).
+				AddOp(OP_EQUAL),
+			cases: []testCase{
+				{
+					valid: true,
+					tx: &wire.MsgTx{
+						Version: 1,
+						TxIn: []*wire.TxIn{
+							{
+								PreviousOutPoint: wire.OutPoint{
+									Hash:  chainhash.Hash{},
+									Index: 0,
+								},
+							},
+						},
+					},
+					txIdx:       0,
+					inputAmount: 0,
+					stack:       nil,
+				},
+			},
+		},
+		{
+			name: "OP_BIN2NUM_feeds_arithmetic",
+			script: txscript.NewScriptBuilder().
+				AddData([]byte{0x05, 0x00, 0x00, 0x00}).
+				AddOp(OP_BIN2NUM).
+				AddInt64(6).
+				AddOp(OP_ADD).
+				AddInt64(11).
+				AddOp(OP_EQUAL),
+			cases: []testCase{
+				{
+					valid: true,
+					tx: &wire.MsgTx{
+						Version: 1,
+						TxIn: []*wire.TxIn{
+							{
+								PreviousOutPoint: wire.OutPoint{
+									Hash:  chainhash.Hash{},
+									Index: 0,
+								},
+							},
+						},
+					},
+					txIdx:       0,
+					inputAmount: 0,
+					stack:       nil,
 				},
 			},
 		},
@@ -874,459 +553,6 @@ func TestNewOpcodes(t *testing.T) {
 			},
 		},
 		{
-			name: "OP_ADD64",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 1 in LE64
-				AddData([]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 2 in LE64
-				AddOp(OP_ADD64).
-				AddOp(OP_1). // success flag
-				AddOp(OP_EQUALVERIFY).
-				AddData([]byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 3 in LE64
-				AddOp(OP_EQUAL),
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_ADD64_OVERFLOW",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F}). // Max positive int64
-				AddData([]byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 1 in LE64
-				AddOp(OP_ADD64).
-				AddData([]byte{0x00}). // overflow flag
-				AddOp(OP_EQUALVERIFY),
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_SUB64",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 3 in LE64
-				AddData([]byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 1 in LE64
-				AddOp(OP_SUB64).
-				AddOp(OP_1). // success flag
-				AddOp(OP_EQUALVERIFY).
-				AddData([]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 2 in LE64
-				AddOp(OP_EQUAL),
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_SUB64_OVERFLOW",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80}). // Min negative int64 (-9223372036854775808)
-				AddData([]byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 1 in LE64
-				AddOp(OP_SUB64).
-				AddData([]byte{0x00}). // overflow flag
-				AddOp(OP_EQUALVERIFY),
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_MUL64",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 2 in LE64
-				AddData([]byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 3 in LE64
-				AddOp(OP_MUL64).
-				AddOp(OP_1). // success flag
-				AddOp(OP_EQUALVERIFY).
-				AddData([]byte{0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 6 in LE64
-				AddOp(OP_EQUAL),
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_MUL64_OVERFLOW",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F}). // Max positive int64
-				AddData([]byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 3 in LE64
-				AddOp(OP_MUL64).
-				AddData([]byte{0x00}). // overflow flag
-				AddOp(OP_EQUALVERIFY),
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_DIV64",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 6 in LE64
-				AddData([]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 2 in LE64
-				AddOp(OP_DIV64).
-				AddOp(OP_1). // success flag
-				AddOp(OP_EQUALVERIFY).
-				AddData([]byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 3 in LE64
-				AddOp(OP_EQUAL),
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_NEG64",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 3 in LE64
-				AddOp(OP_NEG64).
-				AddOp(OP_1). // success flag
-				AddOp(OP_EQUALVERIFY).
-				AddData([]byte{0xFD, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}). // -3 in LE64
-				AddOp(OP_EQUAL),
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_NEG64_OVERFLOW",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80}). // Min negative int64
-				AddOp(OP_NEG64).
-				AddData([]byte{0x00}). // overflow flag
-				AddOp(OP_EQUAL),
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_LESSTHAN64",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 1 in LE64
-				AddData([]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 2 in LE64
-				AddOp(OP_LESSTHAN64).
-				AddData([]byte{0x01}). // true
-				AddOp(OP_EQUAL),
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_LESSTHANOREQUAL64",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 2 in LE64
-				AddData([]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 2 in LE64
-				AddOp(OP_LESSTHANOREQUAL64).
-				AddData([]byte{0x01}). // true
-				AddOp(OP_EQUAL),
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_GREATERTHAN64",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 2 in LE64
-				AddData([]byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 1 in LE64
-				AddOp(OP_GREATERTHAN64).
-				AddData([]byte{0x01}). // true
-				AddOp(OP_EQUAL),
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_GREATERTHANOREQUAL64",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 2 in LE64
-				AddData([]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 2 in LE64
-				AddOp(OP_GREATERTHANOREQUAL64).
-				AddData([]byte{0x01}). // true
-				AddOp(OP_EQUAL),
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_SCRIPTNUMTOLE64",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x03}). // ScriptNum 3
-				AddOp(OP_SCRIPTNUMTOLE64).
-				AddData([]byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 3 in LE64
-				AddOp(OP_EQUAL),
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_LE64TOSCRIPTNUM",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 3 in LE64
-				AddOp(OP_LE64TOSCRIPTNUM).
-				AddData([]byte{0x03}). // ScriptNum 3
-				AddOp(OP_EQUAL),
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
-			name: "OP_LE32TOLE64",
-			script: txscript.NewScriptBuilder().
-				AddData([]byte{0x03, 0x00, 0x00, 0x00}). // 3 in LE32
-				AddOp(OP_LE32TOLE64).
-				AddData([]byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}). // 3 in LE64
-				AddOp(OP_EQUAL),
-			cases: []testCase{
-				{
-					valid: true,
-					tx: &wire.MsgTx{
-						Version: 1,
-						TxIn: []*wire.TxIn{
-							{
-								PreviousOutPoint: wire.OutPoint{
-									Hash:  chainhash.Hash{},
-									Index: 0,
-								},
-							},
-						},
-					},
-					txIdx:       0,
-					inputAmount: 0,
-					stack:       nil,
-				},
-			},
-		},
-		{
 			name: "OP_INSPECTINPUTOUTPOINT",
 			script: txscript.NewScriptBuilder().
 				AddData([]byte{0x00}). // success flag
@@ -1361,11 +587,37 @@ func TestNewOpcodes(t *testing.T) {
 			},
 		},
 		{
+			name: "OP_INSPECTINPUTOUTPOINT invalid negative index",
+			script: txscript.NewScriptBuilder().
+				AddOp(OP_1NEGATE).
+				AddOp(OP_INSPECTINPUTOUTPOINT),
+			cases: []testCase{
+				{
+					valid: false,
+					tx: &wire.MsgTx{
+						Version: 1,
+						TxIn: []*wire.TxIn{
+							{
+								PreviousOutPoint: wire.OutPoint{
+									Hash:  chainhash.Hash{},
+									Index: 0,
+								},
+							},
+						},
+					},
+					txIdx:       0,
+					inputAmount: 0,
+					stack:       nil,
+					errText:     "input index cannot be negative",
+				},
+			},
+		},
+		{
 			name: "OP_INSPECTINPUTVALUE",
 			script: txscript.NewScriptBuilder().
 				AddData([]byte{0x00}).
 				AddOp(OP_INSPECTINPUTVALUE).
-				AddData([]byte{0x00, 0xCA, 0x9A, 0x3B, 0x00, 0x00, 0x00, 0x00}). // 1000000000 in LE64
+				AddData([]byte{0x00, 0xCA, 0x9A, 0x3B}).
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{
@@ -1388,17 +640,43 @@ func TestNewOpcodes(t *testing.T) {
 			},
 		},
 		{
-			name: "OP_INSPECTINPUTSCRIPTPUBKEY",
+			name: "OP_INSPECTINPUTVALUE invalid negative index",
+			script: txscript.NewScriptBuilder().
+				AddOp(OP_1NEGATE).
+				AddOp(OP_INSPECTINPUTVALUE),
+			cases: []testCase{
+				{
+					valid: false,
+					tx: &wire.MsgTx{
+						Version: 1,
+						TxIn: []*wire.TxIn{
+							{
+								PreviousOutPoint: wire.OutPoint{
+									Hash:  chainhash.Hash{},
+									Index: 0,
+								},
+							},
+						},
+					},
+					txIdx:       0,
+					inputAmount: 1000000000,
+					stack:       nil,
+					errText:     "input index cannot be negative",
+				},
+			},
+		},
+		{
+			name: "OP_INSPECTINPUTSCRIPTPUBKEY returns previous ark tx scriptpubkey",
 			script: txscript.NewScriptBuilder().
 				AddData([]byte{0x00}).
 				AddOp(OP_INSPECTINPUTSCRIPTPUBKEY).
 				AddOp(OP_1). // segwit v1
 				AddOp(OP_EQUALVERIFY).
 				AddData([]byte{ // witness program
-					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+					0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+					0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+					0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+					0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
 				}).
 				AddOp(OP_EQUAL),
 			cases: []testCase{
@@ -1418,6 +696,32 @@ func TestNewOpcodes(t *testing.T) {
 					txIdx:       0,
 					inputAmount: 0,
 					stack:       nil,
+				},
+			},
+		},
+		{
+			name: "OP_INSPECTINPUTSCRIPTPUBKEY invalid negative index",
+			script: txscript.NewScriptBuilder().
+				AddOp(OP_1NEGATE).
+				AddOp(OP_INSPECTINPUTSCRIPTPUBKEY),
+			cases: []testCase{
+				{
+					valid: false,
+					tx: &wire.MsgTx{
+						Version: 1,
+						TxIn: []*wire.TxIn{
+							{
+								PreviousOutPoint: wire.OutPoint{
+									Hash:  chainhash.Hash{},
+									Index: 0,
+								},
+							},
+						},
+					},
+					txIdx:       0,
+					inputAmount: 0,
+					stack:       nil,
+					errText:     "input index cannot be negative",
 				},
 			},
 		},
@@ -1446,6 +750,33 @@ func TestNewOpcodes(t *testing.T) {
 					txIdx:       0,
 					inputAmount: 0,
 					stack:       nil,
+				},
+			},
+		},
+		{
+			name: "OP_INSPECTINPUTSEQUENCE invalid negative index",
+			script: txscript.NewScriptBuilder().
+				AddOp(OP_1NEGATE).
+				AddOp(OP_INSPECTINPUTSEQUENCE),
+			cases: []testCase{
+				{
+					valid: false,
+					tx: &wire.MsgTx{
+						Version: 1,
+						TxIn: []*wire.TxIn{
+							{
+								PreviousOutPoint: wire.OutPoint{
+									Hash:  chainhash.Hash{},
+									Index: 0,
+								},
+								Sequence: 4294967295,
+							},
+						},
+					},
+					txIdx:       0,
+					inputAmount: 0,
+					stack:       nil,
+					errText:     "input index cannot be negative",
 				},
 			},
 		},
@@ -1480,7 +811,7 @@ func TestNewOpcodes(t *testing.T) {
 			script: txscript.NewScriptBuilder().
 				AddData([]byte{0x00}).
 				AddOp(OP_INSPECTOUTPUTVALUE).
-				AddData([]byte{0x00, 0xCA, 0x9A, 0x3B, 0x00, 0x00, 0x00, 0x00}). // 1000000000 in LE64
+				AddData([]byte{0x00, 0xCA, 0x9A, 0x3B}).
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{
@@ -1505,6 +836,38 @@ func TestNewOpcodes(t *testing.T) {
 					txIdx:       0,
 					inputAmount: 0,
 					stack:       nil,
+				},
+			},
+		},
+		{
+			name: "OP_INSPECTOUTPUTVALUE invalid negative index",
+			script: txscript.NewScriptBuilder().
+				AddOp(OP_1NEGATE).
+				AddOp(OP_INSPECTOUTPUTVALUE),
+			cases: []testCase{
+				{
+					valid: false,
+					tx: &wire.MsgTx{
+						Version: 1,
+						TxIn: []*wire.TxIn{
+							{
+								PreviousOutPoint: wire.OutPoint{
+									Hash:  chainhash.Hash{},
+									Index: 0,
+								},
+							},
+						},
+						TxOut: []*wire.TxOut{
+							{
+								Value:    1000000000,
+								PkScript: nil,
+							},
+						},
+					},
+					txIdx:       0,
+					inputAmount: 0,
+					stack:       nil,
+					errText:     "output index cannot be negative",
 				},
 			},
 		},
@@ -1551,6 +914,44 @@ func TestNewOpcodes(t *testing.T) {
 					txIdx:       0,
 					inputAmount: 0,
 					stack:       nil,
+				},
+			},
+		},
+		{
+			name: "OP_INSPECTOUTPUTSCRIPTPUBKEY invalid negative index",
+			script: txscript.NewScriptBuilder().
+				AddOp(OP_1NEGATE).
+				AddOp(OP_INSPECTOUTPUTSCRIPTPUBKEY),
+			cases: []testCase{
+				{
+					valid: false,
+					tx: &wire.MsgTx{
+						Version: 1,
+						TxIn: []*wire.TxIn{
+							{
+								PreviousOutPoint: wire.OutPoint{
+									Hash:  chainhash.Hash{},
+									Index: 0,
+								},
+							},
+						},
+						TxOut: []*wire.TxOut{
+							{
+								Value: 0,
+								PkScript: []byte{
+									OP_1, OP_DATA_32,
+									0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+									0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+									0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+									0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+								},
+							},
+						},
+					},
+					txIdx:       0,
+					inputAmount: 0,
+					stack:       nil,
+					errText:     "output index cannot be negative",
 				},
 			},
 		},
@@ -1738,6 +1139,86 @@ func TestNewOpcodes(t *testing.T) {
 			},
 		},
 		{
+			name: "OP_TXID",
+			script: txscript.NewScriptBuilder().
+				AddOp(OP_TXID).
+				AddData(expectedTxHash[:]).
+				AddOp(OP_EQUAL),
+			cases: []testCase{
+				{
+					valid: true,
+					tx: &wire.MsgTx{
+						Version: 1,
+						TxIn: []*wire.TxIn{
+							{
+								PreviousOutPoint: wire.OutPoint{
+									Hash:  chainhash.Hash{},
+									Index: 0,
+								},
+							},
+						},
+					},
+					txIdx:       0,
+					inputAmount: 0,
+					stack:       nil,
+				},
+			},
+		},
+		{
+			name: "OP_TXID_LENGTH",
+			script: txscript.NewScriptBuilder().
+				AddOp(OP_TXID).
+				AddOp(OP_SIZE).
+				AddOp(OP_NIP).
+				AddData([]byte{0x20}). // 32 bytes
+				AddOp(OP_EQUAL),
+			cases: []testCase{
+				{
+					valid: true,
+					tx: &wire.MsgTx{
+						Version: 1,
+						TxIn: []*wire.TxIn{
+							{
+								PreviousOutPoint: wire.OutPoint{
+									Hash:  chainhash.Hash{},
+									Index: 0,
+								},
+							},
+						},
+					},
+					txIdx:       0,
+					inputAmount: 0,
+					stack:       nil,
+				},
+			},
+		},
+		{
+			name: "OP_TXID_WRONG_HASH",
+			script: txscript.NewScriptBuilder().
+				AddOp(OP_TXID).
+				AddData(wrongHash[:]).
+				AddOp(OP_EQUAL),
+			cases: []testCase{
+				{
+					valid: false,
+					tx: &wire.MsgTx{
+						Version: 1,
+						TxIn: []*wire.TxIn{
+							{
+								PreviousOutPoint: wire.OutPoint{
+									Hash:  chainhash.Hash{},
+									Index: 0,
+								},
+							},
+						},
+					},
+					txIdx:       0,
+					inputAmount: 0,
+					stack:       nil,
+				},
+			},
+		},
+		{
 			name: "SHA256_STREAMING",
 			script: txscript.NewScriptBuilder().
 				AddData([]byte("Hello")).   // stack = [Hello]
@@ -1786,7 +1267,6 @@ func TestNewOpcodes(t *testing.T) {
 				engine, err := NewEngine(
 					script,
 					c.tx, c.txIdx,
-					txscript.StandardVerifyFlags&txscript.ScriptVerifyTaproot,
 					txscript.NewSigCache(100),
 					txscript.NewTxSigHashes(c.tx, prevoutFetcher),
 					c.inputAmount,
@@ -1807,106 +1287,1086 @@ func TestNewOpcodes(t *testing.T) {
 
 				if !c.valid && err == nil {
 					tt.Errorf("Execute should have failed")
+				} else if !c.valid && c.errText != "" && !strings.Contains(err.Error(), c.errText) {
+					tt.Errorf("expected error containing %q, got: %v", c.errText, err)
 				}
 			})
 		}
 	}
 }
 
-// mustParseShortForm parses the passed short form script and returns the
-// resulting bytes.  It panics if an error occurs.  This is only used in the
-// tests as a helper since the only way it can fail is if there is an error in
-// the test source code.
-func mustParseShortForm(script string) []byte {
-	s, err := parseShortForm(script)
-	if err != nil {
-		panic("invalid short form script in test source: err " +
-			err.Error() + ", script: " + script)
+func TestMerkleBranchVerify(t *testing.T) {
+	t.Parallel()
+
+	prevoutFetcher := newTestArkPrevOutFetcher(
+		txscript.NewMultiPrevOutFetcher(map[wire.OutPoint]*wire.TxOut{
+			{
+				Hash:  chainhash.Hash{},
+				Index: 0,
+			}: {
+				Value: 1000000000,
+				PkScript: []byte{
+					OP_1, OP_DATA_32,
+					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				},
+			},
+		}), nil, nil,
+	)
+
+	simpleTx := &wire.MsgTx{
+		Version: 1,
+		TxIn: []*wire.TxIn{
+			{
+				PreviousOutPoint: wire.OutPoint{
+					Hash:  chainhash.Hash{},
+					Index: 0,
+				},
+			},
+		},
 	}
 
-	return s
-}
-
-// shortFormOps holds a map of opcode names to values for use in short form
-// parsing.  It is declared here so it only needs to be created once.
-var shortFormOps map[string]byte
-
-// parseShortForm parses a string as as used in the Bitcoin Core reference tests
-// into the script it came from.
-//
-// The format used for these tests is pretty simple if ad-hoc:
-//   - Opcodes other than the push opcodes and unknown are present as
-//     either OP_NAME or just NAME
-//   - Plain numbers are made into push operations
-//   - Numbers beginning with 0x are inserted into the []byte as-is (so
-//     0x14 is OP_DATA_20)
-//   - Single quoted strings are pushed as data
-//   - Anything else is an error
-func parseShortForm(script string) ([]byte, error) {
-	// Only create the short form opcode map once.
-	if shortFormOps == nil {
-		ops := make(map[string]byte)
-		for opcodeName, opcodeValue := range OpcodeByName {
-			if strings.Contains(opcodeName, "OP_UNKNOWN") {
-				continue
-			}
-			ops[opcodeName] = opcodeValue
-
-			// The opcodes named OP_# can't have the OP_ prefix
-			// stripped or they would conflict with the plain
-			// numbers.  Also, since OP_FALSE and OP_TRUE are
-			// aliases for the OP_0, and OP_1, respectively, they
-			// have the same value, so detect those by name and
-			// allow them.
-			if (opcodeName == "OP_FALSE" || opcodeName == "OP_TRUE") ||
-				(opcodeValue != OP_0 && (opcodeValue < OP_1 ||
-					opcodeValue > OP_16)) {
-
-				ops[strings.TrimPrefix(opcodeName, "OP_")] = opcodeValue
-			}
-		}
-		shortFormOps = ops
-	}
-
-	// Split only does one separator so convert all \n and tab into  space.
-	script = strings.Replace(script, "\n", " ", -1)
-	script = strings.Replace(script, "\t", " ", -1)
-	tokens := strings.Split(script, " ")
-	builder := txscript.NewScriptBuilder()
-
-	for _, tok := range tokens {
-		if len(tok) == 0 {
-			continue
-		}
-		// if parses as a plain number
-		if num, err := strconv.ParseInt(tok, 10, 64); err == nil {
-			builder.AddInt64(num)
-			continue
-		} else if _, err := parseHex(tok); err == nil {
-			// Concatenate the bytes manually since the test code
-			// intentionally creates scripts that are too large and
-			// would cause the builder to error otherwise.
-			_, err := builder.Script()
-			if err == nil {
-				return nil, fmt.Errorf("script too large")
-			}
-		} else if len(tok) >= 2 &&
-			tok[0] == '\'' && tok[len(tok)-1] == '\'' {
-			builder.AddFullData([]byte(tok[1 : len(tok)-1]))
-		} else if opcode, ok := shortFormOps[tok]; ok {
-			builder.AddOp(opcode)
+	// --- Helper: sort-and-combine for branch hash ---
+	sortedBranchHash := func(branchTag, left, right []byte) []byte {
+		combined := make([]byte, 64)
+		if bytes.Compare(left, right) < 0 {
+			copy(combined[:32], left)
+			copy(combined[32:], right)
 		} else {
-			return nil, fmt.Errorf("bad token %q", tok)
+			copy(combined[:32], right)
+			copy(combined[32:], left)
 		}
-
+		h := chainhash.TaggedHash(branchTag, combined)
+		return h[:]
 	}
-	return builder.Script()
+
+	leafTag := []byte("ArkadeLeaf")
+	branchTag := []byte("ArkadeBranch")
+
+	// ---- 2-leaf tree: "hello", "world" ----
+	leafA2 := chainhash.TaggedHash(leafTag, []byte("hello"))
+	leafB2 := chainhash.TaggedHash(leafTag, []byte("world"))
+	root2Leaf := sortedBranchHash(branchTag, leafA2[:], leafB2[:])
+
+	// ---- 4-leaf tree: "alpha", "beta", "gamma", "delta" ----
+	hashA := chainhash.TaggedHash(leafTag, []byte("alpha"))
+	hashB := chainhash.TaggedHash(leafTag, []byte("beta"))
+	hashC := chainhash.TaggedHash(leafTag, []byte("gamma"))
+	hashD := chainhash.TaggedHash(leafTag, []byte("delta"))
+
+	hashAB := sortedBranchHash(branchTag, hashA[:], hashB[:])
+	hashCD := sortedBranchHash(branchTag, hashC[:], hashD[:])
+	rootABCD := sortedBranchHash(branchTag, hashAB, hashCD)
+
+	// Proof for leaf "alpha": [hashB, hashCD]
+	proofAlpha := make([]byte, 64)
+	copy(proofAlpha[:32], hashB[:])
+	copy(proofAlpha[32:], hashCD)
+
+	// Proof for leaf "beta": [hashA, hashCD]
+	proofBeta := make([]byte, 64)
+	copy(proofBeta[:32], hashA[:])
+	copy(proofBeta[32:], hashCD)
+
+	// ---- Single leaf: "only" ----
+	singleLeafRoot := chainhash.TaggedHash(leafTag, []byte("only"))
+
+	// ---- Raw hash mode vectors ----
+	// Use leafA2 as a pre-computed 32-byte hash, treat it as raw leaf_data
+	rawLeafData := leafA2[:]                                              // 32 bytes
+	rawSibling := leafB2[:]                                               // 32 bytes
+	rawRoot := sortedBranchHash(branchTag, rawLeafData[:], rawSibling[:]) // root in raw mode
+
+	// ---- Proof chaining vectors ----
+	// Build a 4-leaf tree but prove via chaining:
+	// First call: prove "alpha" in left subtree -> produces hashAB (sub-root)
+	// Second call: use hashAB as raw leaf_data with proof=[hashCD] -> produces rootABCD
+	chainSubProof := make([]byte, 32)
+	copy(chainSubProof, hashB[:]) // proof for alpha in left subtree
+
+	chainUpperProof := make([]byte, 32)
+	copy(chainUpperProof, hashCD) // proof for sub-root in full tree
+
+	// --- Helper to build engine and run ---
+	runTest := func(tt *testing.T, script []byte, stack [][]byte) error {
+		tt.Helper()
+		engine, err := NewEngine(
+			script,
+			simpleTx, 0,
+			txscript.NewSigCache(100),
+			txscript.NewTxSigHashes(simpleTx, prevoutFetcher),
+			0,
+			prevoutFetcher,
+		)
+		if err != nil {
+			tt.Fatalf("NewEngine failed: %v", err)
+		}
+		engine.SetStack(stack)
+		return engine.Execute()
+	}
+
+	type testCase struct {
+		name    string
+		valid   bool
+		script  func(t *testing.T) []byte
+		stack   [][]byte
+		errText string // substring expected in error (for invalid cases)
+	}
+
+	tests := []testCase{
+		// ---- Test 1: valid 2-leaf tree ----
+		{
+			name:  "valid_2leaf_tree",
+			valid: true,
+			script: func(t *testing.T) []byte {
+				// OP_MERKLEBRANCHVERIFY <expected_root> OP_EQUALVERIFY OP_TRUE
+				s, err := txscript.NewScriptBuilder().
+					AddOp(OP_MERKLEBRANCHVERIFY).
+					AddData(root2Leaf).
+					AddOp(OP_EQUALVERIFY).
+					AddOp(OP_TRUE).
+					Script()
+				if err != nil {
+					t.Fatalf("script build: %v", err)
+				}
+				return s
+			},
+			stack: [][]byte{
+				leafTag,         // leaf_tag (bottom)
+				branchTag,       // branch_tag
+				leafB2[:],       // proof = sibling hash
+				[]byte("hello"), // leaf_data (top)
+			},
+		},
+		// ---- Test 2: valid 4-leaf tree ----
+		{
+			name:  "valid_4leaf_tree",
+			valid: true,
+			script: func(t *testing.T) []byte {
+				s, err := txscript.NewScriptBuilder().
+					AddOp(OP_MERKLEBRANCHVERIFY).
+					AddData(rootABCD).
+					AddOp(OP_EQUALVERIFY).
+					AddOp(OP_TRUE).
+					Script()
+				if err != nil {
+					t.Fatalf("script build: %v", err)
+				}
+				return s
+			},
+			stack: [][]byte{
+				leafTag,         // leaf_tag (bottom)
+				branchTag,       // branch_tag
+				proofAlpha,      // proof = [hashB, hashCD] (64 bytes)
+				[]byte("alpha"), // leaf_data (top)
+			},
+		},
+		// ---- Test 3: valid single leaf, empty proof ----
+		{
+			name:  "valid_single_leaf_empty_proof",
+			valid: true,
+			script: func(t *testing.T) []byte {
+				// Root = tagged_hash(leafTag, "only") since proof is empty
+				s, err := txscript.NewScriptBuilder().
+					AddOp(OP_MERKLEBRANCHVERIFY).
+					AddData(singleLeafRoot[:]).
+					AddOp(OP_EQUALVERIFY).
+					AddOp(OP_TRUE).
+					Script()
+				if err != nil {
+					t.Fatalf("script build: %v", err)
+				}
+				return s
+			},
+			stack: [][]byte{
+				leafTag,        // leaf_tag (bottom)
+				branchTag,      // branch_tag
+				{},             // empty proof
+				[]byte("only"), // leaf_data (top)
+			},
+		},
+		// ---- Test 4: valid raw hash mode (empty leaf_tag) ----
+		{
+			name:  "valid_raw_hash_mode",
+			valid: true,
+			script: func(t *testing.T) []byte {
+				s, err := txscript.NewScriptBuilder().
+					AddOp(OP_MERKLEBRANCHVERIFY).
+					AddData(rawRoot).
+					AddOp(OP_EQUALVERIFY).
+					AddOp(OP_TRUE).
+					Script()
+				if err != nil {
+					t.Fatalf("script build: %v", err)
+				}
+				return s
+			},
+			stack: [][]byte{
+				{},          // empty leaf_tag -> raw hash mode
+				branchTag,   // branch_tag
+				rawSibling,  // proof = sibling
+				rawLeafData, // leaf_data = 32 bytes (pre-computed hash)
+			},
+		},
+		// ---- Test 5: valid proof chaining ----
+		// First OP_MERKLEBRANCHVERIFY: prove "alpha" in left subtree -> pushes hashAB
+		// Then set up raw mode args and call again -> pushes rootABCD
+		{
+			name:  "valid_proof_chaining",
+			valid: true,
+			script: func(t *testing.T) []byte {
+				// Stack before: [leafTag, branchTag, chainSubProof, "alpha"]
+				// After 1st MERKLEBRANCHVERIFY: [..., hashAB]
+				// Then we push: OP_0 (empty leaf_tag for raw mode), branchTag, chainUpperProof
+				// Then: 3 OP_ROLL to bring hashAB to top as leaf_data
+				// After 2nd MERKLEBRANCHVERIFY: [..., rootABCD]
+				// Then: <rootABCD> OP_EQUALVERIFY OP_TRUE
+				s, err := txscript.NewScriptBuilder().
+					AddOp(OP_MERKLEBRANCHVERIFY).
+					AddOp(OP_0).
+					AddData(branchTag).
+					AddData(chainUpperProof).
+					AddOp(OP_3).
+					AddOp(OP_ROLL).
+					AddOp(OP_MERKLEBRANCHVERIFY).
+					AddData(rootABCD).
+					AddOp(OP_EQUALVERIFY).
+					AddOp(OP_TRUE).
+					Script()
+				if err != nil {
+					t.Fatalf("script build: %v", err)
+				}
+				return s
+			},
+			stack: [][]byte{
+				leafTag,         // leaf_tag for first call
+				branchTag,       // branch_tag for first call
+				chainSubProof,   // proof for alpha in left subtree
+				[]byte("alpha"), // leaf_data
+			},
+		},
+		// ---- Test 6: valid two leaves same tree, verify roots match ----
+		// Prove "alpha" and "beta" in same 4-leaf tree, check roots equal
+		{
+			name:  "valid_two_leaf_same_tree",
+			valid: true,
+			script: func(t *testing.T) []byte {
+				// Stack before: [leafTag, branchTag, proofAlpha, "alpha"]
+				// 1st MERKLEBRANCHVERIFY -> pushes rootABCD (from alpha)
+				// Then push items for beta proof inline:
+				s, err := txscript.NewScriptBuilder().
+					AddOp(OP_MERKLEBRANCHVERIFY).
+					AddData(leafTag).
+					AddData(branchTag).
+					AddData(proofBeta).
+					AddData([]byte("beta")).
+					AddOp(OP_MERKLEBRANCHVERIFY).
+					AddOp(OP_EQUALVERIFY).
+					AddOp(OP_TRUE).
+					Script()
+				if err != nil {
+					t.Fatalf("script build: %v", err)
+				}
+				return s
+			},
+			stack: [][]byte{
+				leafTag,         // leaf_tag for first call (bottom)
+				branchTag,       // branch_tag for first call
+				proofAlpha,      // proof for alpha
+				[]byte("alpha"), // leaf_data for first call (top)
+			},
+		},
+		// ---- Test 7: invalid wrong root ----
+		{
+			name:  "invalid_wrong_root",
+			valid: false,
+			script: func(t *testing.T) []byte {
+				wrongRoot := make([]byte, 32) // all zeros
+				s, err := txscript.NewScriptBuilder().
+					AddOp(OP_MERKLEBRANCHVERIFY).
+					AddData(wrongRoot).
+					AddOp(OP_EQUALVERIFY).
+					AddOp(OP_TRUE).
+					Script()
+				if err != nil {
+					t.Fatalf("script build: %v", err)
+				}
+				return s
+			},
+			stack: [][]byte{
+				leafTag,
+				branchTag,
+				leafB2[:],
+				[]byte("hello"),
+			},
+			errText: "EQUALVERIFY",
+		},
+		// ---- Test 8: invalid proof not multiple of 32 ----
+		{
+			name:  "invalid_proof_not_multiple_of_32",
+			valid: false,
+			script: func(t *testing.T) []byte {
+				s, err := txscript.NewScriptBuilder().
+					AddOp(OP_MERKLEBRANCHVERIFY).
+					AddData(root2Leaf).
+					AddOp(OP_EQUALVERIFY).
+					AddOp(OP_TRUE).
+					Script()
+				if err != nil {
+					t.Fatalf("script build: %v", err)
+				}
+				return s
+			},
+			stack: [][]byte{
+				leafTag,
+				branchTag,
+				make([]byte, 33), // 33 bytes, not multiple of 32
+				[]byte("hello"),
+			},
+			errText: "proof length",
+		},
+		// ---- Test 9: invalid empty branch_tag ----
+		{
+			name:  "invalid_empty_branch_tag",
+			valid: false,
+			script: func(t *testing.T) []byte {
+				s, err := txscript.NewScriptBuilder().
+					AddOp(OP_MERKLEBRANCHVERIFY).
+					AddData(root2Leaf).
+					AddOp(OP_EQUALVERIFY).
+					AddOp(OP_TRUE).
+					Script()
+				if err != nil {
+					t.Fatalf("script build: %v", err)
+				}
+				return s
+			},
+			stack: [][]byte{
+				leafTag,
+				{}, // empty branch_tag
+				leafB2[:],
+				[]byte("hello"),
+			},
+			errText: "branch_tag",
+		},
+		// ---- Test 10: invalid raw mode leaf not 32 bytes (10 bytes) ----
+		{
+			name:  "invalid_raw_mode_leaf_not_32_bytes",
+			valid: false,
+			script: func(t *testing.T) []byte {
+				s, err := txscript.NewScriptBuilder().
+					AddOp(OP_MERKLEBRANCHVERIFY).
+					AddData(rawRoot).
+					AddOp(OP_EQUALVERIFY).
+					AddOp(OP_TRUE).
+					Script()
+				if err != nil {
+					t.Fatalf("script build: %v", err)
+				}
+				return s
+			},
+			stack: [][]byte{
+				{}, // empty leaf_tag -> raw hash mode
+				branchTag,
+				rawSibling,
+				make([]byte, 10), // only 10 bytes, must be 32 in raw mode
+			},
+			errText: "leaf_data",
+		},
+		// ---- Test 11: invalid raw mode leaf 31 bytes ----
+		{
+			name:  "invalid_empty_leaf_tag_nonempty_but_wrong_size",
+			valid: false,
+			script: func(t *testing.T) []byte {
+				s, err := txscript.NewScriptBuilder().
+					AddOp(OP_MERKLEBRANCHVERIFY).
+					AddData(rawRoot).
+					AddOp(OP_EQUALVERIFY).
+					AddOp(OP_TRUE).
+					Script()
+				if err != nil {
+					t.Fatalf("script build: %v", err)
+				}
+				return s
+			},
+			stack: [][]byte{
+				{}, // empty leaf_tag -> raw hash mode
+				branchTag,
+				rawSibling,
+				make([]byte, 31), // 31 bytes, must be 32 in raw mode
+			},
+			errText: "leaf_data",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(tt *testing.T) {
+			script := tc.script(tt)
+
+			err := runTest(tt, script, tc.stack)
+			if tc.valid && err != nil {
+				tt.Errorf("Execute failed: %v", err)
+			}
+			if !tc.valid && err == nil {
+				tt.Errorf("Execute should have failed")
+			}
+			if !tc.valid && err != nil && tc.errText != "" {
+				if !strings.Contains(err.Error(), tc.errText) {
+					tt.Errorf("Expected error containing %q, got: %v", tc.errText, err)
+				}
+			}
+		})
+	}
 }
 
-// parse hex string into a []byte.
-func parseHex(tok string) ([]byte, error) {
-	if !strings.HasPrefix(tok, "0x") {
-		return nil, errors.New("not a hex number")
+func TestIntrospectorPacketOpcodes(t *testing.T) {
+	t.Parallel()
+
+	prevoutFetcher := newTestArkPrevOutFetcher(
+		txscript.NewMultiPrevOutFetcher(map[wire.OutPoint]*wire.TxOut{
+			{Hash: chainhash.Hash{}, Index: 0}: {Value: 1000, PkScript: []byte{
+				OP_1, OP_DATA_32,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			}},
+			{Hash: chainhash.Hash{}, Index: 1}: {Value: 2000, PkScript: []byte{
+				OP_1, OP_DATA_32,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			}},
+		}), nil, nil,
+	)
+
+	twoInputTx := &wire.MsgTx{
+		Version: 1,
+		TxIn: []*wire.TxIn{
+			{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{}, Index: 0}},
+			{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{}, Index: 1}},
+		},
 	}
-	return hex.DecodeString(tok[2:])
+
+	scriptA := []byte{OP_TRUE}
+	scriptB := []byte{OP_1, OP_1, OP_ADD}
+	witnessA := wire.TxWitness{{0xaa, 0xbb}}
+
+	packet, err := NewPacket(
+		IntrospectorEntry{Vin: 0, Script: scriptA, Witness: witnessA},
+		IntrospectorEntry{Vin: 1, Script: scriptB, Witness: nil},
+	)
+	if err != nil {
+		t.Fatalf("NewPacket: %v", err)
+	}
+
+	expectedScriptHashA := ArkadeScriptHash(scriptA)
+	expectedScriptHashB := ArkadeScriptHash(scriptB)
+	var witBuf bytes.Buffer
+	_ = psbt.WriteTxWitness(&witBuf, witnessA)
+	expectedWitnessHashA := chainhash.TaggedHash(TagArkWitnessHash, witBuf.Bytes())
+	zeroHash := make([]byte, 32)
+
+	runEngine := func(t *testing.T, script []byte, tx *wire.MsgTx, pkt IntrospectorPacket, stack [][]byte) error {
+		t.Helper()
+		engine, err := NewEngine(
+			script, tx, 0,
+			txscript.NewSigCache(100),
+			txscript.NewTxSigHashes(tx, prevoutFetcher),
+			1000, prevoutFetcher,
+		)
+		if err != nil {
+			t.Fatalf("NewEngine: %v", err)
+		}
+		if pkt != nil {
+			engine.SetIntrospectorPacket(pkt)
+		}
+		if len(stack) > 0 {
+			engine.SetStack(stack)
+		}
+		return engine.Execute()
+	}
+
+	type tc struct {
+		name    string
+		valid   bool
+		script  []byte
+		tx      *wire.MsgTx
+		pkt     IntrospectorPacket
+		stack   [][]byte
+		errText string
+	}
+
+	scriptHashCheck := func(t *testing.T, index byte, expected []byte) []byte {
+		t.Helper()
+		s, err := txscript.NewScriptBuilder().
+			AddOp(index).
+			AddOp(OP_INSPECTINPUTARKADESCRIPTHASH).
+			AddData(expected).
+			AddOp(OP_EQUAL).
+			Script()
+		if err != nil {
+			t.Fatalf("script build: %v", err)
+		}
+		return s
+	}
+
+	witnessHashCheck := func(t *testing.T, index byte, expected []byte) []byte {
+		t.Helper()
+		s, err := txscript.NewScriptBuilder().
+			AddOp(index).
+			AddOp(OP_INSPECTINPUTARKADEWITNESSHASH).
+			AddData(expected).
+			AddOp(OP_EQUAL).
+			Script()
+		if err != nil {
+			t.Fatalf("script build: %v", err)
+		}
+		return s
+	}
+
+	buildScript := func(t *testing.T, ops ...byte) []byte {
+		t.Helper()
+		b := txscript.NewScriptBuilder()
+		for _, op := range ops {
+			b.AddOp(op)
+		}
+		s, err := b.Script()
+		if err != nil {
+			t.Fatalf("script build: %v", err)
+		}
+		return s
+	}
+
+	tests := []tc{
+		{
+			name:   "script_hash_own_input",
+			valid:  true,
+			script: scriptHashCheck(t, OP_0, expectedScriptHashA),
+			tx:     twoInputTx,
+			pkt:    packet,
+		},
+		{
+			name:   "script_hash_sibling_input",
+			valid:  true,
+			script: scriptHashCheck(t, OP_1, expectedScriptHashB),
+			tx:     twoInputTx,
+			pkt:    packet,
+		},
+		{
+			name:  "script_hash_equality_across_inputs",
+			valid: true,
+			script: func() []byte {
+				s, _ := txscript.NewScriptBuilder().
+					AddOp(OP_0).AddOp(OP_INSPECTINPUTARKADESCRIPTHASH).
+					AddOp(OP_0).AddOp(OP_INSPECTINPUTARKADESCRIPTHASH).
+					AddOp(OP_EQUAL).
+					Script()
+				return s
+			}(),
+			tx:  twoInputTx,
+			pkt: packet,
+		},
+		{
+			name:    "script_hash_no_packet",
+			valid:   false,
+			script:  buildScript(t, OP_0, OP_INSPECTINPUTARKADESCRIPTHASH),
+			tx:      twoInputTx,
+			pkt:     nil,
+			errText: "no introspector packet",
+		},
+		{
+			name:    "script_hash_out_of_range",
+			valid:   false,
+			script:  buildScript(t, OP_2, OP_INSPECTINPUTARKADESCRIPTHASH),
+			tx:      twoInputTx,
+			pkt:     packet,
+			errText: "input index out of range",
+		},
+		{
+			name:  "script_hash_missing_entry",
+			valid: false,
+			script: func() []byte {
+				s, _ := txscript.NewScriptBuilder().
+					AddOp(OP_0).
+					AddOp(OP_INSPECTINPUTARKADESCRIPTHASH).
+					Script()
+				return s
+			}(),
+			tx: twoInputTx,
+			pkt: IntrospectorPacket{
+				{Vin: 1, Script: scriptB},
+			},
+			errText: "no introspector entry for vin 0",
+		},
+		{
+			name:   "witness_hash_non_empty",
+			valid:  true,
+			script: witnessHashCheck(t, OP_0, expectedWitnessHashA[:]),
+			tx:     twoInputTx,
+			pkt:    packet,
+		},
+		{
+			name:   "witness_hash_empty_returns_zeros",
+			valid:  true,
+			script: witnessHashCheck(t, OP_1, zeroHash),
+			tx:     twoInputTx,
+			pkt:    packet,
+		},
+		{
+			name:    "witness_hash_no_packet",
+			valid:   false,
+			script:  buildScript(t, OP_0, OP_INSPECTINPUTARKADEWITNESSHASH),
+			tx:      twoInputTx,
+			pkt:     nil,
+			errText: "no introspector packet",
+		},
+		{
+			name:    "witness_hash_out_of_range",
+			valid:   false,
+			script:  buildScript(t, OP_2, OP_INSPECTINPUTARKADEWITNESSHASH),
+			tx:      twoInputTx,
+			pkt:     packet,
+			errText: "input index out of range",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := runEngine(t, tt.script, tt.tx, tt.pkt, tt.stack)
+			if tt.valid && err != nil {
+				t.Errorf("expected success, got: %v", err)
+			}
+			if !tt.valid {
+				if err == nil {
+					t.Error("expected failure, got success")
+				} else if tt.errText != "" && !strings.Contains(err.Error(), tt.errText) {
+					t.Errorf("expected error containing %q, got: %v", tt.errText, err)
+				}
+			}
+		})
+	}
+}
+
+// makeTxWithExtension builds a wire.MsgTx that has an OP_RETURN output
+// containing an ark extension with the given packets.
+func makeTxWithExtension(t *testing.T, packets ...extension.Packet) *wire.MsgTx {
+	t.Helper()
+	ext := extension.Extension(packets)
+	txOut, err := ext.TxOut()
+	if err != nil {
+		t.Fatalf("Extension.TxOut: %v", err)
+	}
+	return &wire.MsgTx{
+		Version: 1,
+		TxIn: []*wire.TxIn{
+			{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{}, Index: 0}},
+		},
+		TxOut: []*wire.TxOut{txOut},
+	}
+}
+
+func makeTxWithMalformedExtension(t *testing.T, payload []byte) *wire.MsgTx {
+	t.Helper()
+
+	return &wire.MsgTx{
+		Version: 1,
+		TxIn: []*wire.TxIn{
+			{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{}, Index: 0}},
+		},
+		TxOut: []*wire.TxOut{{
+			Value:    0,
+			PkScript: append([]byte{txscript.OP_RETURN, byte(len(payload))}, payload...),
+		}},
+	}
+}
+
+func TestPacketIntrospectionOpcodes(t *testing.T) {
+	t.Parallel()
+
+	prevoutFetcher := newTestArkPrevOutFetcher(
+		txscript.NewMultiPrevOutFetcher(map[wire.OutPoint]*wire.TxOut{
+			{Hash: chainhash.Hash{}, Index: 0}: {Value: 1000, PkScript: []byte{
+				OP_1, OP_DATA_32,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			}},
+			{Hash: chainhash.Hash{}, Index: 1}: {Value: 2000, PkScript: []byte{
+				OP_1, OP_DATA_32,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			}},
+		}), nil, nil,
+	)
+
+	// Custom packet types for testing. We use small values (2, 3) that
+	// can be pushed with OP_2, OP_3 opcodes. Type 0 is asset.Packet
+	// and type 1 is IntrospectorPacket, so 2+ are free.
+	const testPacketType = 2
+	testPayload := []byte{0xde, 0xad, 0xbe, 0xef}
+	testPacket := extension.UnknownPacket{PacketType: testPacketType, Data: testPayload}
+
+	const testPacketType2 = 3
+	testPayload2 := []byte{0xca, 0xfe}
+	testPacket2 := extension.UnknownPacket{PacketType: testPacketType2, Data: testPayload2}
+
+	const maxPacketType = 255
+	maxPayload := []byte{0xff, 0x00, 0xff}
+	maxPacket := extension.UnknownPacket{PacketType: maxPacketType, Data: maxPayload}
+
+	// Large packet (> MaxScriptElementSize = 520 bytes) to test that
+	// introspection opcodes can push data beyond the normal push limit.
+	const largePacketType = 4
+	largePayload := bytes.Repeat([]byte{0xab}, 1000)
+	largePacket := extension.UnknownPacket{PacketType: largePacketType, Data: largePayload}
+
+	// Transaction with extension containing testPacket.
+	txWithPacket := makeTxWithExtension(t, testPacket)
+
+	// Transaction with extension containing two packets.
+	txWithTwoPackets := makeTxWithExtension(t, testPacket, testPacket2)
+
+	// Transaction with extension containing max packet type.
+	txWithMaxPacket := makeTxWithExtension(t, maxPacket)
+
+	// Transaction with a large packet.
+	txWithLargePacket := makeTxWithExtension(t, largePacket)
+
+	// Plain transaction without extension.
+	plainTx := &wire.MsgTx{
+		Version: 1,
+		TxIn: []*wire.TxIn{
+			{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{}, Index: 0}},
+		},
+	}
+
+	// Malformed extension: magic prefix is present, but packet TLV data is truncated.
+	malformedExtensionTx := makeTxWithMalformedExtension(t, []byte{'A', 'R', 'K', testPacketType})
+
+	// Previous ark transaction with extension for OP_INSPECTINPUTPACKET tests.
+	prevoutTx := makeTxWithExtension(t, testPacket)
+	malformedPrevoutTx := makeTxWithMalformedExtension(t, []byte{'A', 'R', 'K', testPacketType})
+
+	// Two-input transaction for OP_INSPECTINPUTPACKET tests.
+	twoInputTx := makeTxWithExtension(t, testPacket)
+	twoInputTx.TxIn = append(twoInputTx.TxIn,
+		&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{}, Index: 1}},
+	)
+
+	// makeArkPrevOutFetcher builds an ArkPrevOutFetcher from a map of input
+	// indices to previous ark transactions, using the spending tx's outpoints.
+	makeArkPrevOutFetcher := func(tx *wire.MsgTx, byIndex map[int]*wire.MsgTx) ArkPrevOutFetcher {
+		var arkTxs map[wire.OutPoint]*wire.MsgTx
+		var prevoutIdxs map[wire.OutPoint]uint32
+		if byIndex != nil {
+			arkTxs = make(map[wire.OutPoint]*wire.MsgTx, len(byIndex))
+			prevoutIdxs = make(map[wire.OutPoint]uint32, len(byIndex))
+			for idx, prevTx := range byIndex {
+				outpoint := tx.TxIn[idx].PreviousOutPoint
+				arkTxs[outpoint] = prevTx
+				prevoutIdxs[outpoint] = outpoint.Index
+
+			}
+		}
+		return newTestArkPrevOutFetcher(prevoutFetcher, arkTxs, prevoutIdxs)
+	}
+
+	runEngine := func(t *testing.T, script []byte, tx *wire.MsgTx, prevoutTxs map[int]*wire.MsgTx) error {
+		t.Helper()
+		fetcher := makeArkPrevOutFetcher(tx, prevoutTxs)
+		engine, err := NewEngine(
+			script, tx, 0,
+			txscript.NewSigCache(100),
+			txscript.NewTxSigHashes(tx, fetcher),
+			1000, fetcher,
+		)
+		if err != nil {
+			t.Fatalf("NewEngine: %v", err)
+		}
+		return engine.Execute()
+	}
+
+	type tc struct {
+		name       string
+		valid      bool
+		script     []byte
+		tx         *wire.MsgTx
+		prevoutTxs map[int]*wire.MsgTx
+		errText    string
+	}
+
+	buildScript := func(t *testing.T, ops ...byte) []byte {
+		t.Helper()
+		b := txscript.NewScriptBuilder()
+		for _, op := range ops {
+			b.AddOp(op)
+		}
+		s, err := b.Script()
+		if err != nil {
+			t.Fatalf("script build: %v", err)
+		}
+		return s
+	}
+
+	// Script: <packet_type> OP_INSPECTPACKET OP_1 OP_EQUALVERIFY <expected_data> OP_EQUAL
+	// Verifies found flag is 1 and content matches expected data.
+	inspectPacketCheck := func(t *testing.T, packetTypeOp byte, expectedData []byte) []byte {
+		t.Helper()
+		s, err := txscript.NewScriptBuilder().
+			AddOp(packetTypeOp). // e.g. OP_2 pushes 2
+			AddOp(OP_INSPECTPACKET).
+			// stack: [content, 1]
+			AddOp(OP_1).
+			AddOp(OP_EQUALVERIFY). // verify flag == 1
+			AddData(expectedData).
+			AddOp(OP_EQUAL). // verify content
+			Script()
+		if err != nil {
+			t.Fatalf("script build: %v", err)
+		}
+		return s
+	}
+
+	// Script: <packet_type> OP_INSPECTPACKET OP_0 OP_EQUALVERIFY OP_0 OP_EQUAL
+	// Verifies the not-found case: flag == 0, content == empty.
+	inspectPacketNotFound := func(t *testing.T, packetTypeOp byte) []byte {
+		t.Helper()
+		s, err := txscript.NewScriptBuilder().
+			AddOp(packetTypeOp).
+			AddOp(OP_INSPECTPACKET).
+			// stack: [<empty>, 0]
+			AddOp(OP_0).
+			AddOp(OP_EQUALVERIFY). // verify flag == 0
+			AddOp(OP_0).
+			AddOp(OP_EQUAL). // verify content == empty (OP_0 pushes empty bytes)
+			Script()
+		if err != nil {
+			t.Fatalf("script build: %v", err)
+		}
+		return s
+	}
+
+	// Script: <packet_type> <input_index> OP_INSPECTINPUTPACKET OP_1 OP_EQUALVERIFY <expected_data> OP_EQUAL
+	inspectInputPacketCheck := func(t *testing.T, packetTypeOp, inputIndexOp byte, expectedData []byte) []byte {
+		t.Helper()
+		s, err := txscript.NewScriptBuilder().
+			AddOp(packetTypeOp).
+			AddOp(inputIndexOp).
+			AddOp(OP_INSPECTINPUTPACKET).
+			AddOp(OP_1).
+			AddOp(OP_EQUALVERIFY).
+			AddData(expectedData).
+			AddOp(OP_EQUAL).
+			Script()
+		if err != nil {
+			t.Fatalf("script build: %v", err)
+		}
+		return s
+	}
+
+	// Script: <packet_type> <input_index> OP_INSPECTINPUTPACKET OP_0 OP_EQUALVERIFY OP_0 OP_EQUAL
+	inspectInputPacketNotFound := func(t *testing.T, packetTypeOp, inputIndexOp byte) []byte {
+		t.Helper()
+		s, err := txscript.NewScriptBuilder().
+			AddOp(packetTypeOp).
+			AddOp(inputIndexOp).
+			AddOp(OP_INSPECTINPUTPACKET).
+			// stack: [<empty>, 0]
+			AddOp(OP_0).
+			AddOp(OP_EQUALVERIFY). // verify flag == 0
+			AddOp(OP_0).
+			AddOp(OP_EQUAL). // verify content == empty
+			Script()
+		if err != nil {
+			t.Fatalf("script build: %v", err)
+		}
+		return s
+	}
+
+	tests := []tc{
+		// ── OP_INSPECTPACKET ──────────────────────────────────────
+		{
+			name:   "inspect_packet_found",
+			valid:  true,
+			script: inspectPacketCheck(t, OP_2, testPayload), // type 2
+			tx:     txWithPacket,
+		},
+		{
+			name:   "inspect_packet_type_not_found",
+			valid:  true,
+			script: inspectPacketNotFound(t, OP_9), // type 9 not in extension
+			tx:     txWithPacket,
+		},
+		{
+			name:   "inspect_packet_no_extension",
+			valid:  true,
+			script: inspectPacketNotFound(t, OP_2),
+			tx:     plainTx,
+		},
+		{
+			name:   "inspect_packet_second_type",
+			valid:  true,
+			script: inspectPacketCheck(t, OP_3, testPayload2), // type 3
+			tx:     txWithTwoPackets,
+		},
+		{
+			name:   "inspect_packet_first_of_two",
+			valid:  true,
+			script: inspectPacketCheck(t, OP_2, testPayload), // type 2
+			tx:     txWithTwoPackets,
+		},
+		{
+			name:  "inspect_packet_max_type_value",
+			valid: true,
+			script: func() []byte {
+				s, err := txscript.NewScriptBuilder().
+					AddInt64(maxPacketType).
+					AddOp(OP_INSPECTPACKET).
+					AddOp(OP_1).
+					AddOp(OP_EQUALVERIFY).
+					AddData(maxPayload).
+					AddOp(OP_EQUAL).
+					Script()
+				if err != nil {
+					t.Fatalf("script build: %v", err)
+				}
+				return s
+			}(),
+			tx: txWithMaxPacket,
+		},
+		{
+			name:    "inspect_packet_malformed_extension",
+			valid:   false,
+			script:  buildScript(t, OP_2, OP_INSPECTPACKET),
+			tx:      malformedExtensionTx,
+			errText: "failed to parse extension",
+		},
+		{
+			name:    "inspect_packet_empty_stack",
+			valid:   false,
+			script:  buildScript(t, OP_INSPECTPACKET),
+			tx:      txWithPacket,
+			errText: "stack",
+		},
+
+		// ── OP_INSPECTINPUTPACKET ─────────────────────────────────
+		{
+			name:       "inspect_input_packet_found",
+			valid:      true,
+			script:     inspectInputPacketCheck(t, OP_2, OP_0, testPayload),
+			tx:         twoInputTx,
+			prevoutTxs: map[int]*wire.MsgTx{0: prevoutTx},
+		},
+		{
+			name:       "inspect_input_packet_type_not_found",
+			valid:      true,
+			script:     inspectInputPacketNotFound(t, OP_9, OP_0),
+			tx:         twoInputTx,
+			prevoutTxs: map[int]*wire.MsgTx{0: prevoutTx},
+		},
+		{
+			name:       "inspect_input_packet_no_prev_tx_for_input",
+			valid:      false,
+			script:     buildScript(t, OP_2, OP_1, OP_INSPECTINPUTPACKET),
+			tx:         twoInputTx,
+			prevoutTxs: map[int]*wire.MsgTx{0: prevoutTx}, // only input 0 has prev tx
+			errText:    "prevout tx not available for input",
+		},
+		{
+			name:    "inspect_input_packet_no_prev_ark_txs",
+			valid:   false,
+			script:  buildScript(t, OP_2, OP_0, OP_INSPECTINPUTPACKET),
+			tx:      twoInputTx,
+			errText: "prevout tx not available for input",
+			// prevoutTxs is nil
+		},
+		{
+			name:       "inspect_input_packet_prev_tx_no_extension",
+			valid:      true,
+			script:     inspectInputPacketNotFound(t, OP_2, OP_0),
+			tx:         twoInputTx,
+			prevoutTxs: map[int]*wire.MsgTx{0: plainTx},
+		},
+		{
+			name:       "inspect_input_packet_malformed_prev_tx_extension",
+			valid:      false,
+			script:     buildScript(t, OP_2, OP_0, OP_INSPECTINPUTPACKET),
+			tx:         twoInputTx,
+			prevoutTxs: map[int]*wire.MsgTx{0: malformedPrevoutTx},
+			errText:    "failed to parse extension",
+		},
+		{
+			name:       "inspect_input_packet_negative_index",
+			valid:      false,
+			script:     buildScript(t, OP_2, OP_1NEGATE, OP_INSPECTINPUTPACKET),
+			tx:         twoInputTx,
+			prevoutTxs: map[int]*wire.MsgTx{0: prevoutTx},
+			errText:    "input index cannot be negative",
+		},
+		{
+			name:       "inspect_input_packet_index_out_of_range",
+			valid:      false,
+			script:     buildScript(t, OP_2, OP_5, OP_INSPECTINPUTPACKET),
+			tx:         twoInputTx,
+			prevoutTxs: map[int]*wire.MsgTx{0: prevoutTx},
+			errText:    "input index out of range",
+		},
+		{
+			name:    "inspect_input_packet_empty_stack",
+			valid:   false,
+			script:  buildScript(t, OP_INSPECTINPUTPACKET),
+			tx:      twoInputTx,
+			errText: "stack",
+		},
+		{
+			name:    "inspect_input_packet_single_stack_element",
+			valid:   false,
+			script:  buildScript(t, OP_2, OP_INSPECTINPUTPACKET),
+			tx:      twoInputTx,
+			errText: "stack",
+		},
+
+		// ── Large packet (> 520 byte MaxScriptElementSize) ────────
+		{
+			name:    "inspect_packet_large_content_rejected",
+			valid:   false,
+			script:  buildScript(t, OP_4, OP_INSPECTPACKET),
+			tx:      txWithLargePacket,
+			errText: "packet content size 1000 exceeds max allowed size 520",
+		},
+		{
+			name:       "inspect_input_packet_large_content_rejected",
+			valid:      false,
+			script:     buildScript(t, OP_4, OP_0, OP_INSPECTINPUTPACKET),
+			tx:         twoInputTx,
+			prevoutTxs: map[int]*wire.MsgTx{0: txWithLargePacket},
+			errText:    "packet content size 1000 exceeds max allowed size 520",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := runEngine(t, tt.script, tt.tx, tt.prevoutTxs)
+			if tt.valid && err != nil {
+				t.Errorf("expected success, got: %v", err)
+			}
+			if !tt.valid {
+				if err == nil {
+					t.Error("expected failure, got success")
+				} else if tt.errText != "" && !strings.Contains(err.Error(), tt.errText) {
+					t.Errorf("expected error containing %q, got: %v", tt.errText, err)
+				}
+			}
+		})
+	}
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/btcsuite/btcd/btcutil/psbt"
+	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -72,7 +73,8 @@ func (h *handler) SubmitTx(
 
 	approvedTx, err := h.svc.SubmitTx(ctx, offchainTx)
 	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		log.WithError(err).Error("failed to process transaction")
+		return nil, status.Error(codes.Internal, "failed to process transaction")
 	}
 
 	encodedArkTx, err := approvedTx.ArkTx.B64Encode()
@@ -111,7 +113,8 @@ func (h *handler) SubmitIntent(
 
 	signedIntentProof, err := h.svc.SubmitIntent(ctx, *intent)
 	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		log.WithError(err).Error("failed to process intent")
+		return nil, status.Error(codes.Internal, "failed to process intent")
 	}
 
 	encodedProof, err := signedIntentProof.B64Encode()
@@ -184,7 +187,8 @@ func (h *handler) SubmitFinalization(
 
 	signedBatchFinalization, err := h.svc.SubmitFinalization(ctx, batchFinalization)
 	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		log.WithError(err).Error("failed to process finalization")
+		return nil, status.Error(codes.Internal, "failed to process finalization")
 	}
 
 	encodedForfeits := make([]string, 0, len(signedBatchFinalization.Forfeits))
@@ -209,6 +213,33 @@ func (h *handler) SubmitFinalization(
 	}
 
 	return resp, nil
+}
+
+func (h *handler) SubmitOnchainTx(
+	ctx context.Context, req *introspectorv1.SubmitOnchainTxRequest,
+) (*introspectorv1.SubmitOnchainTxResponse, error) {
+	b64 := req.GetTx()
+	if len(b64) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "missing tx")
+	}
+
+	ptx, err := psbt.NewFromRawBytes(strings.NewReader(b64), true)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid tx")
+	}
+
+	signed, err := h.svc.SubmitOnchainTx(ctx, application.OnchainTx{Tx: ptx})
+	if err != nil {
+		log.WithError(err).Error("failed to process onchain tx")
+		return nil, status.Error(codes.Internal, "failed to process onchain tx")
+	}
+
+	encoded, err := signed.B64Encode()
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to encode tx")
+	}
+
+	return &introspectorv1.SubmitOnchainTxResponse{SignedTx: encoded}, nil
 }
 
 func verifyTreeRelatedToCommitment(commitmentPtx *psbt.Packet, txTree *tree.TxTree) error {

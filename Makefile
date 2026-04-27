@@ -1,4 +1,4 @@
-.PHONY: build docker-run docker-stop format integrationtest run proto proto-lint
+.PHONY: build build-all docker-run docker-stop format integrationtest run test proto proto-lint
 
 define setup_env
     $(eval include $(1))
@@ -20,6 +20,10 @@ run:
 	$(call setup_env, envs/introspector.dev.env)
 	@go run cmd/introspector.go
 
+test:
+	@echo "Running unit tests..."
+	@go test -v $$(go list ./... | grep -v '/test$$') github.com/ArkLabsHQ/introspector/pkg/arkade/... github.com/ArkLabsHQ/introspector/pkg/client/...
+
 integrationtest:
 	@echo "Running integration test..."
 	@go test -v ./test/...
@@ -37,6 +41,13 @@ docker-stop:
 build:
 	@echo "Building introspector..."
 	@go build -o build/introspector-$(shell go env GOOS)-$(shell go env GOARCH) cmd/introspector.go
+
+build-all:
+	@echo "Building introspector for all platforms..."
+	@CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o build/introspector-linux-amd64 cmd/introspector.go
+	@CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o build/introspector-linux-arm64 cmd/introspector.go
+	@CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o build/introspector-darwin-amd64 cmd/introspector.go
+	@CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o build/introspector-darwin-arm64 cmd/introspector.go
 
 lint:
 	golangci-lint run --fix

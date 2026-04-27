@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 
@@ -19,6 +20,7 @@ const (
 	TLSExtraIPs     = "TLS_EXTRA_IPS"
 	TLSExtraDomains = "TLS_EXTRA_DOMAINS"
 	LogLevel        = "LOG_LEVEL"
+	ArkdURL         = "ARKD_URL"
 )
 
 var (
@@ -37,6 +39,7 @@ type Config struct {
 	NoTLS           bool
 	TLSExtraIPs     []string
 	TLSExtraDomains []string
+	ArkdURL         string
 }
 
 func LoadConfig() (*Config, error) {
@@ -70,10 +73,14 @@ func LoadConfig() (*Config, error) {
 		NoTLS:           viper.GetBool(NoTLS),
 		TLSExtraIPs:     viper.GetStringSlice(TLSExtraIPs),
 		TLSExtraDomains: viper.GetStringSlice(TLSExtraDomains),
+		ArkdURL:         viper.GetString(ArkdURL),
+	}
+	if cfg.ArkdURL == "" {
+		return nil, fmt.Errorf("missing arkd url")
 	}
 	return cfg, nil
 }
 
-func (c *Config) AppService() (application.Service, error) {
-	return application.New(c.SecretKey), nil
+func (c *Config) AppService(ctx context.Context) (application.Service, error) {
+	return application.New(ctx, c.SecretKey, c.ArkdURL)
 }
