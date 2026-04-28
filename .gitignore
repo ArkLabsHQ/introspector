@@ -2,4 +2,5 @@
 .claude
 build/
 bin/
+.enclave/
 docs/plans/
