@@ -22,14 +22,13 @@ go install github.com/ArkLabsHQ/introspector-enclave/cli/cmd/enclave@v0.0.72
 matching `nix_hash` and `nix_vendor_hash`. To bump to a new commit:
 
 ```sh
-enclave setup --commit <full-40-char-sha>
+enclave setup --commit <commit_hash>
 ```
 
 This rewrites `app.nix_rev`, `app.nix_hash`, and `app.nix_vendor_hash` in
 `enclave.yaml` and regenerates `flake.lock`. Commit both files.
 
-`enclave setup` no longer overwrites `flake.nix` if it already exists. Pass
-`--force-flake` if you intentionally want to regenerate it from the template
+Pass `--force-flake` if you intentionally want to regenerate it from the template
 (e.g. after changing `app.language`).
 
 ## Build the EIF locally
@@ -59,11 +58,3 @@ Releases are dispatched manually via the `Release EIF` workflow:
    immutable release containing `image.eif`, `pcr.json`, `supervisor`,
    and `deployment.json`.
 
-Or via CLI:
-
-```sh
-gh workflow run release-eif.yml -f version=v0.1.0
-```
-
-Production deploys should pin `app.release_tag` in `enclave.yaml` to the
-released version (e.g. `v0.1.0`), never to a moving tag.
