@@ -41,18 +41,14 @@ const (
 	refundLocktime = uint32(500_000_000) // genesis timelock so always valid
 )
 
-// TestCovenantHTLC exercises an HTLC whose spending rules are enforced entirely
-// by arkade covenants instead of receiver/sender signatures.
+// TestCovenantHTLC exercises an HTLC whose spending rules are enforced by
+// arkade covenants instead of receiver/sender signatures.
 //
 // The VTXO is owned by a 2-of-2 multisig (arkd signer + introspector-tweaked
 // key) wrapped in a path-specific predicate closure. The introspector only
-// signs once the arkade covenant on the spending tx passes.
-//
-// Shared arkade script — enforces output[i] goes to pkScript for the full input
-// value (no fee deducted from the HTLC), where i is the current input index.
-// Witness stack: empty.
-// claim uses it to enforce the output goes to "receiver".
-// refund uses it to enforce the output goes to "sender".
+// signs once the arkade covenant on the spending tx passes, pinning output[i]
+// to the current input — so a taker claiming several HTLCs in one tx cannot
+// collapse them onto a single output.
 //
 //	OP_PUSHCURRENTINPUTINDEX OP_DUP
 //	OP_INSPECTOUTPUTSCRIPTPUBKEY
@@ -60,20 +56,10 @@ const (
 //	<receiver_or_sender_witness_program> OP_EQUALVERIFY
 //	OP_INSPECTOUTPUTVALUE
 //	OP_PUSHCURRENTINPUTINDEX OP_INSPECTINPUTVALUE
-//	OP_EQUAL
+//	OP_GREATERTHANOREQUAL
 //
-// Pinning the paid output to the current input index (rather than reading it
-// from the witness) makes the script safe to compose: a taker claiming several
-// HTLCs in one tx cannot point multiple inputs at a single output.
-//
-// Claim path — ConditionMultisigClosure with a HASH160 condition over the
-// preimage. Condition witness: [preimage].
-// Refund path — CLTVMultisigClosure with an absolute timelock.
-//
-// Neither path requires the receiver or sender to sign — the covenant acts
-// in their place. Under the hood, the VTXO closures are :
-// Claim: Introspector + Server + ConditionPreimage
-// Refund: Introspector + Server + CLTV
+//   - Claim:  ConditionMultisigClosure with HASH160 over the preimage.
+//   - Refund: CLTVMultisigClosure with an absolute timelock.
 func TestCovenantHTLC(t *testing.T) {
 	ctx := t.Context()
 
@@ -99,10 +85,8 @@ func TestCovenantHTLC(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("claim", func(t *testing.T) {
-		// who should receive from the claim
 		receiverPkScript := randomP2TR(t)
 
-		// script of the ConditionMultisigClosure
 		preimageCondition, err := txscript.NewScriptBuilder().
 			AddOp(txscript.OP_HASH160).
 			AddData(htlcPreimageHash).
@@ -110,7 +94,6 @@ func TestCovenantHTLC(t *testing.T) {
 			Script()
 		require.NoError(t, err)
 
-		// claim must go to receiverPkScript
 		arkadeScript := enforcePayTo(t, receiverPkScript)
 
 		htlcVtxoScript := script.TapscriptsVtxoScript{
@@ -137,10 +120,9 @@ func TestCovenantHTLC(t *testing.T) {
 			aliceAddr.Signer, htlcVtxoScript, contractAmount,
 		)
 
-		// witness is empty — the script reads the output index from
-		// OP_PUSHCURRENTINPUTINDEX.
+		// arkade witness is empty (script reads index from OP_PUSHCURRENTINPUTINDEX);
+		// condition witness reveals the preimage.
 		witness := wire.TxWitness{}
-		// condition witness = [preimage].
 		conditionWitness := wire.TxWitness{htlcPreimage}
 
 		buildClaim := func(outputs []*wire.TxOut) (*psbt.Packet, []*psbt.Packet) {
@@ -207,9 +189,8 @@ func TestCovenantHTLC(t *testing.T) {
 	})
 
 	t.Run("claim_multiple", func(t *testing.T) {
-		// A single taker claims several HTLCs in one ark tx. Each input
-		// is paired with the output at the same index — pinned by
-		// OP_PUSHCURRENTINPUTINDEX in the arkade script.
+		// Single taker claims several HTLCs in one ark tx; inputs and
+		// outputs are paired by index.
 		const numHTLCs = 3
 
 		receiverPkScript := randomP2TR(t)
@@ -265,7 +246,7 @@ func TestCovenantHTLC(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		// One condition witness per input on the ark tx; one per
+		// One condition witness per input on the ark tx, plus one per
 		// checkpoint (each checkpoint has a single input).
 		entries := make([]arkade.IntrospectorEntry, numHTLCs)
 		for i, preimage := range preimages {
@@ -304,10 +285,7 @@ func TestCovenantHTLC(t *testing.T) {
 	})
 
 	t.Run("refund", func(t *testing.T) {
-		// who should receive from the refund
 		senderPkScript := randomP2TR(t)
-
-		// refund must go to senderPkScript
 		arkadeScript := enforcePayTo(t, senderPkScript)
 
 		htlcVtxoScript := script.TapscriptsVtxoScript{
@@ -334,8 +312,6 @@ func TestCovenantHTLC(t *testing.T) {
 			aliceAddr.Signer, htlcVtxoScript, contractAmount,
 		)
 
-		// witness is empty — the script reads the output index from
-		// OP_PUSHCURRENTINPUTINDEX.
 		witness := wire.TxWitness{}
 
 		submitAndExpectFailure := func(outputs []*wire.TxOut) {
@@ -395,9 +371,8 @@ func TestCovenantHTLC(t *testing.T) {
 	})
 }
 
-// enforcePayTo builds an arkade script that asserts the output at the
-// current input index goes to pkScript for exactly the current input's value.
-// The witness stack is empty.
+// enforcePayTo builds an arkade script asserting that the output at the
+// current input index goes to pkScript for at least the input's value.
 func enforcePayTo(t *testing.T, pkScript []byte) []byte {
 	t.Helper()
 
@@ -412,7 +387,7 @@ func enforcePayTo(t *testing.T, pkScript []byte) []byte {
 		AddOp(arkade.OP_INSPECTOUTPUTVALUE).
 		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).
 		AddOp(arkade.OP_INSPECTINPUTVALUE).
-		AddOp(arkade.OP_EQUAL).
+		AddOp(arkade.OP_GREATERTHANOREQUAL).
 		Script()
 	require.NoError(t, err)
 
