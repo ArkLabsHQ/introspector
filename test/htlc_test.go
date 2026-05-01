@@ -50,16 +50,16 @@ const (
 // to the current input — so a taker claiming several HTLCs in one tx cannot
 // collapse them onto a single output.
 //
-//	OP_PUSHCURRENTINPUTINDEX OP_DUP
-//	OP_INSPECTOUTPUTSCRIPTPUBKEY
-//	OP_1 OP_EQUALVERIFY            # force taproot
-//	<receiver_or_sender_witness_program> OP_EQUALVERIFY
-//	OP_INSPECTOUTPUTVALUE
-//	OP_PUSHCURRENTINPUTINDEX OP_INSPECTINPUTVALUE
-//	OP_GREATERTHANOREQUAL
+//		OP_PUSHCURRENTINPUTINDEX OP_DUP
+//		OP_INSPECTOUTPUTSCRIPTPUBKEY
+//		OP_1 OP_EQUALVERIFY            # force taproot
+//		<receiver_or_sender_witness_program> OP_EQUALVERIFY
+//		OP_INSPECTOUTPUTVALUE
+//		OP_PUSHCURRENTINPUTINDEX OP_INSPECTINPUTVALUE
+//		OP_GREATERTHANOREQUAL
 //
-//   - Claim:  ConditionMultisigClosure with HASH160 over the preimage.
-//   - Refund: CLTVMultisigClosure with an absolute timelock.
+//	  - Claim:  ConditionMultisigClosure with HASH160 over the preimage.
+//	  - Refund: CLTVMultisigClosure with an absolute timelock.
 func TestCovenantHTLC(t *testing.T) {
 	ctx := t.Context()
 
