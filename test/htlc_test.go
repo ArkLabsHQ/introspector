@@ -47,7 +47,8 @@ const (
 // key) wrapped in a path-specific predicate closure. The introspector only
 // signs once the arkade covenant on the spending tx passes.
 //
-// Shared arkade script — enforces output[i] goes to pkScript for `amount` sats.
+// Shared arkade script — enforces output[i] goes to pkScript for the full input
+// value (no fee deducted from the HTLC).
 // Witness stack: [output_index].
 // claim uses it to enforce the output goes to "receiver".
 // refund uses it to enforce the output goes to "sender".
@@ -57,7 +58,8 @@ const (
 //	OP_1 OP_EQUALVERIFY            # force taproot
 //	<receiver_or_sender_witness_program> OP_EQUALVERIFY
 //	OP_INSPECTOUTPUTVALUE
-//	<amount> OP_EQUAL
+//	OP_PUSHCURRENTINPUTINDEX OP_INSPECTINPUTVALUE
+//	OP_EQUAL
 //
 // Claim path — ConditionMultisigClosure with a HASH160 condition over the
 // preimage. Condition witness: [preimage].
@@ -104,7 +106,7 @@ func TestCovenantHTLC(t *testing.T) {
 		require.NoError(t, err)
 
 		// claim must go to receiverPkScript
-		arkadeScript := enforcePayTo(t, receiverPkScript, contractAmount)
+		arkadeScript := enforcePayTo(t, receiverPkScript)
 
 		htlcVtxoScript := script.TapscriptsVtxoScript{
 			Closures: []script.Closure{
@@ -203,7 +205,7 @@ func TestCovenantHTLC(t *testing.T) {
 		senderPkScript := randomP2TR(t)
 
 		// refund must go to senderPkScript
-		arkadeScript := enforcePayTo(t, senderPkScript, contractAmount)
+		arkadeScript := enforcePayTo(t, senderPkScript)
 
 		htlcVtxoScript := script.TapscriptsVtxoScript{
 			Closures: []script.Closure{
@@ -290,9 +292,9 @@ func TestCovenantHTLC(t *testing.T) {
 }
 
 // enforcePayTo builds an arkade script that asserts output[output_index] goes
-// to pkScript for exactly amount sats. The caller pushes <output_index> on the
-// witness stack.
-func enforcePayTo(t *testing.T, pkScript []byte, amount int64) []byte {
+// to pkScript for exactly the current input's value. The caller pushes
+// <output_index> on the witness stack.
+func enforcePayTo(t *testing.T, pkScript []byte) []byte {
 	t.Helper()
 
 	s, err := txscript.NewScriptBuilder().
@@ -303,7 +305,8 @@ func enforcePayTo(t *testing.T, pkScript []byte, amount int64) []byte {
 		AddData(pkScript[2:]).        // witness program
 		AddOp(arkade.OP_EQUALVERIFY).
 		AddOp(arkade.OP_INSPECTOUTPUTVALUE).
-		AddInt64(amount).
+		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).
+		AddOp(arkade.OP_INSPECTINPUTVALUE).
 		AddOp(arkade.OP_EQUAL).
 		Script()
 	require.NoError(t, err)
