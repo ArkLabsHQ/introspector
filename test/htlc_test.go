@@ -15,6 +15,7 @@ import (
 	"github.com/arkade-os/go-sdk/indexer"
 	"github.com/arkade-os/go-sdk/types"
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
@@ -40,33 +41,25 @@ const (
 	refundLocktime = uint32(500_000_000) // genesis timelock so always valid
 )
 
-// TestCovenantHTLC exercises an HTLC whose spending rules are enforced entirely
-// by arkade covenants instead of receiver/sender signatures.
+// TestCovenantHTLC exercises an HTLC whose spending rules are enforced by
+// arkade covenants instead of receiver/sender signatures.
 //
 // The VTXO is owned by a 2-of-2 multisig (arkd signer + introspector-tweaked
 // key) wrapped in a path-specific predicate closure. The introspector only
-// signs once the arkade covenant on the spending tx passes.
+// signs once the arkade covenant on the spending tx passes, pinning output[i]
+// to the current input — so a taker claiming several HTLCs in one tx cannot
+// collapse them onto a single output.
 //
-// Shared arkade script — enforces output[i] goes to pkScript for `amount` sats.
-// Witness stack: [output_index].
-// claim uses it to enforce the output goes to "receiver".
-// refund uses it to enforce the output goes to "sender".
+//		OP_PUSHCURRENTINPUTINDEX OP_DUP
+//		OP_INSPECTOUTPUTSCRIPTPUBKEY
+//		OP_1 OP_EQUALVERIFY            # force taproot
+//		<receiver_or_sender_witness_program> OP_EQUALVERIFY
+//		OP_INSPECTOUTPUTVALUE
+//		OP_PUSHCURRENTINPUTINDEX OP_INSPECTINPUTVALUE
+//		OP_GREATERTHANOREQUAL
 //
-//	OP_DUP
-//	OP_INSPECTOUTPUTSCRIPTPUBKEY
-//	OP_1 OP_EQUALVERIFY            # force taproot
-//	<receiver_or_sender_witness_program> OP_EQUALVERIFY
-//	OP_INSPECTOUTPUTVALUE
-//	<amount> OP_EQUAL
-//
-// Claim path — ConditionMultisigClosure with a HASH160 condition over the
-// preimage. Condition witness: [preimage].
-// Refund path — CLTVMultisigClosure with an absolute timelock.
-//
-// Neither path requires the receiver or sender to sign — the covenant acts
-// in their place. Under the hood, the VTXO closures are :
-// Claim: Introspector + Server + ConditionPreimage
-// Refund: Introspector + Server + CLTV
+//	  - Claim:  ConditionMultisigClosure with HASH160 over the preimage.
+//	  - Refund: CLTVMultisigClosure with an absolute timelock.
 func TestCovenantHTLC(t *testing.T) {
 	ctx := t.Context()
 
@@ -92,10 +85,8 @@ func TestCovenantHTLC(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("claim", func(t *testing.T) {
-		// who should receive from the claim
 		receiverPkScript := randomP2TR(t)
 
-		// script of the ConditionMultisigClosure
 		preimageCondition, err := txscript.NewScriptBuilder().
 			AddOp(txscript.OP_HASH160).
 			AddData(htlcPreimageHash).
@@ -103,8 +94,7 @@ func TestCovenantHTLC(t *testing.T) {
 			Script()
 		require.NoError(t, err)
 
-		// claim must go to receiverPkScript
-		arkadeScript := enforcePayTo(t, receiverPkScript, contractAmount)
+		arkadeScript := enforcePayTo(t, receiverPkScript)
 
 		htlcVtxoScript := script.TapscriptsVtxoScript{
 			Closures: []script.Closure{
@@ -130,9 +120,9 @@ func TestCovenantHTLC(t *testing.T) {
 			aliceAddr.Signer, htlcVtxoScript, contractAmount,
 		)
 
-		// witness = [output_index=0].
-		witness := wire.TxWitness{{}}
-		// condition witness = [preimage].
+		// arkade witness is empty (script reads index from OP_PUSHCURRENTINPUTINDEX);
+		// condition witness reveals the preimage.
+		witness := wire.TxWitness{}
 		conditionWitness := wire.TxWitness{htlcPreimage}
 
 		buildClaim := func(outputs []*wire.TxOut) (*psbt.Packet, []*psbt.Packet) {
@@ -198,12 +188,105 @@ func TestCovenantHTLC(t *testing.T) {
 		waitForVtxos()
 	})
 
-	t.Run("refund", func(t *testing.T) {
-		// who should receive from the refund
-		senderPkScript := randomP2TR(t)
+	t.Run("claim_multiple", func(t *testing.T) {
+		// Single taker claims several HTLCs in one ark tx; inputs and
+		// outputs are paired by index.
+		const numHTLCs = 3
 
-		// refund must go to senderPkScript
-		arkadeScript := enforcePayTo(t, senderPkScript, contractAmount)
+		receiverPkScript := randomP2TR(t)
+		arkadeScript := enforcePayTo(t, receiverPkScript)
+		arkadeScriptHash := arkade.ArkadeScriptHash(arkadeScript)
+
+		preimages := make([][]byte, numHTLCs)
+		htlcInputs := make([]offchain.VtxoInput, numHTLCs)
+
+		for i := range numHTLCs {
+			preimage := make([]byte, 32)
+			for j := range preimage {
+				preimage[j] = byte(i + 1)
+			}
+			preimages[i] = preimage
+
+			preimageCondition, err := txscript.NewScriptBuilder().
+				AddOp(txscript.OP_HASH160).
+				AddData(btcutil.Hash160(preimage)).
+				AddOp(txscript.OP_EQUAL).
+				Script()
+			require.NoError(t, err)
+
+			htlcVtxoScript := script.TapscriptsVtxoScript{
+				Closures: []script.Closure{
+					&script.ConditionMultisigClosure{
+						MultisigClosure: script.MultisigClosure{
+							PubKeys: []*btcec.PublicKey{
+								aliceAddr.Signer,
+								arkade.ComputeArkadeScriptPublicKey(
+									introspectorPubKey, arkadeScriptHash,
+								),
+							},
+						},
+						Condition: preimageCondition,
+					},
+				},
+			}
+
+			htlcInputs[i] = fund(
+				t, ctx, alice, indexerSvc,
+				aliceAddr.Signer, htlcVtxoScript, contractAmount,
+			)
+		}
+
+		outputs := make([]*wire.TxOut, numHTLCs)
+		for i := range numHTLCs {
+			outputs[i] = &wire.TxOut{Value: contractAmount, PkScript: receiverPkScript}
+		}
+
+		ptx, checkpoints, err := offchain.BuildTxs(
+			htlcInputs, outputs, checkpointScriptBytes,
+		)
+		require.NoError(t, err)
+
+		// One condition witness per input on the ark tx, plus one per
+		// checkpoint (each checkpoint has a single input).
+		entries := make([]arkade.IntrospectorEntry, numHTLCs)
+		for i, preimage := range preimages {
+			require.NoError(t, txutils.SetArkPsbtField(
+				ptx, i, txutils.ConditionWitnessField, wire.TxWitness{preimage},
+			))
+			entries[i] = arkade.IntrospectorEntry{
+				Vin:     uint16(i),
+				Script:  arkadeScript,
+				Witness: wire.TxWitness{},
+			}
+		}
+		for i, cp := range checkpoints {
+			require.NoError(t, txutils.SetArkPsbtField(
+				cp, 0, txutils.ConditionWitnessField, wire.TxWitness{preimages[i]},
+			))
+		}
+
+		addIntrospectorPacket(t, ptx, entries)
+
+		vouts := make([]uint32, numHTLCs)
+		for i := range numHTLCs {
+			vouts[i] = uint32(i)
+		}
+		waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, ptx, vouts...)
+
+		encodedTx, err := ptx.B64Encode()
+		require.NoError(t, err)
+
+		_, _, err = introspectorClient.SubmitTx(
+			ctx, encodedTx, encodeCheckpoints(t, checkpoints),
+		)
+		require.NoError(t, err)
+
+		waitForVtxos()
+	})
+
+	t.Run("refund", func(t *testing.T) {
+		senderPkScript := randomP2TR(t)
+		arkadeScript := enforcePayTo(t, senderPkScript)
 
 		htlcVtxoScript := script.TapscriptsVtxoScript{
 			Closures: []script.Closure{
@@ -229,8 +312,7 @@ func TestCovenantHTLC(t *testing.T) {
 			aliceAddr.Signer, htlcVtxoScript, contractAmount,
 		)
 
-		// witness = [output_index=0].
-		witness := wire.TxWitness{{}}
+		witness := wire.TxWitness{}
 
 		submitAndExpectFailure := func(outputs []*wire.TxOut) {
 			candidateTx, checkpoints, err := offchain.BuildTxs(
@@ -289,13 +371,13 @@ func TestCovenantHTLC(t *testing.T) {
 	})
 }
 
-// enforcePayTo builds an arkade script that asserts output[output_index] goes
-// to pkScript for exactly amount sats. The caller pushes <output_index> on the
-// witness stack.
-func enforcePayTo(t *testing.T, pkScript []byte, amount int64) []byte {
+// enforcePayTo builds an arkade script asserting that the output at the
+// current input index goes to pkScript for at least the input's value.
+func enforcePayTo(t *testing.T, pkScript []byte) []byte {
 	t.Helper()
 
 	s, err := txscript.NewScriptBuilder().
+		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).
 		AddOp(arkade.OP_DUP).
 		AddOp(arkade.OP_INSPECTOUTPUTSCRIPTPUBKEY).
 		AddOp(arkade.OP_1).
@@ -303,8 +385,9 @@ func enforcePayTo(t *testing.T, pkScript []byte, amount int64) []byte {
 		AddData(pkScript[2:]).        // witness program
 		AddOp(arkade.OP_EQUALVERIFY).
 		AddOp(arkade.OP_INSPECTOUTPUTVALUE).
-		AddInt64(amount).
-		AddOp(arkade.OP_EQUAL).
+		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).
+		AddOp(arkade.OP_INSPECTINPUTVALUE).
+		AddOp(arkade.OP_GREATERTHANOREQUAL).
 		Script()
 	require.NoError(t, err)
 
