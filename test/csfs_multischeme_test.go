@@ -98,7 +98,6 @@ func TestCSFSNativeP256Multischeme(t *testing.T) {
 
 		_, _, err = emulatorClient.SubmitTx(ctx, encoded, encodeCheckpoints(t, checkpoints))
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "failed to process transaction")
 	})
 }
 

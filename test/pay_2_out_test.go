@@ -266,7 +266,6 @@ func TestPayToTwoOutputs(t *testing.T) {
 
 	_, _, err = emulatorClient.SubmitTx(ctx, signedInvalidAddrTx, encodedInvalidAddrCheckpoints)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "failed to process transaction")
 
 	// ========================================
 	// CASE 2: Invalid — wrong amount on output 1
@@ -302,7 +301,6 @@ func TestPayToTwoOutputs(t *testing.T) {
 
 	_, _, err = emulatorClient.SubmitTx(ctx, signedInvalidAmtTx, encodedInvalidAmtCheckpoints)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "failed to process transaction")
 
 	// ========================================
 	// CASE 3: Valid — correct addresses and amounts

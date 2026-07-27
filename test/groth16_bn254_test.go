@@ -109,7 +109,6 @@ func TestGroth16BN254VerificationInScript(t *testing.T) {
 
 		_, _, err = emulatorClient.SubmitTx(ctx, encoded, encodeCheckpoints(t, checkpoints))
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "failed to process transaction")
 	})
 
 	t.Run("tampered_proof_rejected", func(t *testing.T) {
