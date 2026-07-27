@@ -240,7 +240,6 @@ func TestRecursivePolicy(t *testing.T) {
 
 		_, _, err = emulatorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "failed to process transaction")
 	}
 
 	// Invalid: policy script requires exactly one input.

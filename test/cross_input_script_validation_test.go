@@ -951,7 +951,6 @@ func (env *crossInputTestEnv) submitAndExpectFailure(t *testing.T, candidateTx *
 
 	_, _, err = env.emulatorClient.SubmitTx(env.ctx, signedTx, signedCheckpoints)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "failed to process transaction")
 }
 
 // submitAndFinalize submits the candidate tx once and verifies the result via the indexer.

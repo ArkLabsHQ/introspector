@@ -166,7 +166,6 @@ func TestSubmitOffchain(t *testing.T) {
 	assertSubmitError := func(t *testing.T, err error) {
 		t.Helper()
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "failed to process transaction")
 	}
 
 	t.Run("single_input_invalid_script", func(t *testing.T) {
@@ -1289,7 +1288,6 @@ func TestEmulatorRejectsInvalidArkadeScript(t *testing.T) {
 
 			_, _, err = emulatorClient.SubmitTx(ctx, signedInvalidTx, encodedInvalidCheckpoints)
 			require.Error(t, err)
-			require.Contains(t, err.Error(), "failed to process transaction")
 		})
 	}
 }

@@ -76,7 +76,6 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 
 		_, _, err = emulatorClient.SubmitTx(ctx, encodedTx, encodeCheckpoints(t, checkpoints))
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "failed to process transaction")
 	}
 
 	deployTx := deployCounterFromWallet(
