@@ -40,7 +40,7 @@ func (s signer) signInput(ptx *psbt.Packet, inputIndex int, tweak []byte, prevou
 		input.WitnessUtxo.PkScript, tapLeaf, input.SighashType, signingKey,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to sign taproot leaf: %w", err)
+		return err
 	}
 
 	leafHash := tapLeaf.TapHash()
