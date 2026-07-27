@@ -156,7 +156,6 @@ func TestCovenantHTLC(t *testing.T) {
 				ctx, encodedTx, encodeCheckpoints(t, checkpoints),
 			)
 			require.Error(t, err)
-			require.Contains(t, err.Error(), "failed to process transaction")
 		}
 
 		// Invalid: wrong destination at output 0
@@ -331,7 +330,6 @@ func TestCovenantHTLC(t *testing.T) {
 				ctx, encodedTx, encodeCheckpoints(t, checkpoints),
 			)
 			require.Error(t, err)
-			require.Contains(t, err.Error(), "failed to process transaction")
 		}
 
 		// Invalid: wrong destination at output 0

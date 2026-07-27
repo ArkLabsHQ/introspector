@@ -95,7 +95,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		}
 
 		if err = finalizerAcc.checkScript(entry.Vin, script); err != nil {
-			return nil, fmt.Errorf("failed to check script for finalizer: %w", err)
+			return nil, err
 		}
 
 		nSigned++

@@ -207,7 +207,6 @@ func TestAssetAccountCovenant(t *testing.T) {
 		bad[0] = &wire.TxOut{Value: solverDust, PkScript: randomP2TRScript(t)}
 		err := submitRoute(buildRoute(bad, defaultRoutePkt))
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "failed to process transaction")
 	}
 
 	// Invalid: wrong USDT amount on alice change output.
@@ -217,7 +216,6 @@ func TestAssetAccountCovenant(t *testing.T) {
 			buildRoutePacket(t, mintTxHash, solverBobUSDT, solverChange-1, solverFeeUSDT),
 		))
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "failed to process transaction")
 	}
 
 	// Valid: solver picks any pkScript for its fee output.

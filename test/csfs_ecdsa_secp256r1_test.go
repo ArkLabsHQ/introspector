@@ -146,7 +146,6 @@ func TestCSFSEmulationECDSASecp256r1(t *testing.T) {
 
 		_, _, err = emulatorClient.SubmitTx(ctx, encoded, encodeCheckpoints(t, checkpoints))
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "failed to process transaction")
 	})
 
 	t.Run("wrong_message_magic_rejected", func(t *testing.T) {
@@ -161,7 +160,6 @@ func TestCSFSEmulationECDSASecp256r1(t *testing.T) {
 
 		_, _, err = emulatorClient.SubmitTx(ctx, encoded, encodeCheckpoints(t, checkpoints))
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "failed to process transaction")
 	})
 }
 

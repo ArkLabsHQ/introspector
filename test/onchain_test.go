@@ -221,7 +221,6 @@ func TestSubmitOnchainTx(t *testing.T) {
 
 		_, err = emulatorClient.SubmitOnchainTx(ctx, bobSigned)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "failed to process onchain tx")
 	})
 
 	t.Run("PrevoutTxField wrong txid", func(t *testing.T) {
@@ -243,7 +242,6 @@ func TestSubmitOnchainTx(t *testing.T) {
 
 		_, err = emulatorClient.SubmitOnchainTx(ctx, bobSigned)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "failed to process onchain tx")
 	})
 
 	t.Run("arkade script fails", func(t *testing.T) {
@@ -262,7 +260,6 @@ func TestSubmitOnchainTx(t *testing.T) {
 
 		_, err = emulatorClient.SubmitOnchainTx(ctx, bobSigned)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "failed to process onchain tx")
 	})
 
 	t.Run("rejects tapscript containing arkd pubkey", func(t *testing.T) {
@@ -304,7 +301,6 @@ func TestSubmitOnchainTx(t *testing.T) {
 
 		_, err = emulatorClient.SubmitOnchainTx(ctx, encoded)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "failed to process onchain tx")
 	})
 
 	// VTXO whose exit leaf is a CSVMultisigClosure containing the emulator's arkade-tweaked key.

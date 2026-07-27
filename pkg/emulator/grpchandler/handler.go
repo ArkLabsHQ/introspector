@@ -76,7 +76,7 @@ func (h *handler) SubmitTx(
 	approvedTx, err := h.svc.SubmitTx(ctx, offchainTx)
 	if err != nil {
 		log.WithError(err).Error("failed to process transaction")
-		return nil, status.Error(codes.Internal, "failed to process transaction")
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	encodedArkTx, err := approvedTx.ArkTx.B64Encode()
@@ -116,12 +116,12 @@ func (h *handler) SubmitIntent(
 	signedIntentProof, err := h.svc.SubmitIntent(ctx, *intent)
 	if err != nil {
 		log.WithError(err).Error("failed to process intent")
-		return nil, status.Error(codes.Internal, "failed to process intent")
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	encodedProof, err := signedIntentProof.B64Encode()
 	if err != nil {
-		return nil, status.Error(codes.Internal, "failed to encode proof")
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	return &emulatorv1.SubmitIntentResponse{
@@ -190,7 +190,7 @@ func (h *handler) SubmitFinalization(
 	signedBatchFinalization, err := h.svc.SubmitFinalization(ctx, batchFinalization)
 	if err != nil {
 		log.WithError(err).Error("failed to process finalization")
-		return nil, status.Error(codes.Internal, "failed to process finalization")
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	encodedForfeits := make([]string, 0, len(signedBatchFinalization.Forfeits))
@@ -233,12 +233,12 @@ func (h *handler) SubmitOnchainTx(
 	signed, err := h.svc.SubmitOnchainTx(ctx, emulator.OnchainTx{Tx: ptx})
 	if err != nil {
 		log.WithError(err).Error("failed to process onchain tx")
-		return nil, status.Error(codes.Internal, "failed to process onchain tx")
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	encoded, err := signed.B64Encode()
 	if err != nil {
-		return nil, status.Error(codes.Internal, "failed to encode tx")
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	return &emulatorv1.SubmitOnchainTxResponse{SignedTx: encoded}, nil
