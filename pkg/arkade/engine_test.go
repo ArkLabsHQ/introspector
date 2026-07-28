@@ -766,7 +766,7 @@ func TestNewOpcodes(t *testing.T) {
 			script: txscript.NewScriptBuilder().
 				AddData([]byte{0x00}).
 				AddOp(OP_INSPECTINPUTSEQUENCE).
-				AddData([]byte{0xFF, 0xFF, 0xFF, 0xFF, 0x00}). // Max sequence number
+				AddInt64(1<<32 - 1). // Max sequence number
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{
@@ -1106,7 +1106,7 @@ func TestNewOpcodes(t *testing.T) {
 			name: "OP_TXWEIGHT",
 			script: txscript.NewScriptBuilder().
 				AddOp(OP_TXWEIGHT).
-				AddData([]byte{0xCC, 0x00}). // Expected weight 204
+				AddInt64(204). // Expected weight
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{
