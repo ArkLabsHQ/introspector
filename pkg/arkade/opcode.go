@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/gob"
 	"encoding/hex"
 	"errors"
@@ -2096,10 +2095,7 @@ func opcodeInspectInputSequence(op *opcode, data []byte, vm *Engine) error {
 		return scriptError(txscript.ErrInvalidIndex, "input index out of range")
 	}
 
-	sequence := make([]byte, 4)
-	binary.LittleEndian.PutUint32(sequence, vm.tx.TxIn[index].Sequence)
-	vm.dstack.PushByteArray(sequence)
-	return nil
+	return vm.dstack.PushBigNum(BigNumFromUint64(uint64(vm.tx.TxIn[index].Sequence)))
 }
 
 // opcodePushCurrentInputIndex pushes the current input index onto the stack.
@@ -2148,19 +2144,13 @@ func opcodeInspectOutputScriptPubkey(op *opcode, data []byte, vm *Engine) error 
 // opcodeInspectVersion pushes the transaction version onto the stack.
 // Stack transformation: [...] -> [... version]
 func opcodeInspectVersion(op *opcode, data []byte, vm *Engine) error {
-	version := make([]byte, 4)
-	binary.LittleEndian.PutUint32(version, uint32(vm.tx.Version))
-	vm.dstack.PushByteArray(version)
-	return nil
+	return vm.dstack.PushBigNum(BigNumFromUint64(uint64(uint32(vm.tx.Version))))
 }
 
 // opcodeInspectLocktime pushes the transaction locktime onto the stack.
 // Stack transformation: [...] -> [... locktime]
 func opcodeInspectLocktime(op *opcode, data []byte, vm *Engine) error {
-	locktime := make([]byte, 4)
-	binary.LittleEndian.PutUint32(locktime, vm.tx.LockTime)
-	vm.dstack.PushByteArray(locktime)
-	return nil
+	return vm.dstack.PushBigNum(BigNumFromUint64(uint64(vm.tx.LockTime)))
 }
 
 // opcodeInspectNumInputs pushes the number of inputs in the transaction onto the stack.
@@ -2180,10 +2170,7 @@ func opcodeInspectNumOutputs(op *opcode, data []byte, vm *Engine) error {
 // opcodeTxWeight pushes the transaction weight onto the stack.
 // Stack transformation: [...] -> [... weight]
 func opcodeTxWeight(op *opcode, data []byte, vm *Engine) error {
-	weight := make([]byte, 4)
-	binary.LittleEndian.PutUint32(weight, uint32(vm.tx.SerializeSizeStripped()*4))
-	vm.dstack.PushByteArray(weight)
-	return nil
+	return vm.dstack.PushBigNum(BigNumFromUint64(uint64(vm.tx.SerializeSizeStripped() * 4)))
 }
 
 // opcodeCat concatenates two byte arrays.

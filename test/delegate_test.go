@@ -44,7 +44,7 @@ const (
 // pkScript and value, and gates the spend to intent-proof txs only (v2).
 // Witness stack: [].
 //
-//	OP_INSPECTVERSION <0x02000000> OP_EQUALVERIFY  # intent proof only (v2, not v3)
+//	OP_INSPECTVERSION OP_2 OP_EQUALVERIFY          # intent proof only (v2, not v3)
 //	OP_0 OP_INSPECTOUTPUTSCRIPTPUBKEY
 //	OP_1 OP_EQUALVERIFY                            # force taproot
 //	OP_PUSHCURRENTINPUTINDEX OP_INSPECTINPUTSCRIPTPUBKEY
@@ -317,9 +317,8 @@ func enforceSelfSend(t *testing.T) []byte {
 	t.Helper()
 
 	s, err := txscript.NewScriptBuilder().
-		// OP_INSPECTVERSION pushes tx.Version as 4-byte LE, compared against raw bytes
 		AddOp(arkade.OP_INSPECTVERSION).
-		AddData([]byte{0x02, 0x00, 0x00, 0x00}).
+		AddInt64(2).
 		AddOp(arkade.OP_EQUALVERIFY).
 		// output[0] witness program == input[self] witness program
 		AddInt64(0).

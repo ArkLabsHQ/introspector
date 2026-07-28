@@ -4179,7 +4179,9 @@ func txWeightSpec() *opcodeSpec {
 			require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
 			require.Equal(t, c.before.condStack, c.after.condStack)
 			require.Equal(t, len(c.before.GetStack())+1, len(c.after.GetStack()))
-			require.Len(t, c.after.GetStack()[len(c.after.GetStack())-1], 4)
+			want, err := BigNumFromUint64(uint64(c.before.tx.SerializeSizeStripped() * 4)).Bytes()
+			require.NoError(t, err)
+			require.Equal(t, want, c.after.GetStack()[len(c.after.GetStack())-1])
 		},
 		validVectors: []opcodeVector{
 			{name: "push", expectedStack: [][]byte{opcodeWorldTxWeight()}},
@@ -4775,7 +4777,7 @@ func inspectInputSequenceSpec() *opcodeSpec {
 		opcode:          OP_INSPECTINPUTSEQUENCE,
 		checkProperties: inspectInputPropertyChecker(OP_INSPECTINPUTSEQUENCE),
 		validVectors: []opcodeVector{
-			{name: "seq0", inputStack: [][]byte{nil}, expectedStack: [][]byte{{100, 0, 0, 0}}},
+			{name: "seq0", inputStack: [][]byte{nil}, expectedStack: [][]byte{{100}}},
 		},
 		invalidVectors: []opcodeVector{
 			{
@@ -4856,7 +4858,7 @@ func inspectVersionSpec() *opcodeSpec {
 	return &opcodeSpec{
 		opcode:          OP_INSPECTVERSION,
 		checkProperties: inspectMetaPropertyChecker(OP_INSPECTVERSION),
-		validVectors:    []opcodeVector{{name: "push", expectedStack: [][]byte{{2, 0, 0, 0}}}},
+		validVectors:    []opcodeVector{{name: "push", expectedStack: [][]byte{{2}}}},
 	}
 }
 
@@ -4864,7 +4866,7 @@ func inspectLocktimeSpec() *opcodeSpec {
 	return &opcodeSpec{
 		opcode:          OP_INSPECTLOCKTIME,
 		checkProperties: inspectMetaPropertyChecker(OP_INSPECTLOCKTIME),
-		validVectors:    []opcodeVector{{name: "push", expectedStack: [][]byte{{144, 0, 0, 0}}}},
+		validVectors:    []opcodeVector{{name: "push", expectedStack: [][]byte{{144, 0}}}},
 	}
 }
 
@@ -5070,7 +5072,11 @@ func inspectInputPropertyChecker(op byte) opcodePropertyChecker {
 			programOrHash := c.after.GetStack()[afterDepth-2]
 			require.NotEmpty(t, programOrHash)
 		case OP_INSPECTINPUTSEQUENCE:
-			require.Len(t, top, 4)
+			index, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-1])
+			require.NoError(t, err)
+			want, err := BigNumFromUint64(uint64(c.before.tx.TxIn[int(index.BigInt().Int64())].Sequence)).Bytes()
+			require.NoError(t, err)
+			require.Equal(t, want, top)
 		}
 	}
 }
@@ -5125,8 +5131,14 @@ func inspectMetaPropertyChecker(op byte) opcodePropertyChecker {
 
 		top := c.after.GetStack()[afterDepth-1]
 		switch op {
-		case OP_INSPECTVERSION, OP_INSPECTLOCKTIME:
-			require.Len(t, top, 4)
+		case OP_INSPECTVERSION:
+			want, err := BigNumFromUint64(uint64(uint32(c.before.tx.Version))).Bytes()
+			require.NoError(t, err)
+			require.Equal(t, want, top)
+		case OP_INSPECTLOCKTIME:
+			want, err := BigNumFromUint64(uint64(c.before.tx.LockTime)).Bytes()
+			require.NoError(t, err)
+			require.Equal(t, want, top)
 		case OP_PUSHCURRENTINPUTINDEX, OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS:
 			require.LessOrEqual(t, len(top), 5)
 		default:
@@ -5439,9 +5451,7 @@ func emptyByteVector() []byte {
 
 func opcodeWorldTxWeight() []byte {
 	world := buildOpcodeWorld()
-	weight := make([]byte, 4)
-	binary.LittleEndian.PutUint32(weight, uint32(world.tx.SerializeSizeStripped()*4))
-	return weight
+	return mustBigNumBytes(BigNumFromUint64(uint64(world.tx.SerializeSizeStripped() * 4)))
 }
 
 func hashBytes(h chainhash.Hash) []byte {
