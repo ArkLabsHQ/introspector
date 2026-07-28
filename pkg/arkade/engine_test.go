@@ -766,7 +766,7 @@ func TestNewOpcodes(t *testing.T) {
 			script: txscript.NewScriptBuilder().
 				AddData([]byte{0x00}).
 				AddOp(OP_INSPECTINPUTSEQUENCE).
-				AddData([]byte{0xFF, 0xFF, 0xFF, 0xFF}). // Max sequence number
+				AddInt64(1<<32 - 1). // Max sequence number
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{
@@ -995,7 +995,7 @@ func TestNewOpcodes(t *testing.T) {
 			name: "OP_INSPECTVERSION",
 			script: txscript.NewScriptBuilder().
 				AddOp(OP_INSPECTVERSION).
-				AddData([]byte{0x01, 0x00, 0x00, 0x00}). // Version 1 in LE32
+				AddInt64(1).
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{
@@ -1021,7 +1021,7 @@ func TestNewOpcodes(t *testing.T) {
 			name: "OP_INSPECTLOCKTIME",
 			script: txscript.NewScriptBuilder().
 				AddOp(OP_INSPECTLOCKTIME).
-				AddData([]byte{0x00, 0x00, 0x00, 0x00}). // LockTime 0 in LE32
+				AddInt64(0).
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{
@@ -1106,7 +1106,7 @@ func TestNewOpcodes(t *testing.T) {
 			name: "OP_TXWEIGHT",
 			script: txscript.NewScriptBuilder().
 				AddOp(OP_TXWEIGHT).
-				AddData([]byte{0xCC, 0x00, 0x00, 0x00}). // Expected weight 204 in LE32
+				AddInt64(204). // Expected weight
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{

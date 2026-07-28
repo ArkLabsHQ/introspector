@@ -248,7 +248,7 @@ The Bitcoin-level signatures that the emulator itself produces on PSBT `TaprootS
 | OP_INSPECTINPUTARKADESCRIPTHASH | 200 | 0xc8 | index | script_hash | Pushes the 32-byte Arkade script hash (`tagged_hash("ArkScriptHash", script)`) of the EmulatorEntry for the input at the given index. This is the same hash used as the tweak scalar in `ComputeArkadeScriptPublicKey`. Fails if no entry exists. |
 | OP_INSPECTINPUTVALUE | 201 | 0xc9 | index | value | Pushes the satoshi value of the previous output spent by the input at the given index, as a minimally-encoded BigNum. |
 | OP_INSPECTINPUTSCRIPTPUBKEY | 202 | 0xca | index | program version | For witness programs: pushes the witness program (2-40 bytes) and segwit version (scriptNum). For non-native segwit: pushes SHA256 hash of scriptPubKey and -1. |
-| OP_INSPECTINPUTSEQUENCE | 203 | 0xcb | index | sequence | Pushes the sequence number (4 bytes, little-endian) of the input at the given index. |
+| OP_INSPECTINPUTSEQUENCE | 203 | 0xcb | index | sequence | Pushes the sequence number of the input at the given index as a minimally-encoded BigNum. |
 | OP_PUSHCURRENTINPUTINDEX | 205 | 0xcd | Nothing | index | Pushes the current input index (scriptNum) being evaluated onto the stack. |
 | OP_INSPECTINPUTARKADEWITNESSHASH | 206 | 0xce | index | witness_hash | Pushes the 32-byte Arkade witness hash (`tagged_hash("ArkWitnessHash", witness)`) of the EmulatorEntry for the input at the given index. Pushes 32 zero bytes if witness is empty. Fails if no entry exists. |
 
@@ -263,11 +263,11 @@ The Bitcoin-level signatures that the emulator itself produces on PSBT `TaprootS
 
 | Word | Opcode | Hex | Input | Output | Description |
 |------|--------|-----|-------|--------|-------------|
-| OP_INSPECTVERSION | 210 | 0xd2 | Nothing | version | Pushes the transaction version (4 bytes, little-endian) onto the stack. |
-| OP_INSPECTLOCKTIME | 211 | 0xd3 | Nothing | locktime | Pushes the transaction locktime (4 bytes, little-endian) onto the stack. |
+| OP_INSPECTVERSION | 210 | 0xd2 | Nothing | version | Pushes the transaction version as a minimally-encoded BigNum. |
+| OP_INSPECTLOCKTIME | 211 | 0xd3 | Nothing | locktime | Pushes the transaction locktime as a minimally-encoded BigNum. |
 | OP_INSPECTNUMINPUTS | 212 | 0xd4 | Nothing | numInputs | Pushes the number of inputs in the transaction (scriptNum) onto the stack. |
 | OP_INSPECTNUMOUTPUTS | 213 | 0xd5 | Nothing | numOutputs | Pushes the number of outputs in the transaction (scriptNum) onto the stack. |
-| OP_TXWEIGHT | 214 | 0xd6 | Nothing | weight | Pushes the transaction weight (4 bytes, little-endian) onto the stack. Weight is calculated as `SerializeSizeStripped() * 4`. |
+| OP_TXWEIGHT | 214 | 0xd6 | Nothing | weight | Pushes the transaction weight as a minimally-encoded BigNum. Weight is calculated as `SerializeSizeStripped() * 4`. |
 | OP_TXID | 243 | 0xf3 | Nothing | txid | Pushes the current transaction hash (32 bytes) onto the stack. |
 | OP_SIGHASH | 246 | 0xf6 | hashType | sighash | Pops a sighash flag and pushes the 32-byte [arkade tapscript signature hash](#sighash-non-standard) of the currently executing input under that flag. The pushed digest is identical to the message `OP_CHECKSIG` verifies in the same context, but it is **not** the BIP342 digest — see the Sighash section above. The flag must be a minimally encoded scriptNum in `[0,255]` and one of `{0x00, 0x01, 0x02, 0x03, 0x81, 0x82, 0x83}`; `SIGHASH_SINGLE` additionally requires a matching output at the input's index. |
 
