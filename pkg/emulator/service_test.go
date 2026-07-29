@@ -33,6 +33,28 @@ func TestNew(t *testing.T) {
 		// Close must be a no-op, not a panic, when the finalizer is nil.
 		require.NotPanics(t, svc.Close)
 	})
+
+	t.Run("typed nil finalizer", func(t *testing.T) {
+		// a nil *countingFinalizer wrapped in the interface is non-nil to a
+		// `!= nil` check, so New must reject it rather than let SubmitTx or
+		// Close panic on the nil receiver later.
+		var typedNil *countingFinalizer
+		svc, err := New(context.Background(), signerKey, nil, arkdKey.PubKey(), typedNil, arkade.ComputeLimits{})
+		require.ErrorContains(t, err, "typed nil")
+		require.Nil(t, svc)
+	})
+
+	t.Run("finalizer is accepted and owned", func(t *testing.T) {
+		// the guard must not reject a live finalizer, and the Service owns it:
+		// Close forwards to the finalizer's own Close.
+		fin := &countingFinalizer{}
+		svc, err := New(context.Background(), signerKey, nil, arkdKey.PubKey(), fin, arkade.ComputeLimits{})
+		require.NoError(t, err)
+		require.NotNil(t, svc)
+
+		svc.Close()
+		require.Equal(t, 1, fin.closeCalls)
+	})
 }
 
 func TestGetInfo(t *testing.T) {
@@ -64,3 +86,25 @@ func TestGetInfo(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, "mutated", info2.DeprecatedSignerPublicKeys[0])
 }
+
+// countingFinalizer is a Finalizer whose methods dereference the receiver, so a
+// typed-nil value of it panics on any call, including the Close() the service
+// type-asserts. Used both to prove New rejects a typed nil and to check that
+// Close forwards to a live finalizer.
+type countingFinalizer struct {
+	submitCalls   int
+	finalizeCalls int
+	closeCalls    int
+}
+
+func (m *countingFinalizer) SubmitTx(context.Context, string, []string) (string, string, []string, error) {
+	m.submitCalls++
+	return "", "", nil, nil
+}
+
+func (m *countingFinalizer) FinalizeTx(context.Context, string, []string) error {
+	m.finalizeCalls++
+	return nil
+}
+
+func (m *countingFinalizer) Close() { m.closeCalls++ }

@@ -309,6 +309,24 @@ func TestVerifyCheckpointSignatures(t *testing.T) {
 			err := verifyNonArkdCheckpointSignatures([]*psbt.Packet{setup.packet}, setup.arkdPubKey)
 			require.ErrorContains(t, err, "missing taproot leaf script")
 		})
+		t.Run("input with more than one taproot leaf script is rejected", func(t *testing.T) {
+			// script.VerifyTapscriptSigs skips an input carrying != 1 leaf script,
+			// so a duplicated entry would otherwise pass a checkpoint missing a
+			// non-arkd signature.
+			setup := newCheckpoint(t,
+				aliceSigner.PubKey(),
+				arkade.ComputeArkadeScriptPublicKey(thisSigner.PubKey(), arkade.ArkadeScriptHash(arkadeScriptBytes)),
+				arkdSigner.PubKey(),
+			)
+			setup.packet.Inputs[0].TaprootLeafScript = append(
+				setup.packet.Inputs[0].TaprootLeafScript, setup.packet.Inputs[0].TaprootLeafScript[0],
+			)
+			setup.packet.Inputs[0].TaprootScriptSpendSig = []*psbt.TaprootScriptSpendSig{
+				makeSig(t, tweakedThisSigner, setup.packet, setup.leaf),
+			}
+			err := verifyNonArkdCheckpointSignatures([]*psbt.Packet{setup.packet}, setup.arkdPubKey)
+			require.ErrorContains(t, err, "missing taproot leaf script")
+		})
 		t.Run("all non-arkd signers present in two of two closure", func(t *testing.T) {
 			setup := newCheckpoint(t,
 				arkade.ComputeArkadeScriptPublicKey(thisSigner.PubKey(), arkade.ArkadeScriptHash(arkadeScriptBytes)),
@@ -419,6 +437,13 @@ func TestRetryFinalize(t *testing.T) {
 			{"checkpoint-a", "checkpoint-b"},
 			{"checkpoint-a", "checkpoint-b"},
 		}, f.finalizePayloads)
+	})
+	t.Run("no finalizer", func(t *testing.T) {
+		// unreachable through SubmitTx, which returns before this in signing-only
+		// mode. Asserted so the contract is explicit instead of a nil deref.
+		svc := &service{}
+		err := svc.retryFinalize(t.Context(), "txid-123", []string{"checkpoint-a"})
+		require.ErrorContains(t, err, "service has no finalizer")
 	})
 	t.Run("exhausts minimum retries", func(t *testing.T) {
 		f := &mockFinalizer{
@@ -531,6 +556,65 @@ func TestSubmitTx(t *testing.T) {
 		require.Len(t, fin.submitCheckpoints, len(arkTxInput.Checkpoints))
 		require.NotEmpty(t, fin.submitCheckpoints[0])
 		require.Len(t, fin.finalizeCheckpoints, len(arkTxInput.Checkpoints))
+	})
+
+	t.Run("finalizer submit error", func(t *testing.T) {
+		// arkd rejects the submission: the error is surfaced and FinalizeTx is
+		// never reached. Note the caller's packets stay signed in place (see the
+		// SubmitTx godoc), so the checkpoint carries the emulator's own signature
+		// and no arkd one.
+		svc, arkTxInput := newTestServiceNilFinalizer(t)
+		fin := &submittingFinalizer{submitErr: fmt.Errorf("arkd rejected tx")}
+		svc.finalizer = fin
+
+		out, err := svc.SubmitTx(context.Background(), arkTxInput)
+		require.ErrorContains(t, err, "failed to submit tx on arkd")
+		require.ErrorContains(t, err, "arkd rejected tx")
+		require.Nil(t, out)
+		require.Equal(t, 1, fin.submitCalls)
+		require.Zero(t, fin.finalizeCalls)
+		// the emulator's own signature was never merged with an arkd one.
+		require.Len(t, arkTxInput.Checkpoints[0].Inputs[0].TaprootScriptSpendSig, 1)
+	})
+
+	t.Run("finalizer returns unknown checkpoint txid", func(t *testing.T) {
+		// a Finalizer is a public interface, so a response whose checkpoint txids
+		// do not cover ours must be an error, not a nil deref on the map miss.
+		svc, arkTxInput := newTestServiceNilFinalizer(t)
+
+		otherTx := wire.NewMsgTx(2)
+		otherTx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{0x99}, Index: 7}})
+		otherTx.AddTxOut(&wire.TxOut{Value: 42, PkScript: []byte{txscript.OP_TRUE}})
+		otherPtx, err := psbt.NewFromUnsignedTx(otherTx)
+		require.NoError(t, err)
+		otherB64, err := otherPtx.B64Encode()
+		require.NoError(t, err)
+
+		fin := &submittingFinalizer{finalArkTx: otherB64, arkdCheckpoints: []string{otherB64}}
+		svc.finalizer = fin
+
+		out, err := svc.SubmitTx(context.Background(), arkTxInput)
+		require.ErrorContains(t, err, "finalizer returned no checkpoint for txid")
+		require.Nil(t, out)
+		require.Zero(t, fin.finalizeCalls)
+	})
+
+	t.Run("signing-only verifies checkpoint signatures", func(t *testing.T) {
+		// regression test for the split guard: verifyNonArkdCheckpointSignatures
+		// must run on the finalizer role even with a nil finalizer, otherwise
+		// signing-only hands back a set arkd will reject later.
+		svc, arkTxInput := newTestServiceNilFinalizer(t)
+
+		unverifiable := wire.NewMsgTx(2)
+		unverifiable.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{0x77}, Index: 1}})
+		unverifiable.AddTxOut(&wire.TxOut{Value: 10, PkScript: []byte{txscript.OP_TRUE}})
+		extra, err := psbt.NewFromUnsignedTx(unverifiable)
+		require.NoError(t, err)
+		arkTxInput.Checkpoints = append(arkTxInput.Checkpoints, extra)
+
+		out, err := svc.SubmitTx(context.Background(), arkTxInput)
+		require.ErrorContains(t, err, "failed to verify non-arkd signatures on checkpoints")
+		require.Nil(t, out)
 	})
 }
 
@@ -662,6 +746,7 @@ type submittingFinalizer struct {
 	// responses returned by SubmitTx.
 	finalArkTx      string
 	arkdCheckpoints []string
+	submitErr       error
 
 	// recorded call arguments.
 	submitCalls         int
@@ -673,6 +758,9 @@ type submittingFinalizer struct {
 func (m *submittingFinalizer) SubmitTx(_ context.Context, _ string, checkpoints []string) (string, string, []string, error) {
 	m.submitCalls++
 	m.submitCheckpoints = checkpoints
+	if m.submitErr != nil {
+		return "", "", nil, m.submitErr
+	}
 	return "arkd-txid", m.finalArkTx, m.arkdCheckpoints, nil
 }
 

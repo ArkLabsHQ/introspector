@@ -13,6 +13,8 @@ import (
 // part of the library's public API. Keeping a private copy here lets the
 // library keep it unexported. The two callers also use different configs
 // (arkd-connect vs finalize backoff), so they share only an implementation.
+// The two are behavior-identical by design: any fix to retryWithBackoff or
+// applyJitter here must land in pkg/emulator/tx.go too.
 
 // retryConfig tunes retryWithBackoff: how many attempts ignore ctx
 // cancellation, the initial/maximum delay, the growth multiplier, and the
@@ -42,7 +44,8 @@ func retryWithBackoff(
 		}
 
 		delay := applyJitter(backoffDelay, cfg.Jitter)
-		backoffDelay = min(cfg.MaxDelay, backoffDelay*time.Duration(cfg.Multiplier))
+		// scale in float64: time.Duration(cfg.Multiplier) truncates 1.5 to 1
+		backoffDelay = min(cfg.MaxDelay, time.Duration(float64(backoffDelay)*cfg.Multiplier))
 
 		// try a minimum number of times before respecting ctx.Done
 		if attempt < cfg.MinAttempts {

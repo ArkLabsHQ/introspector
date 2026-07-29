@@ -20,6 +20,12 @@ import (
 
 // SubmitTx aims to execute arkade scripts on offchain ark transactions
 // execution of the script runs only on ark tx, if valid, the associated checkpoint tx
+//
+// tx is signed in place: the returned OffchainTx aliases the caller's ArkTx and
+// checkpoint packets (except the ark tx replaced by arkd's finalized one), so an
+// OffchainTx must not be reused across calls. The in-place signing persists when
+// SubmitTx returns an error, so a failed OffchainTx must not be re-submitted:
+// signatures are appended, not replaced.
 func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, error) {
 	arkPtx := tx.ArkTx
 
@@ -117,7 +123,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 
 	log.WithField("is_finalizer", isFinalizer).Debug("finalizer role analysis completed")
 
-	if !isFinalizer || s.finalizer == nil {
+	if !isFinalizer {
 		return &OffchainTx{
 			ArkTx:       arkPtx,
 			Checkpoints: signedCheckpointTxs,
@@ -125,9 +131,18 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 	}
 
 	// we must verify that we have all the required checkpoint signatures before submitting to arkd
-	// otherwise, finalizing with arkd will fail later
+	// otherwise, finalizing with arkd will fail later. this runs in signing-only mode too:
+	// the caller forwards our signature to arkd, so an incomplete set fails there instead.
 	if err = verifyNonArkdCheckpointSignatures(signedCheckpointTxs, s.arkdPubKey); err != nil {
 		return nil, fmt.Errorf("failed to verify non-arkd signatures on checkpoints: %w", err)
+	}
+
+	// signing-only: hand the verified signed set back, the caller does the arkd round-trip
+	if s.finalizer == nil {
+		return &OffchainTx{
+			ArkTx:       arkPtx,
+			Checkpoints: signedCheckpointTxs,
+		}, nil
 	}
 
 	encodedCheckpoints := make([]string, 0, len(tx.Checkpoints))
@@ -162,9 +177,19 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 	finalEncodedCheckpoints := make([]string, 0, len(tx.Checkpoints))
 	logCheckpoints := make(map[string]any)
 	for i, checkpoint := range signedCheckpointTxs {
+		// Finalizer is a public interface, so do not trust the returned set to
+		// cover ours: a missing or malformed entry must be an error, not a panic.
+		txid := checkpoint.UnsignedTx.TxID()
+		arkdCheckpoint, ok := arkdCheckpointPSBTs[txid]
+		if !ok {
+			return nil, fmt.Errorf("finalizer returned no checkpoint for txid %s", txid)
+		}
+		if len(arkdCheckpoint.Inputs) == 0 {
+			return nil, fmt.Errorf("finalizer returned checkpoint %s without inputs", txid)
+		}
 		checkpoint.Inputs[0].TaprootScriptSpendSig = append(
 			checkpoint.Inputs[0].TaprootScriptSpendSig,
-			arkdCheckpointPSBTs[checkpoint.UnsignedTx.TxID()].Inputs[0].TaprootScriptSpendSig...,
+			arkdCheckpoint.Inputs[0].TaprootScriptSpendSig...,
 		)
 		encoded, err := checkpoint.B64Encode()
 		if err != nil {
@@ -193,6 +218,11 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 }
 
 func (s *service) retryFinalize(ctx context.Context, txid string, checkpoints []string) error {
+	// unreachable: SubmitTx returns before this in signing-only mode. Asserted so
+	// the contract is explicit rather than a nil deref if that guard ever moves.
+	if s.finalizer == nil {
+		return fmt.Errorf("cannot finalize tx %s: service has no finalizer", txid)
+	}
 	return retryWithBackoff(ctx, finalizeRetryConfig,
 		func() error { return s.finalizer.FinalizeTx(ctx, txid, checkpoints) },
 		func(attempt int, err error) {
@@ -266,10 +296,13 @@ func verifyNonArkdCheckpointSignatures(checkpoints []*psbt.Packet, arkdPubKey *b
 		if len(ptx.Inputs) == 0 || len(ptx.UnsignedTx.TxIn) == 0 {
 			return fmt.Errorf("checkpoint %d: missing input 0", checkpointIndex)
 		}
-		// script.VerifyTapscriptSigs silently skips inputs that do not carry a
-		// taproot leaf script, so we must assert its presence here.
-		if len(ptx.Inputs[0].TaprootLeafScript) == 0 {
-			return fmt.Errorf("checkpoint %d input 0: missing taproot leaf script", checkpointIndex)
+		// script.VerifyTapscriptSigs silently skips inputs that do not carry
+		// exactly one taproot leaf script, so we must assert that count here.
+		if len(ptx.Inputs[0].TaprootLeafScript) != 1 {
+			return fmt.Errorf(
+				"checkpoint %d input 0: missing taproot leaf script (want exactly 1, got %d)",
+				checkpointIndex, len(ptx.Inputs[0].TaprootLeafScript),
+			)
 		}
 		prevoutFetcher, err := computePrevoutFetcher(ptx)
 		if err != nil {
@@ -285,7 +318,8 @@ func verifyNonArkdCheckpointSignatures(checkpoints []*psbt.Packet, arkdPubKey *b
 }
 
 // internal/config/retry.go keeps a private copy of retryConfig/retryWithBackoff
-// so this library need not export them.
+// so this library need not export them. The two are behavior-identical by
+// design: any fix to retryWithBackoff/applyJitter here must land there too.
 
 // retryConfig tunes retryWithBackoff: how many attempts ignore ctx
 // cancellation, the initial/maximum delay, the growth multiplier, and the
@@ -323,7 +357,8 @@ func retryWithBackoff(
 		}
 
 		delay := applyJitter(backoffDelay, cfg.Jitter)
-		backoffDelay = min(cfg.MaxDelay, backoffDelay*time.Duration(cfg.Multiplier))
+		// scale in float64: time.Duration(cfg.Multiplier) truncates 1.5 to 1
+		backoffDelay = min(cfg.MaxDelay, time.Duration(float64(backoffDelay)*cfg.Multiplier))
 
 		// try a minimum number of times before respecting ctx.Done
 		if attempt < cfg.MinAttempts {

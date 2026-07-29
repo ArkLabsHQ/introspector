@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"reflect"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
@@ -81,16 +82,35 @@ type service struct {
 	computeLimits        arkade.ComputeLimits
 }
 
+// isTypedNil reports whether v is a non-nil interface holding a nil value of a
+// nilable kind. Such a value passes a `!= nil` check but is almost always a
+// caller bug, and panics on any method that dereferences the receiver.
+func isTypedNil(v any) bool {
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Map,
+		reflect.Pointer, reflect.Slice, reflect.UnsafePointer:
+		return rv.IsNil()
+	default:
+		return false
+	}
+}
+
 // New builds a signing Service. secretKey is the current arkade-signing key and
-// arkdPubKey is the arkd signer key both are required. deprecatedKeys may be nil.
+// arkdPubKey is the arkd signer key. Both are required. deprecatedKeys may be nil.
 //
 // finalizer may be nil: with a nil finalizer the Service runs signing-only, so
 // SubmitTx signs and returns without any arkd round-trip. Pass a non-nil
-// Finalizer (e.g. go-sdk's grpc client) to also submit and finalize on arkd.
-// Note this is a literal nil check, so a typed nil (e.g. a nil *grpcClient
-// wrapped in the interface) is treated as present and will panic in SubmitTx.
+// Finalizer (e.g. go-sdk's grpc client) to also submit and finalize on arkd. The
+// Service then owns that finalizer and Close closes it if it has a Close method
+// with no results, so do not pass a client whose lifecycle you manage elsewhere.
+// A typed nil
+// (e.g. a nil *grpcClient wrapped in the interface) is rejected here rather than
+// left to panic on its nil receiver.
 //
 // The context is currently unused; it is accepted for forward compatibility.
+// Note the standalone emulator's arkd-connect retry lives in
+// internal/config/retry.go, not here.
 func New(_ context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, arkdPubKey *btcec.PublicKey, finalizer Finalizer, computeLimits arkade.ComputeLimits) (Service, error) {
 	if secretKey == nil {
 		return nil, fmt.Errorf("current signer key is required")
@@ -98,6 +118,10 @@ func New(_ context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btcec
 
 	if arkdPubKey == nil {
 		return nil, fmt.Errorf("arkd public key is required")
+	}
+
+	if isTypedNil(finalizer) {
+		return nil, fmt.Errorf("finalizer is a typed nil, pass an untyped nil for signing-only mode")
 	}
 
 	publicKey := hex.EncodeToString(secretKey.PubKey().SerializeCompressed())
