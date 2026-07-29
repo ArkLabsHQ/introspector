@@ -87,23 +87,19 @@ func TestGetInfo(t *testing.T) {
 	require.NotEqual(t, "mutated", info2.DeprecatedSignerPublicKeys[0])
 }
 
-// countingFinalizer is a Finalizer whose methods dereference the receiver, so a
-// typed-nil value of it panics on any call, including the Close() the service
-// type-asserts. Used both to prove New rejects a typed nil and to check that
-// Close forwards to a live finalizer.
+// countingFinalizer is a Finalizer whose Close dereferences the receiver, so a
+// typed-nil value of it panics on the very Close() the service type-asserts.
+// Used both to prove New rejects a typed nil and to check that Close forwards to
+// a live finalizer.
 type countingFinalizer struct {
-	submitCalls   int
-	finalizeCalls int
-	closeCalls    int
+	closeCalls int
 }
 
 func (m *countingFinalizer) SubmitTx(context.Context, string, []string) (string, string, []string, error) {
-	m.submitCalls++
 	return "", "", nil, nil
 }
 
 func (m *countingFinalizer) FinalizeTx(context.Context, string, []string) error {
-	m.finalizeCalls++
 	return nil
 }
 

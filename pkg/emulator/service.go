@@ -65,6 +65,11 @@ type OnchainTx struct {
 
 type Service interface {
 	GetInfo(context.Context) (*Info, error)
+	// SubmitTx signs the given tx in place: the returned OffchainTx aliases the
+	// caller's ArkTx and checkpoint packets, except the ark tx when a Finalizer
+	// replaces it with arkd's finalized one. The in-place signatures persist even
+	// when SubmitTx returns an error and are appended rather than replaced, so an
+	// OffchainTx must not be reused or re-submitted across calls.
 	SubmitTx(context.Context, OffchainTx) (*OffchainTx, error)
 	SubmitIntent(context.Context, Intent) (*psbt.Packet, error)
 	SubmitFinalization(context.Context, BatchFinalization) (*SignedBatchFinalization, error)

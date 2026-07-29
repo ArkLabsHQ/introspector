@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -308,10 +309,20 @@ func verifyNonArkdCheckpointSignatures(checkpoints []*psbt.Packet, arkdPubKey *b
 		if err != nil {
 			return fmt.Errorf("checkpoint %d: %w", checkpointIndex, err)
 		}
-		if _, err := script.VerifyTapscriptSigs(
+		// script.VerifyTapscriptSigs also skips an input whose prevout is not a
+		// taproot output and one carrying a note closure, both without erroring, so
+		// a nil error alone does not mean input 0 was checked. Require it in the
+		// verified set instead.
+		verified, err := script.VerifyTapscriptSigs(
 			ptx, prevoutFetcher, script.WithSkipPublicKeys(arkdPubKey),
-		); err != nil {
+		)
+		if err != nil {
 			return fmt.Errorf("checkpoint %d: %w", checkpointIndex, err)
+		}
+		if !slices.Contains(verified, 0) {
+			return fmt.Errorf(
+				"checkpoint %d input 0: signatures were not verified", checkpointIndex,
+			)
 		}
 	}
 	return nil

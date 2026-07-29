@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -300,33 +301,6 @@ func TestVerifyCheckpointSignatures(t *testing.T) {
 		}
 	}
 	t.Run("valid", func(t *testing.T) {
-		t.Run("input without taproot leaf script is rejected", func(t *testing.T) {
-			setup := newCheckpoint(t,
-				arkade.ComputeArkadeScriptPublicKey(thisSigner.PubKey(), arkade.ArkadeScriptHash(arkadeScriptBytes)),
-				arkdSigner.PubKey(),
-			)
-			setup.packet.Inputs[0].TaprootLeafScript = nil
-			err := verifyNonArkdCheckpointSignatures([]*psbt.Packet{setup.packet}, setup.arkdPubKey)
-			require.ErrorContains(t, err, "missing taproot leaf script")
-		})
-		t.Run("input with more than one taproot leaf script is rejected", func(t *testing.T) {
-			// script.VerifyTapscriptSigs skips an input carrying != 1 leaf script,
-			// so a duplicated entry would otherwise pass a checkpoint missing a
-			// non-arkd signature.
-			setup := newCheckpoint(t,
-				aliceSigner.PubKey(),
-				arkade.ComputeArkadeScriptPublicKey(thisSigner.PubKey(), arkade.ArkadeScriptHash(arkadeScriptBytes)),
-				arkdSigner.PubKey(),
-			)
-			setup.packet.Inputs[0].TaprootLeafScript = append(
-				setup.packet.Inputs[0].TaprootLeafScript, setup.packet.Inputs[0].TaprootLeafScript[0],
-			)
-			setup.packet.Inputs[0].TaprootScriptSpendSig = []*psbt.TaprootScriptSpendSig{
-				makeSig(t, tweakedThisSigner, setup.packet, setup.leaf),
-			}
-			err := verifyNonArkdCheckpointSignatures([]*psbt.Packet{setup.packet}, setup.arkdPubKey)
-			require.ErrorContains(t, err, "missing taproot leaf script")
-		})
 		t.Run("all non-arkd signers present in two of two closure", func(t *testing.T) {
 			setup := newCheckpoint(t,
 				arkade.ComputeArkadeScriptPublicKey(thisSigner.PubKey(), arkade.ArkadeScriptHash(arkadeScriptBytes)),
@@ -354,6 +328,47 @@ func TestVerifyCheckpointSignatures(t *testing.T) {
 		})
 	})
 	t.Run("invalid", func(t *testing.T) {
+		t.Run("input without taproot leaf script is rejected", func(t *testing.T) {
+			setup := newCheckpoint(t,
+				arkade.ComputeArkadeScriptPublicKey(thisSigner.PubKey(), arkade.ArkadeScriptHash(arkadeScriptBytes)),
+				arkdSigner.PubKey(),
+			)
+			setup.packet.Inputs[0].TaprootLeafScript = nil
+			err := verifyNonArkdCheckpointSignatures([]*psbt.Packet{setup.packet}, setup.arkdPubKey)
+			require.ErrorContains(t, err, "missing taproot leaf script")
+		})
+		t.Run("input with more than one taproot leaf script is rejected", func(t *testing.T) {
+			// script.VerifyTapscriptSigs skips an input carrying != 1 leaf script,
+			// so a duplicated entry would otherwise pass a checkpoint missing a
+			// non-arkd signature.
+			setup := newCheckpoint(t,
+				aliceSigner.PubKey(),
+				arkade.ComputeArkadeScriptPublicKey(thisSigner.PubKey(), arkade.ArkadeScriptHash(arkadeScriptBytes)),
+				arkdSigner.PubKey(),
+			)
+			setup.packet.Inputs[0].TaprootLeafScript = append(
+				setup.packet.Inputs[0].TaprootLeafScript, setup.packet.Inputs[0].TaprootLeafScript[0],
+			)
+			setup.packet.Inputs[0].TaprootScriptSpendSig = []*psbt.TaprootScriptSpendSig{
+				makeSig(t, tweakedThisSigner, setup.packet, setup.leaf),
+			}
+			err := verifyNonArkdCheckpointSignatures([]*psbt.Packet{setup.packet}, setup.arkdPubKey)
+			require.ErrorContains(t, err, "missing taproot leaf script")
+		})
+		t.Run("input whose prevout is not taproot is rejected", func(t *testing.T) {
+			// script.VerifyTapscriptSigs skips a non-taproot prevout without
+			// erroring, so this checkpoint carries one leaf script and no signature
+			// at all yet would pass on a bare nil-error check.
+			setup := newCheckpoint(t,
+				arkade.ComputeArkadeScriptPublicKey(thisSigner.PubKey(), arkade.ArkadeScriptHash(arkadeScriptBytes)),
+				arkdSigner.PubKey(),
+			)
+			setup.packet.Inputs[0].WitnessUtxo = &wire.TxOut{
+				Value: 2_000, PkScript: []byte{txscript.OP_TRUE},
+			}
+			err := verifyNonArkdCheckpointSignatures([]*psbt.Packet{setup.packet}, setup.arkdPubKey)
+			require.ErrorContains(t, err, "signatures were not verified")
+		})
 		t.Run("wrong parity bit in control block", func(t *testing.T) {
 			setup := newCheckpoint(t,
 				arkade.ComputeArkadeScriptPublicKey(thisSigner.PubKey(), arkade.ArkadeScriptHash(arkadeScriptBytes)),
@@ -552,10 +567,23 @@ func TestSubmitTx(t *testing.T) {
 		require.GreaterOrEqual(t, len(mergedSigs), 2)
 		require.True(t, hasSignature(mergedSigs, arkdSig.Signature), "arkd signature must be merged in")
 
-		// SubmitTx forwarded the encoded checkpoints, and the merged set went to finalize.
+		// SubmitTx forwarded the encoded checkpoints, and the merged set went to
+		// finalize. A count alone would not catch forwarding the pre-merge
+		// encoding, so decode both payloads: submit carries no arkd signature,
+		// finalize must carry it.
 		require.Len(t, fin.submitCheckpoints, len(arkTxInput.Checkpoints))
 		require.NotEmpty(t, fin.submitCheckpoints[0])
+		submitted, err := psbt.NewFromRawBytes(strings.NewReader(fin.submitCheckpoints[0]), true)
+		require.NoError(t, err)
+		require.False(t, hasSignature(submitted.Inputs[0].TaprootScriptSpendSig, arkdSig.Signature))
+
 		require.Len(t, fin.finalizeCheckpoints, len(arkTxInput.Checkpoints))
+		finalized, err := psbt.NewFromRawBytes(strings.NewReader(fin.finalizeCheckpoints[0]), true)
+		require.NoError(t, err)
+		require.True(t,
+			hasSignature(finalized.Inputs[0].TaprootScriptSpendSig, arkdSig.Signature),
+			"FinalizeTx must receive the merged checkpoints",
+		)
 	})
 
 	t.Run("finalizer submit error", func(t *testing.T) {
