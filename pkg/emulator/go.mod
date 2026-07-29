@@ -44,6 +44,4 @@ replace github.com/arkade-os/emulator/pkg/arkade => ../arkade
 
 replace github.com/btcsuite/btcd/btcec/v2 => github.com/btcsuite/btcd/btcec/v2 v2.3.3
 
-replace github.com/arkade-os/go-sdk => github.com/arkade-os/go-sdk v0.8.2-0.20260303154656-f29d9e77d5c7
-
 replace github.com/arkade-os/arkd/pkg/errors => github.com/arkade-os/arkd/pkg/errors v0.0.0-20260303153651-8615412e4dea

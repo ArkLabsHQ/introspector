@@ -109,9 +109,8 @@ func isTypedNil(v any) bool {
 // Finalizer (e.g. go-sdk's grpc client) to also submit and finalize on arkd. The
 // Service then owns that finalizer and Close closes it if it has a Close method
 // with no results, so do not pass a client whose lifecycle you manage elsewhere.
-// A typed nil
-// (e.g. a nil *grpcClient wrapped in the interface) is rejected here rather than
-// left to panic on its nil receiver.
+// A typed nil (e.g. a nil *grpcClient wrapped in the interface) is rejected here
+// rather than left to panic on its nil receiver.
 //
 // The context is currently unused; it is accepted for forward compatibility.
 // Note the standalone emulator's arkd-connect retry lives in

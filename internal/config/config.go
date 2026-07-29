@@ -161,6 +161,11 @@ func parsePrivateKey(keyHex, name string) (*btcec.PrivateKey, error) {
 	return key, nil
 }
 
+// emulator.Service.Close closes its finalizer by type-asserting
+// interface{ Close() }, so a go-sdk change to Close() error would silently stop
+// closing the arkd connection handed off below. Fail at compile time instead.
+var _ interface{ Close() } = client.TransportClient(nil)
+
 var arkdConnectRetryConfig = retryConfig{
 	MinAttempts:  0,
 	InitialDelay: 1 * time.Second,
