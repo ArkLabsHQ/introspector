@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"hash"
 	"math"
+	"slices"
 	"strings"
 
 	//nolint:staticcheck
@@ -2191,7 +2192,7 @@ func opcodeCat(op *opcode, data []byte, vm *Engine) error {
 		return scriptError(txscript.ErrElementTooBig, str)
 	}
 
-	vm.dstack.PushByteArray(append(x1, x2...))
+	vm.dstack.PushByteArray(slices.Concat(x1, x2))
 	return nil
 }
 
