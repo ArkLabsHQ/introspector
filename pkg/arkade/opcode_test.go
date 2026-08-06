@@ -16,6 +16,7 @@ import (
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
@@ -4704,6 +4705,14 @@ func inspectInputValueSpec() *opcodeSpec {
 		checkProperties: inspectInputPropertyChecker(OP_INSPECTINPUTVALUE),
 		validVectors: []opcodeVector{
 			{name: "val0", inputStack: [][]byte{nil}, expectedStack: [][]byte{{0x88, 0x13}}},
+			{
+				name:       "max_value",
+				inputStack: [][]byte{nil},
+				setupWorld: func(w *opcodeWorld) {
+					w.prevouts[w.tx.TxIn[0].PreviousOutPoint].Value = btcutil.MaxSatoshi
+				},
+				expectedStack: [][]byte{mustBigNumBytes(BigNumFromUint64(btcutil.MaxSatoshi))},
+			},
 		},
 		invalidVectors: []opcodeVector{
 			{
@@ -4720,6 +4729,28 @@ func inspectInputValueSpec() *opcodeSpec {
 				name:          "no_prev_fetcher",
 				inputStack:    [][]byte{nil},
 				setupWorld:    func(w *opcodeWorld) { w.prevFetcher = nil },
+				expectedError: txscript.ErrInvalidIndex,
+			},
+			{
+				name:       "negative_value",
+				inputStack: [][]byte{nil},
+				setupWorld: func(w *opcodeWorld) {
+					w.prevouts[w.tx.TxIn[0].PreviousOutPoint].Value = -1
+				},
+				expectedError: txscript.ErrInvalidIndex,
+			},
+			{
+				name:       "above_max_value",
+				inputStack: [][]byte{nil},
+				setupWorld: func(w *opcodeWorld) {
+					w.prevouts[w.tx.TxIn[0].PreviousOutPoint].Value = btcutil.MaxSatoshi + 1
+				},
+				expectedError: txscript.ErrInvalidIndex,
+			},
+			{
+				name:          "missing_prevout",
+				inputStack:    [][]byte{nil},
+				setupWorld:    func(w *opcodeWorld) { w.tx.TxIn[0].PreviousOutPoint = wire.OutPoint{} },
 				expectedError: txscript.ErrInvalidIndex,
 			},
 			{name: "underflow", expectedError: txscript.ErrInvalidStackOperation},
@@ -4801,6 +4832,12 @@ func inspectOutputValueSpec() *opcodeSpec {
 		checkProperties: inspectOutputPropertyChecker(OP_INSPECTOUTPUTVALUE),
 		validVectors: []opcodeVector{
 			{name: "val0", inputStack: [][]byte{nil}, expectedStack: [][]byte{{0x58, 0x1b}}},
+			{
+				name:          "max_value",
+				inputStack:    [][]byte{nil},
+				setupWorld:    func(w *opcodeWorld) { w.tx.TxOut[0].Value = btcutil.MaxSatoshi },
+				expectedStack: [][]byte{mustBigNumBytes(BigNumFromUint64(btcutil.MaxSatoshi))},
+			},
 		},
 		invalidVectors: []opcodeVector{
 			{
@@ -4811,6 +4848,18 @@ func inspectOutputValueSpec() *opcodeSpec {
 			{
 				name:          "out_of_range",
 				inputStack:    [][]byte{scriptNum(9).Bytes()},
+				expectedError: txscript.ErrInvalidIndex,
+			},
+			{
+				name:          "negative_value",
+				inputStack:    [][]byte{nil},
+				setupWorld:    func(w *opcodeWorld) { w.tx.TxOut[0].Value = -1 },
+				expectedError: txscript.ErrInvalidIndex,
+			},
+			{
+				name:          "above_max_value",
+				inputStack:    [][]byte{nil},
+				setupWorld:    func(w *opcodeWorld) { w.tx.TxOut[0].Value = btcutil.MaxSatoshi + 1 },
 				expectedError: txscript.ErrInvalidIndex,
 			},
 			{name: "underflow", expectedError: txscript.ErrInvalidStackOperation},
