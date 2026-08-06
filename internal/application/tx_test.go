@@ -10,6 +10,7 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	arkscript "github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
+	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	sdkclient "github.com/arkade-os/go-sdk/client"
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -20,6 +21,189 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/stretchr/testify/require"
 )
+
+func TestIndexCheckpoints(t *testing.T) {
+	newCheckpoint := func(t *testing.T, id byte) *psbt.Packet {
+		t.Helper()
+		tx := wire.NewMsgTx(2)
+		tx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{id}}})
+		tx.AddTxOut(&wire.TxOut{Value: 1})
+		ptx, err := psbt.NewFromUnsignedTx(tx)
+		require.NoError(t, err)
+		return ptx
+	}
+	newArkTx := func(t *testing.T, checkpoints ...*psbt.Packet) *psbt.Packet {
+		t.Helper()
+		tx := wire.NewMsgTx(2)
+		for _, checkpoint := range checkpoints {
+			tx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: checkpoint.UnsignedTx.TxHash()}})
+		}
+		ptx, err := psbt.NewFromUnsignedTx(tx)
+		require.NoError(t, err)
+		return ptx
+	}
+
+	first := newCheckpoint(t, 1)
+	second := newCheckpoint(t, 2)
+	arkPtx := newArkTx(t, first, second)
+
+	indexed, err := indexCheckpoints(arkPtx, []*psbt.Packet{second, first})
+	require.NoError(t, err)
+	require.Same(t, first, indexed[first.UnsignedTx.TxID()])
+	require.Same(t, second, indexed[second.UnsignedTx.TxID()])
+
+	_, err = indexCheckpoints(arkPtx, []*psbt.Packet{first})
+	require.ErrorContains(t, err, "expected 2 checkpoints")
+
+	_, err = indexCheckpoints(arkPtx, []*psbt.Packet{first, first})
+	require.ErrorContains(t, err, "duplicate checkpoint")
+
+	arkPtx.UnsignedTx.TxIn[1].PreviousOutPoint.Hash = first.UnsignedTx.TxHash()
+	_, err = indexCheckpoints(arkPtx, []*psbt.Packet{first, second})
+	require.ErrorContains(t, err, "associated with multiple ark inputs")
+}
+
+func TestValidateCheckpoint(t *testing.T) {
+	type setup struct {
+		arkPtx       *psbt.Packet
+		checkpoint   *psbt.Packet
+		expectedLeaf txscript.TapLeaf
+		foreignLeaf  *psbt.TaprootTapLeafScript
+		fetcher      *mapArkPrevOutFetcher
+	}
+
+	newSetup := func(t *testing.T, unrelatedOutput bool) setup {
+		t.Helper()
+
+		firstKey, err := btcec.NewPrivateKey()
+		require.NoError(t, err)
+		secondKey, err := btcec.NewPrivateKey()
+		require.NoError(t, err)
+		closures := []*arkscript.MultisigClosure{
+			{PubKeys: []*btcec.PublicKey{firstKey.PubKey()}},
+			{PubKeys: []*btcec.PublicKey{secondKey.PubKey()}},
+		}
+		vtxoScript := arkscript.TapscriptsVtxoScript{
+			Closures: []arkscript.Closure{closures[0], closures[1]},
+		}
+		tapKey, tapTree, err := vtxoScript.TapTree()
+		require.NoError(t, err)
+		vtxoPkScript, err := arkscript.P2TRScript(tapKey)
+		require.NoError(t, err)
+
+		leafField := func(t *testing.T, closure arkscript.Closure) (*psbt.TaprootTapLeafScript, txscript.TapLeaf) {
+			t.Helper()
+			script, err := closure.Script()
+			require.NoError(t, err)
+			leaf := txscript.NewBaseTapLeaf(script)
+			proof, err := tapTree.GetTaprootMerkleProof(leaf.TapHash())
+			require.NoError(t, err)
+			return &psbt.TaprootTapLeafScript{
+				ControlBlock: proof.ControlBlock,
+				Script:       proof.Script,
+				LeafVersion:  txscript.BaseLeafVersion,
+			}, leaf
+		}
+		authorizedField, authorizedLeaf := leafField(t, closures[0])
+		foreignField, _ := leafField(t, closures[1])
+
+		const amount = int64(100_000)
+		previousOutput := &wire.TxOut{Value: amount, PkScript: vtxoPkScript}
+		previousTx := wire.NewMsgTx(2)
+		previousTx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{9}}})
+		previousTx.AddTxOut(previousOutput)
+
+		checkpointOutputScript := vtxoPkScript
+		if unrelatedOutput {
+			attackerKey, err := btcec.NewPrivateKey()
+			require.NoError(t, err)
+			checkpointOutputScript, err = txscript.PayToTaprootScript(attackerKey.PubKey())
+			require.NoError(t, err)
+		}
+		checkpointOutput := &wire.TxOut{Value: amount, PkScript: checkpointOutputScript}
+		checkpointTx := wire.NewMsgTx(2)
+		checkpointTx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: previousTx.TxHash()}})
+		checkpointTx.AddTxOut(checkpointOutput)
+		checkpointTx.AddTxOut(txutils.AnchorOutput())
+		checkpoint, err := psbt.NewFromUnsignedTx(checkpointTx)
+		require.NoError(t, err)
+		checkpoint.Inputs[0].WitnessUtxo = &wire.TxOut{Value: amount, PkScript: append([]byte(nil), vtxoPkScript...)}
+		checkpoint.Inputs[0].TaprootLeafScript = []*psbt.TaprootTapLeafScript{authorizedField}
+
+		arkTx := wire.NewMsgTx(2)
+		arkOutpoint := wire.OutPoint{Hash: checkpointTx.TxHash()}
+		arkTx.AddTxIn(&wire.TxIn{PreviousOutPoint: arkOutpoint})
+		arkPtx, err := psbt.NewFromUnsignedTx(arkTx)
+		require.NoError(t, err)
+		arkPtx.Inputs[0].WitnessUtxo = &wire.TxOut{Value: amount, PkScript: append([]byte(nil), checkpointOutputScript...)}
+		arkPtx.Inputs[0].TaprootLeafScript = []*psbt.TaprootTapLeafScript{authorizedField}
+
+		return setup{
+			arkPtx:       arkPtx,
+			checkpoint:   checkpoint,
+			expectedLeaf: authorizedLeaf,
+			foreignLeaf:  foreignField,
+			fetcher: &mapArkPrevOutFetcher{
+				arkTxs: map[wire.OutPoint]*wire.MsgTx{arkOutpoint: previousTx},
+			},
+		}
+	}
+
+	t.Run("valid", func(t *testing.T) {
+		setup := newSetup(t, false)
+		require.NoError(t, validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.expectedLeaf, setup.fetcher))
+	})
+
+	t.Run("multiple checkpoint inputs", func(t *testing.T) {
+		setup := newSetup(t, false)
+		setup.checkpoint.UnsignedTx.AddTxIn(&wire.TxIn{})
+		setup.checkpoint.Inputs = append(setup.checkpoint.Inputs, psbt.PInput{})
+		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.expectedLeaf, setup.fetcher)
+		require.ErrorContains(t, err, "exactly one input")
+	})
+
+	t.Run("extra checkpoint output", func(t *testing.T) {
+		setup := newSetup(t, false)
+		setup.checkpoint.UnsignedTx.AddTxOut(&wire.TxOut{})
+		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.expectedLeaf, setup.fetcher)
+		require.ErrorContains(t, err, "one vtxo output and one anchor output")
+	})
+
+	t.Run("checkpoint output mismatch", func(t *testing.T) {
+		setup := newSetup(t, false)
+		setup.arkPtx.Inputs[0].WitnessUtxo.Value--
+		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.expectedLeaf, setup.fetcher)
+		require.ErrorContains(t, err, "checkpoint output does not match")
+	})
+
+	t.Run("unauthenticated checkpoint input", func(t *testing.T) {
+		setup := newSetup(t, false)
+		setup.checkpoint.Inputs[0].WitnessUtxo.Value--
+		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.expectedLeaf, setup.fetcher)
+		require.ErrorContains(t, err, "does not match previous ark transaction")
+	})
+
+	t.Run("missing previous ark transaction", func(t *testing.T) {
+		setup := newSetup(t, false)
+		setup.fetcher.arkTxs = nil
+		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.expectedLeaf, setup.fetcher)
+		require.ErrorContains(t, err, "missing authenticated previous ark transaction")
+	})
+
+	t.Run("substituted checkpoint leaf", func(t *testing.T) {
+		setup := newSetup(t, false)
+		setup.checkpoint.Inputs[0].TaprootLeafScript[0] = setup.foreignLeaf
+		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.expectedLeaf, setup.fetcher)
+		require.ErrorContains(t, err, "tapleaf does not match ark input")
+	})
+
+	t.Run("unrelated checkpoint destination", func(t *testing.T) {
+		setup := newSetup(t, true)
+		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.expectedLeaf, setup.fetcher)
+		require.ErrorContains(t, err, "ark input tapleaf")
+		require.ErrorContains(t, err, "not committed by witness utxo")
+	})
+}
 
 func TestFinalizerAccumulatorFlow(t *testing.T) {
 	thisSigner, err := btcec.NewPrivateKey()
