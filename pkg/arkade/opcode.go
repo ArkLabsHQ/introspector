@@ -18,6 +18,7 @@ import (
 	"golang.org/x/crypto/sha3"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
@@ -2025,7 +2026,17 @@ func opcodeInspectInputValue(op *opcode, data []byte, vm *Engine) error {
 		return scriptError(txscript.ErrInvalidIndex, "previous output fetcher not set")
 	}
 	prevOut := vm.prevOutFetcher.FetchPrevOutput(vm.tx.TxIn[index].PreviousOutPoint)
-	return vm.dstack.PushBigNum(BigNumFromUint64(uint64(prevOut.Value)))
+	if prevOut == nil {
+		return scriptError(txscript.ErrInvalidIndex, "previous output not found")
+	}
+	return pushSatoshiValue(prevOut.Value, vm)
+}
+
+func pushSatoshiValue(value int64, vm *Engine) error {
+	if value < 0 || value > btcutil.MaxSatoshi {
+		return scriptError(txscript.ErrInvalidIndex, "value out of range")
+	}
+	return vm.dstack.PushBigNum(BigNumFromUint64(uint64(value)))
 }
 
 func pushScriptPubKey(scriptPubKey []byte, vm *Engine) error {
@@ -2120,7 +2131,7 @@ func opcodeInspectOutputValue(op *opcode, data []byte, vm *Engine) error {
 	if int(index) >= len(vm.tx.TxOut) {
 		return scriptError(txscript.ErrInvalidIndex, "output index out of range")
 	}
-	return vm.dstack.PushBigNum(BigNumFromUint64(uint64(vm.tx.TxOut[index].Value)))
+	return pushSatoshiValue(vm.tx.TxOut[index].Value, vm)
 }
 
 // opcodeInspectOutputScriptPubkey pushes the scriptPubKey of the output at the given index onto the stack.

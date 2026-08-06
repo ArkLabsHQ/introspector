@@ -16,6 +16,7 @@ import (
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
@@ -4704,6 +4705,14 @@ func inspectInputValueSpec() *opcodeSpec {
 		checkProperties: inspectInputPropertyChecker(OP_INSPECTINPUTVALUE),
 		validVectors: []opcodeVector{
 			{name: "val0", inputStack: [][]byte{nil}, expectedStack: [][]byte{{0x88, 0x13}}},
+			{
+				name:       "max_value",
+				inputStack: [][]byte{nil},
+				setupWorld: func(w *opcodeWorld) {
+					w.prevouts[w.tx.TxIn[0].PreviousOutPoint].Value = btcutil.MaxSatoshi
+				},
+				expectedStack: [][]byte{mustBigNumBytes(BigNumFromUint64(btcutil.MaxSatoshi))},
+			},
 		},
 		invalidVectors: []opcodeVector{
 			{
@@ -4720,6 +4729,28 @@ func inspectInputValueSpec() *opcodeSpec {
 				name:          "no_prev_fetcher",
 				inputStack:    [][]byte{nil},
 				setupWorld:    func(w *opcodeWorld) { w.prevFetcher = nil },
+				expectedError: txscript.ErrInvalidIndex,
+			},
+			{
+				name:       "negative_value",
+				inputStack: [][]byte{nil},
+				setupWorld: func(w *opcodeWorld) {
+					w.prevouts[w.tx.TxIn[0].PreviousOutPoint].Value = -1
+				},
+				expectedError: txscript.ErrInvalidIndex,
+			},
+			{
+				name:       "above_max_value",
+				inputStack: [][]byte{nil},
+				setupWorld: func(w *opcodeWorld) {
+					w.prevouts[w.tx.TxIn[0].PreviousOutPoint].Value = btcutil.MaxSatoshi + 1
+				},
+				expectedError: txscript.ErrInvalidIndex,
+			},
+			{
+				name:          "missing_prevout",
+				inputStack:    [][]byte{nil},
+				setupWorld:    func(w *opcodeWorld) { w.tx.TxIn[0].PreviousOutPoint = wire.OutPoint{} },
 				expectedError: txscript.ErrInvalidIndex,
 			},
 			{name: "underflow", expectedError: txscript.ErrInvalidStackOperation},
@@ -4801,6 +4832,12 @@ func inspectOutputValueSpec() *opcodeSpec {
 		checkProperties: inspectOutputPropertyChecker(OP_INSPECTOUTPUTVALUE),
 		validVectors: []opcodeVector{
 			{name: "val0", inputStack: [][]byte{nil}, expectedStack: [][]byte{{0x58, 0x1b}}},
+			{
+				name:          "max_value",
+				inputStack:    [][]byte{nil},
+				setupWorld:    func(w *opcodeWorld) { w.tx.TxOut[0].Value = btcutil.MaxSatoshi },
+				expectedStack: [][]byte{mustBigNumBytes(BigNumFromUint64(btcutil.MaxSatoshi))},
+			},
 		},
 		invalidVectors: []opcodeVector{
 			{
@@ -4811,6 +4848,18 @@ func inspectOutputValueSpec() *opcodeSpec {
 			{
 				name:          "out_of_range",
 				inputStack:    [][]byte{scriptNum(9).Bytes()},
+				expectedError: txscript.ErrInvalidIndex,
+			},
+			{
+				name:          "negative_value",
+				inputStack:    [][]byte{nil},
+				setupWorld:    func(w *opcodeWorld) { w.tx.TxOut[0].Value = -1 },
+				expectedError: txscript.ErrInvalidIndex,
+			},
+			{
+				name:          "above_max_value",
+				inputStack:    [][]byte{nil},
+				setupWorld:    func(w *opcodeWorld) { w.tx.TxOut[0].Value = btcutil.MaxSatoshi + 1 },
 				expectedError: txscript.ErrInvalidIndex,
 			},
 			{name: "underflow", expectedError: txscript.ErrInvalidStackOperation},
@@ -5067,6 +5116,10 @@ func inspectInputPropertyChecker(op byte) opcodePropertyChecker {
 			want, err := BigNumFromUint64(uint64(prevOut.Value)).Bytes()
 			require.NoError(t, err)
 			require.Equal(t, want, top)
+			topBigNum, err := BigNumFromBytes(top)
+			require.NoError(t, err)
+			require.LessOrEqual(t, topBigNum.Cmp(BigNumFromUint64(btcutil.MaxSatoshi)), 0)
+			require.GreaterOrEqual(t, topBigNum.Cmp(BigNumFromUint64(0)), 0)
 		case OP_INSPECTINPUTSCRIPTPUBKEY:
 			require.LessOrEqual(t, len(top), 5)
 			programOrHash := c.after.GetStack()[afterDepth-2]
@@ -5108,6 +5161,10 @@ func inspectOutputPropertyChecker(op byte) opcodePropertyChecker {
 			want, err := BigNumFromUint64(uint64(c.before.tx.TxOut[int(index.BigInt().Int64())].Value)).Bytes()
 			require.NoError(t, err)
 			require.Equal(t, want, c.after.GetStack()[afterDepth-1])
+			topBigNum, err := BigNumFromBytes(c.after.GetStack()[afterDepth-1])
+			require.NoError(t, err)
+			require.LessOrEqual(t, topBigNum.Cmp(BigNumFromUint64(btcutil.MaxSatoshi)), 0)
+			require.GreaterOrEqual(t, topBigNum.Cmp(BigNumFromUint64(0)), 0)
 		case OP_INSPECTOUTPUTSCRIPTPUBKEY:
 			require.Equal(t, beforeDepth+1, afterDepth)
 			require.LessOrEqual(t, len(c.after.GetStack()[afterDepth-1]), 5)
