@@ -10,6 +10,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAssetOpcodes(t *testing.T) {
@@ -1458,4 +1459,19 @@ func TestFreshIssuanceAssetIDCollision(t *testing.T) {
 	if err := runAssetScript(t, builder, validPacket); err != nil {
 		t.Errorf("lookup of a distinct explicit AssetID failed: %v", err)
 	}
+}
+
+func TestResolveAssetIDGroupPositionBound(t *testing.T) {
+	t.Parallel()
+
+	txHash := chainhash.Hash{0x11}
+
+	// the last valid position resolves to (txHash, 65535)
+	id, err := resolveAssetID(txHash, maxAssetGroupIndex, asset.AssetGroup{})
+	require.NoError(t, err, "position %d must resolve", maxAssetGroupIndex)
+	require.Equal(t, asset.AssetId{Txid: txHash, Index: 65535}, id)
+
+	// the first invalid position is rejected
+	_, err = resolveAssetID(txHash, maxAssetGroupIndex+1, asset.AssetGroup{})
+	require.ErrorContains(t, err, "group position exceeds max asset_gidx")
 }
