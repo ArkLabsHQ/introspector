@@ -23,6 +23,12 @@ func (s signer) signInput(ptx *psbt.Packet, inputIndex int, tweak []byte, prevou
 	signingKey := arkade.ComputeArkadeScriptPrivateKey(s.secretKey, tweak)
 
 	input := ptx.Inputs[inputIndex]
+	// only sighash types committing to every input and output are safe: any other
+	// type lets the requester replace outputs or prevouts the covenant approved
+	if input.SighashType != txscript.SigHashDefault && input.SighashType != txscript.SigHashAll {
+		return fmt.Errorf("unsupported sighash type 0x%02x, cannot sign", uint32(input.SighashType))
+	}
+
 	// if not a taproot input, skip because arkd-wallet is taproot only accounts
 	if !txscript.IsPayToTaproot(input.WitnessUtxo.PkScript) {
 		return fmt.Errorf("not a taproot input, cannot sign")
