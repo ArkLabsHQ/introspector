@@ -35,6 +35,10 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 	if err != nil {
 		return nil, fmt.Errorf("failed to create prevout fetcher: %w", err)
 	}
+	checkpointPrevouts, err := s.fetchCheckpointPrevouts(ctx, tx.Checkpoints)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch checkpoint prevouts: %w", err)
+	}
 
 	// Parse EmulatorPacket from the transaction's OP_RETURN output
 	packet, err := arkade.FindEmulatorPacket(arkPtx.UnsignedTx)
@@ -62,7 +66,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 
 		inputTxid := arkPtx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint.Hash.String()
 		checkpointPtx := indexedCheckpoints[inputTxid]
-		if err := validateCheckpoint(arkPtx, inputIndex, checkpointPtx, script.TapLeaf(), prevOutFetcher); err != nil {
+		if err := validateCheckpoint(arkPtx, inputIndex, checkpointPtx, checkpointPrevouts[inputTxid], script.TapLeaf()); err != nil {
 			return nil, fmt.Errorf("invalid checkpoint for input %d: %w", inputIndex, err)
 		}
 
@@ -185,6 +189,53 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 	}, nil
 }
 
+func (s *service) fetchCheckpointPrevouts(
+	ctx context.Context, checkpoints []*psbt.Packet,
+) (map[string]*wire.TxOut, error) {
+	if s.arkdIndexer == nil {
+		return nil, fmt.Errorf("arkd indexer is unavailable")
+	}
+
+	txids := make([]string, 0, len(checkpoints))
+	for i, checkpoint := range checkpoints {
+		if checkpoint == nil || checkpoint.UnsignedTx == nil || len(checkpoint.UnsignedTx.TxIn) != 1 {
+			return nil, fmt.Errorf("checkpoint %d must have exactly one input", i)
+		}
+		txids = append(txids, checkpoint.UnsignedTx.TxIn[0].PreviousOutPoint.Hash.String())
+	}
+
+	response, err := s.arkdIndexer.GetVirtualTxs(ctx, txids)
+	if err != nil {
+		return nil, err
+	}
+	if response == nil {
+		return nil, fmt.Errorf("arkd indexer returned no response")
+	}
+	prevTxs := make(map[string]*wire.MsgTx, len(response.Txs))
+	for i, encoded := range response.Txs {
+		ptx, err := psbt.NewFromRawBytes(strings.NewReader(encoded), true)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode previous ark transaction %d: %w", i, err)
+		}
+		prevTxs[ptx.UnsignedTx.TxID()] = ptx.UnsignedTx
+	}
+
+	prevouts := make(map[string]*wire.TxOut, len(checkpoints))
+	for _, checkpoint := range checkpoints {
+		outpoint := checkpoint.UnsignedTx.TxIn[0].PreviousOutPoint
+		prevTx, ok := prevTxs[outpoint.Hash.String()]
+		if !ok {
+			return nil, fmt.Errorf("previous ark transaction %s not found", outpoint.Hash)
+		}
+		if outpoint.Index >= uint32(len(prevTx.TxOut)) {
+			return nil, fmt.Errorf("previous ark transaction output index %d out of range", outpoint.Index)
+		}
+		prevouts[checkpoint.UnsignedTx.TxID()] = prevTx.TxOut[outpoint.Index]
+	}
+
+	return prevouts, nil
+}
+
 func indexCheckpoints(arkPtx *psbt.Packet, checkpoints []*psbt.Packet) (map[string]*psbt.Packet, error) {
 	if arkPtx == nil || arkPtx.UnsignedTx == nil {
 		return nil, fmt.Errorf("missing ark transaction")
@@ -222,7 +273,7 @@ func indexCheckpoints(arkPtx *psbt.Packet, checkpoints []*psbt.Packet) (map[stri
 
 func validateCheckpoint(
 	arkPtx *psbt.Packet, inputIndex int, checkpoint *psbt.Packet,
-	expectedLeaf txscript.TapLeaf, prevOutFetcher arkade.ArkPrevOutFetcher,
+	previousOutput *wire.TxOut, expectedLeaf txscript.TapLeaf,
 ) error {
 	if inputIndex < 0 || inputIndex >= len(arkPtx.Inputs) || inputIndex >= len(arkPtx.UnsignedTx.TxIn) {
 		return fmt.Errorf("ark input index out of range")
@@ -248,21 +299,13 @@ func validateCheckpoint(
 		return fmt.Errorf("checkpoint anchor output is invalid")
 	}
 
-	prevArkTx := prevOutFetcher.FetchPrevOutArkTx(arkOutpoint)
-	if prevArkTx == nil {
-		return fmt.Errorf("missing authenticated previous ark transaction")
+	if previousOutput == nil {
+		return fmt.Errorf("missing authenticated previous ark output")
 	}
-	checkpointOutpoint := checkpoint.UnsignedTx.TxIn[0].PreviousOutPoint
-	if checkpointOutpoint.Hash != prevArkTx.TxHash() {
-		return fmt.Errorf("checkpoint input does not spend the previous ark transaction")
-	}
-	if checkpointOutpoint.Index >= uint32(len(prevArkTx.TxOut)) {
-		return fmt.Errorf("previous ark transaction output index %d out of range", checkpointOutpoint.Index)
-	}
-	if !equalTxOut(checkpoint.Inputs[0].WitnessUtxo, prevArkTx.TxOut[checkpointOutpoint.Index]) {
+	if !equalTxOut(checkpoint.Inputs[0].WitnessUtxo, previousOutput) {
 		return fmt.Errorf("checkpoint input witness utxo does not match previous ark transaction")
 	}
-	if checkpoint.UnsignedTx.TxOut[0].Value != checkpoint.Inputs[0].WitnessUtxo.Value {
+	if checkpoint.UnsignedTx.TxOut[0].Value != previousOutput.Value {
 		return fmt.Errorf("checkpoint vtxo output value does not match its input")
 	}
 

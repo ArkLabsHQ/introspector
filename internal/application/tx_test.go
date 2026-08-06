@@ -65,11 +65,11 @@ func TestIndexCheckpoints(t *testing.T) {
 
 func TestValidateCheckpoint(t *testing.T) {
 	type setup struct {
-		arkPtx       *psbt.Packet
-		checkpoint   *psbt.Packet
-		expectedLeaf txscript.TapLeaf
-		foreignLeaf  *psbt.TaprootTapLeafScript
-		fetcher      *mapArkPrevOutFetcher
+		arkPtx         *psbt.Packet
+		checkpoint     *psbt.Packet
+		previousOutput *wire.TxOut
+		expectedLeaf   txscript.TapLeaf
+		foreignLeaf    *psbt.TaprootTapLeafScript
 	}
 
 	newSetup := func(t *testing.T, unrelatedOutput bool) setup {
@@ -139,67 +139,64 @@ func TestValidateCheckpoint(t *testing.T) {
 		arkPtx.Inputs[0].TaprootLeafScript = []*psbt.TaprootTapLeafScript{authorizedField}
 
 		return setup{
-			arkPtx:       arkPtx,
-			checkpoint:   checkpoint,
-			expectedLeaf: authorizedLeaf,
-			foreignLeaf:  foreignField,
-			fetcher: &mapArkPrevOutFetcher{
-				arkTxs: map[wire.OutPoint]*wire.MsgTx{arkOutpoint: previousTx},
-			},
+			arkPtx:         arkPtx,
+			checkpoint:     checkpoint,
+			previousOutput: previousOutput,
+			expectedLeaf:   authorizedLeaf,
+			foreignLeaf:    foreignField,
 		}
 	}
 
 	t.Run("valid", func(t *testing.T) {
 		setup := newSetup(t, false)
-		require.NoError(t, validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.expectedLeaf, setup.fetcher))
+		require.NoError(t, validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf))
 	})
 
 	t.Run("multiple checkpoint inputs", func(t *testing.T) {
 		setup := newSetup(t, false)
 		setup.checkpoint.UnsignedTx.AddTxIn(&wire.TxIn{})
 		setup.checkpoint.Inputs = append(setup.checkpoint.Inputs, psbt.PInput{})
-		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.expectedLeaf, setup.fetcher)
+		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf)
 		require.ErrorContains(t, err, "exactly one input")
 	})
 
 	t.Run("extra checkpoint output", func(t *testing.T) {
 		setup := newSetup(t, false)
 		setup.checkpoint.UnsignedTx.AddTxOut(&wire.TxOut{})
-		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.expectedLeaf, setup.fetcher)
+		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf)
 		require.ErrorContains(t, err, "one vtxo output and one anchor output")
 	})
 
 	t.Run("checkpoint output mismatch", func(t *testing.T) {
 		setup := newSetup(t, false)
 		setup.arkPtx.Inputs[0].WitnessUtxo.Value--
-		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.expectedLeaf, setup.fetcher)
+		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf)
 		require.ErrorContains(t, err, "checkpoint output does not match")
 	})
 
 	t.Run("unauthenticated checkpoint input", func(t *testing.T) {
 		setup := newSetup(t, false)
 		setup.checkpoint.Inputs[0].WitnessUtxo.Value--
-		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.expectedLeaf, setup.fetcher)
+		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf)
 		require.ErrorContains(t, err, "does not match previous ark transaction")
 	})
 
 	t.Run("missing previous ark transaction", func(t *testing.T) {
 		setup := newSetup(t, false)
-		setup.fetcher.arkTxs = nil
-		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.expectedLeaf, setup.fetcher)
-		require.ErrorContains(t, err, "missing authenticated previous ark transaction")
+		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, nil, setup.expectedLeaf)
+		require.ErrorContains(t, err, "missing authenticated previous ark output")
 	})
 
 	t.Run("substituted checkpoint leaf", func(t *testing.T) {
 		setup := newSetup(t, false)
 		setup.checkpoint.Inputs[0].TaprootLeafScript[0] = setup.foreignLeaf
-		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.expectedLeaf, setup.fetcher)
+		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf)
 		require.ErrorContains(t, err, "tapleaf does not match ark input")
 	})
 
 	t.Run("unrelated checkpoint destination", func(t *testing.T) {
 		setup := newSetup(t, true)
-		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.expectedLeaf, setup.fetcher)
+		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf)
 		require.ErrorContains(t, err, "ark input tapleaf")
 		require.ErrorContains(t, err, "not committed by witness utxo")
 	})

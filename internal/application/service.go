@@ -11,6 +11,8 @@ import (
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/arkade-os/go-sdk/client"
 	grpcclient "github.com/arkade-os/go-sdk/client/grpc"
+	"github.com/arkade-os/go-sdk/indexer"
+	grpcindexer "github.com/arkade-os/go-sdk/indexer/grpc"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	log "github.com/sirupsen/logrus"
@@ -69,6 +71,7 @@ type service struct {
 	publicKey            string
 	deprecatedPublicKeys []string
 	arkdClient           client.TransportClient
+	arkdIndexer          indexer.Indexer
 	arkdPubKey           *btcec.PublicKey
 	computeLimits        arkade.ComputeLimits
 }
@@ -127,6 +130,11 @@ func New(ctx context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btc
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse arkd signer pubkey: %w", err)
 	}
+	arkdIndexer, err := grpcindexer.NewClient(arkdURL)
+	if err != nil {
+		arkdClient.Close()
+		return nil, fmt.Errorf("failed to create arkd indexer client: %w", err)
+	}
 
 	return &service{
 		signer:               signer{secretKey},
@@ -134,13 +142,19 @@ func New(ctx context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btc
 		publicKey:            publicKey,
 		deprecatedPublicKeys: deprecatedPublicKeys,
 		arkdClient:           arkdClient,
+		arkdIndexer:          arkdIndexer,
 		arkdPubKey:           arkdPubKey,
 		computeLimits:        computeLimits,
 	}, nil
 }
 
 func (s *service) Close() {
-	s.arkdClient.Close()
+	if s.arkdClient != nil {
+		s.arkdClient.Close()
+	}
+	if s.arkdIndexer != nil {
+		s.arkdIndexer.Close()
+	}
 }
 
 func (s *service) GetInfo(ctx context.Context) (*Info, error) {
