@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	arkintent "github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	arkscript "github.com/arkade-os/arkd/pkg/ark-lib/script"
@@ -87,6 +88,8 @@ func TestSubmitFinalizationValidatesForfeitOutputs(t *testing.T) {
 		require.Empty(t, forfeit.Inputs[0].TaprootScriptSpendSig)
 	})
 
+	// the witness utxo is checked against the intent proof before the output
+	// side is validated, so an inflated prevout fails the binding check
 	t.Run("vtxo prevout inflated against the intent proof", func(t *testing.T) {
 		inflated := &wire.TxOut{
 			Value:    fix.vtxoPrevout.Value * 10,
@@ -95,7 +98,7 @@ func TestSubmitFinalizationValidatesForfeitOutputs(t *testing.T) {
 		forfeit := fix.buildForfeit(t, inflated, fix.connectorOutput)
 
 		_, err := fix.submit(t, forfeit)
-		require.ErrorContains(t, err, "malformed forfeit")
+		require.ErrorContains(t, err, "witness UTXO does not match intent proof")
 		require.Empty(t, forfeit.Inputs[0].TaprootScriptSpendSig)
 	})
 
@@ -144,51 +147,113 @@ func TestSubmitFinalizationRejectsUnknownCommitmentTx(t *testing.T) {
 	require.Empty(t, forfeit.Inputs[0].TaprootScriptSpendSig)
 }
 
-func TestValidateForfeitOutputsInternals(t *testing.T) {
-	vtxoPrevout := &wire.TxOut{Value: 100_000, PkScript: []byte{0x51}}
-	connectorOutput := &wire.TxOut{Value: 450, PkScript: []byte{0x52}}
+func TestValidateForfeitOutputs(t *testing.T) {
+	vtxo := &wire.TxOut{Value: 100_000, PkScript: []byte{txscript.OP_TRUE}}
+	connector := &wire.TxOut{Value: 450, PkScript: []byte{txscript.OP_TRUE}}
 
-	newForfeit := func() *psbt.Packet {
-		tx := wire.NewMsgTx(2)
+	newForfeit := func(t *testing.T) *psbt.Packet {
+		t.Helper()
+
+		tx := wire.NewMsgTx(3)
 		tx.AddTxIn(&wire.TxIn{})
 		tx.AddTxIn(&wire.TxIn{})
 		tx.AddTxOut(&wire.TxOut{
-			Value:    vtxoPrevout.Value + connectorOutput.Value - txutils.ANCHOR_VALUE,
-			PkScript: []byte{0x53},
+			Value:    vtxo.Value + connector.Value - txutils.ANCHOR_VALUE,
+			PkScript: []byte{txscript.OP_TRUE},
 		})
 		tx.AddTxOut(txutils.AnchorOutput())
-
-		forfeit, err := psbt.NewFromUnsignedTx(tx)
+		ptx, err := psbt.NewFromUnsignedTx(tx)
 		require.NoError(t, err)
-		forfeit.Inputs[0].WitnessUtxo = vtxoPrevout
-		forfeit.Inputs[1].WitnessUtxo = connectorOutput
-		return forfeit
+		ptx.Inputs[0].WitnessUtxo = vtxo
+		ptx.Inputs[1].WitnessUtxo = connector
+		return ptx
 	}
 
-	t.Run("canonical forfeit is accepted", func(t *testing.T) {
-		require.NoError(t, validateForfeitOutputs(newForfeit(), 0, vtxoPrevout, connectorOutput))
-	})
-
+	// not a packet mutation: the vtxo prevout argument itself is missing
 	t.Run("nil vtxo prevout is rejected", func(t *testing.T) {
-		err := validateForfeitOutputs(newForfeit(), 0, nil, connectorOutput)
+		err := validateForfeitOutputs(newForfeit(t), 0, nil, connector)
 		require.ErrorContains(t, err, "missing vtxo prevout for input 0")
 	})
 
-	t.Run("missing vtxo witness utxo is rejected", func(t *testing.T) {
-		forfeit := newForfeit()
-		forfeit.Inputs[0].WitnessUtxo = nil
+	tests := []struct {
+		name    string
+		mutate  func(*psbt.Packet)
+		wantErr string
+	}{
+		{name: "valid"},
+		{
+			name: "missing vtxo witness utxo",
+			mutate: func(ptx *psbt.Packet) {
+				ptx.Inputs[0].WitnessUtxo = nil
+			},
+			wantErr: "missing witness utxo for input 0",
+		},
+		{
+			name: "missing connector witness utxo",
+			mutate: func(ptx *psbt.Packet) {
+				ptx.Inputs[1].WitnessUtxo = nil
+			},
+			wantErr: "missing witness utxo for input 1",
+		},
+		{
+			name: "vtxo witness utxo mismatch",
+			mutate: func(ptx *psbt.Packet) {
+				ptx.Inputs[0].WitnessUtxo = &wire.TxOut{Value: vtxo.Value - 1, PkScript: vtxo.PkScript}
+			},
+			wantErr: "does not spend the vtxo committed by the intent proof",
+		},
+		{
+			name: "connector witness utxo mismatch",
+			mutate: func(ptx *psbt.Packet) {
+				ptx.Inputs[1].WitnessUtxo = &wire.TxOut{Value: connector.Value - 1, PkScript: connector.PkScript}
+			},
+			wantErr: "does not spend the connector output of the tree",
+		},
+		{
+			name: "extra output",
+			mutate: func(ptx *psbt.Packet) {
+				ptx.UnsignedTx.AddTxOut(&wire.TxOut{Value: 1, PkScript: []byte{txscript.OP_TRUE}})
+			},
+			wantErr: "expected 2 outputs",
+		},
+		{
+			name: "anchor script replaced",
+			mutate: func(ptx *psbt.Packet) {
+				ptx.UnsignedTx.TxOut[1].PkScript = []byte{txscript.OP_TRUE}
+			},
+			wantErr: "is not the anchor output",
+		},
+		{
+			name: "wrong anchor value",
+			mutate: func(ptx *psbt.Packet) {
+				ptx.UnsignedTx.TxOut[1].Value = txutils.ANCHOR_VALUE + 1
+			},
+			wantErr: "is not the anchor output",
+		},
+		{
+			name: "wrong value",
+			mutate: func(ptx *psbt.Packet) {
+				ptx.UnsignedTx.TxOut[0].Value--
+			},
+			wantErr: "output 0 pays",
+		},
+	}
 
-		err := validateForfeitOutputs(forfeit, 0, vtxoPrevout, connectorOutput)
-		require.ErrorContains(t, err, "missing witness utxo for input 0")
-	})
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			forfeit := newForfeit(t)
+			if tc.mutate != nil {
+				tc.mutate(forfeit)
+			}
 
-	t.Run("missing connector witness utxo is rejected", func(t *testing.T) {
-		forfeit := newForfeit()
-		forfeit.Inputs[1].WitnessUtxo = nil
-
-		err := validateForfeitOutputs(forfeit, 0, vtxoPrevout, connectorOutput)
-		require.ErrorContains(t, err, "missing witness utxo for input 1")
-	})
+			err := validateForfeitOutputs(forfeit, 0, vtxo, connector)
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, tc.wantErr)
+		})
+	}
 }
 
 func TestLeafOutput(t *testing.T) {
@@ -232,10 +297,98 @@ func TestLeafOutput(t *testing.T) {
 	})
 }
 
+func TestSubmitFinalizationValidatesAuthorizedInput(t *testing.T) {
+	emulatorKey := newResolverPrivateKey(t)
+	arkdKey := newResolverPrivateKey(t)
+	arkadeScript := []byte{txscript.OP_TRUE}
+	tweakedKey := arkade.ComputeArkadeScriptPublicKey(
+		emulatorKey.PubKey(), arkade.ArkadeScriptHash(arkadeScript),
+	)
+
+	authorizedClosure := &arkscript.MultisigClosure{PubKeys: []*btcec.PublicKey{tweakedKey, arkdKey.PubKey()}}
+	foreignClosure := &arkscript.MultisigClosure{PubKeys: []*btcec.PublicKey{tweakedKey}}
+	vtxoScript := arkscript.TapscriptsVtxoScript{
+		Closures: []arkscript.Closure{authorizedClosure, foreignClosure},
+	}
+	tapKey, tapTree, err := vtxoScript.TapTree()
+	require.NoError(t, err)
+	pkScript, err := arkscript.P2TRScript(tapKey)
+	require.NoError(t, err)
+	authorizedLeaf := finalizationTapLeaf(t, authorizedClosure, tapTree)
+	foreignLeaf := finalizationTapLeaf(t, foreignClosure, tapTree)
+	prevout := &wire.TxOut{Value: 100_000, PkScript: pkScript}
+	outpoint := wire.OutPoint{Hash: chainhash.Hash{1}, Index: 0}
+
+	tests := []struct {
+		name           string
+		proofLeaf      *psbt.TaprootTapLeafScript
+		commitmentLeaf *psbt.TaprootTapLeafScript
+		commitment     *wire.TxOut
+		wantErr        string
+	}{
+		{
+			name:           "matching authorized input",
+			proofLeaf:      authorizedLeaf,
+			commitmentLeaf: authorizedLeaf,
+			commitment:     prevout,
+		},
+		{
+			name:           "foreign leaf",
+			proofLeaf:      authorizedLeaf,
+			commitmentLeaf: foreignLeaf,
+			commitment:     prevout,
+			wantErr:        "taproot leaf script does not match intent proof",
+		},
+		{
+			name:           "different prevout",
+			proofLeaf:      authorizedLeaf,
+			commitmentLeaf: authorizedLeaf,
+			commitment:     &wire.TxOut{Value: prevout.Value - 1, PkScript: prevout.PkScript},
+			wantErr:        "witness UTXO does not match intent proof",
+		},
+		{
+			name:           "leaf without arkd signer",
+			proofLeaf:      foreignLeaf,
+			commitmentLeaf: foreignLeaf,
+			commitment:     prevout,
+			wantErr:        "finalization leaf does not require the arkd signer",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			intent := signedFinalizationIntent(
+				t, emulatorKey, arkadeScript, tc.proofLeaf, prevout, outpoint,
+			)
+			commitment := finalizationCommitment(t, tc.commitmentLeaf, tc.commitment, outpoint)
+			svc := &service{
+				signer:        signer{emulatorKey},
+				arkdPubKey:    arkdKey.PubKey(),
+				indexerClient: &mockIndexerClient{},
+			}
+
+			signed, err := svc.SubmitFinalization(context.Background(), BatchFinalization{
+				Intent:       intent,
+				CommitmentTx: commitment,
+			})
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				require.Empty(t, commitment.Inputs[0].TaprootScriptSpendSig)
+				return
+			}
+
+			require.NoError(t, err)
+			require.NotNil(t, signed.CommitmentTx)
+			require.NotEmpty(t, signed.CommitmentTx.Inputs[0].TaprootScriptSpendSig)
+		})
+	}
+}
+
 // forfeitFixture holds a signer that already approved an intent proof for a
 // single vtxo, plus the connector tree that vtxo's forfeit must use.
 type forfeitFixture struct {
 	signerKey         *btcec.PrivateKey
+	arkdKey           *btcec.PrivateKey
 	intent            Intent
 	commitmentTx      *psbt.Packet
 	connectorTree     *tree.TxTree
@@ -253,11 +406,16 @@ func newForfeitFixture(t *testing.T) *forfeitFixture {
 	signerKey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
 
+	arkdKey, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
 	arkadeScript := []byte{txscript.OP_TRUE}
 	scriptHash := arkade.ArkadeScriptHash(arkadeScript)
 
+	// the finalization leaf must require the arkd signer, see validateFinalizationInput
 	closure := arkscript.MultisigClosure{PubKeys: []*btcec.PublicKey{
 		arkade.ComputeArkadeScriptPublicKey(signerKey.PubKey(), scriptHash),
+		arkdKey.PubKey(),
 	}}
 	vtxoScript := arkscript.TapscriptsVtxoScript{
 		Closures: []arkscript.Closure{&closure},
@@ -278,6 +436,7 @@ func newForfeitFixture(t *testing.T) *forfeitFixture {
 
 	fix := &forfeitFixture{
 		signerKey: signerKey,
+		arkdKey:   arkdKey,
 		leafScript: &psbt.TaprootTapLeafScript{
 			ControlBlock: merkleProof.ControlBlock,
 			Script:       merkleProof.Script,
@@ -404,7 +563,11 @@ func (f *forfeitFixture) submit(
 ) (*SignedBatchFinalization, error) {
 	t.Helper()
 
-	svc := &service{signer: signer{f.signerKey}, indexerClient: &mockIndexerClient{}}
+	svc := &service{
+		signer:        signer{f.signerKey},
+		arkdPubKey:    f.arkdKey.PubKey(),
+		indexerClient: &mockIndexerClient{},
+	}
 	return svc.SubmitFinalization(t.Context(), BatchFinalization{
 		Intent:        f.intent,
 		Forfeits:      forfeits,
@@ -437,4 +600,70 @@ func (m *mockIndexerClient) GetCommitmentTx(
 		return nil, m.err
 	}
 	return &indexer.CommitmentTx{}, nil
+}
+
+func finalizationTapLeaf(
+	t *testing.T, closure arkscript.Closure, tapTree arklib.TaprootTree,
+) *psbt.TaprootTapLeafScript {
+	t.Helper()
+
+	script, err := closure.Script()
+	require.NoError(t, err)
+	proof, err := tapTree.GetTaprootMerkleProof(txscript.NewBaseTapLeaf(script).TapHash())
+	require.NoError(t, err)
+	return &psbt.TaprootTapLeafScript{
+		ControlBlock: proof.ControlBlock,
+		Script:       proof.Script,
+		LeafVersion:  txscript.BaseLeafVersion,
+	}
+}
+
+func signedFinalizationIntent(
+	t *testing.T,
+	emulatorKey *btcec.PrivateKey,
+	arkadeScript []byte,
+	tapLeaf *psbt.TaprootTapLeafScript,
+	prevout *wire.TxOut,
+	outpoint wire.OutPoint,
+) Intent {
+	t.Helper()
+
+	tx := wire.NewMsgTx(2)
+	tx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{2}}})
+	tx.AddTxIn(&wire.TxIn{PreviousOutPoint: outpoint})
+	ptx, err := psbt.NewFromUnsignedTx(tx)
+	require.NoError(t, err)
+	for i := range ptx.Inputs {
+		ptx.Inputs[i].WitnessUtxo = prevout
+	}
+	ptx.Inputs[1].TaprootLeafScript = []*psbt.TaprootTapLeafScript{tapLeaf}
+
+	packet, err := arkade.NewPacket(arkade.EmulatorEntry{Vin: 1, Script: arkadeScript})
+	require.NoError(t, err)
+	packetOutput, err := (extension.Extension{packet}).TxOut()
+	require.NoError(t, err)
+	ptx.UnsignedTx.AddTxOut(packetOutput)
+	ptx.Outputs = append(ptx.Outputs, psbt.POutput{})
+
+	prevoutFetcher, err := computePrevoutFetcher(ptx)
+	require.NoError(t, err)
+	require.NoError(t, (signer{emulatorKey}).signInput(
+		ptx, 1, arkade.ArkadeScriptHash(arkadeScript), prevoutFetcher,
+	))
+
+	return Intent{Proof: arkintent.Proof{Packet: *ptx}}
+}
+
+func finalizationCommitment(
+	t *testing.T, tapLeaf *psbt.TaprootTapLeafScript, prevout *wire.TxOut, outpoint wire.OutPoint,
+) *psbt.Packet {
+	t.Helper()
+
+	tx := wire.NewMsgTx(2)
+	tx.AddTxIn(&wire.TxIn{PreviousOutPoint: outpoint})
+	ptx, err := psbt.NewFromUnsignedTx(tx)
+	require.NoError(t, err)
+	ptx.Inputs[0].WitnessUtxo = prevout
+	ptx.Inputs[0].TaprootLeafScript = []*psbt.TaprootTapLeafScript{tapLeaf}
+	return ptx
 }

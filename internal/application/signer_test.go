@@ -367,6 +367,16 @@ func TestSignInputRejectsUnsafeSighashTypes(t *testing.T) {
 	pkScript, err := txscript.PayToTaprootScript(outputKey)
 	require.NoError(t, err)
 
+	// single-leaf tree: the control block carries only the internal key, no
+	// inclusion proof
+	controlBlock := txscript.ControlBlock{
+		InternalKey:     key.PubKey(),
+		OutputKeyYIsOdd: outputKey.SerializeCompressed()[0] == 0x03,
+		LeafVersion:     txscript.BaseLeafVersion,
+	}
+	controlBlockBytes, err := controlBlock.ToBytes()
+	require.NoError(t, err)
+
 	prevout := &wire.TxOut{Value: 1000, PkScript: pkScript}
 	prevoutFetcher := txscript.NewCannedPrevOutputFetcher(prevout.PkScript, prevout.Value)
 
@@ -382,8 +392,9 @@ func TestSignInputRejectsUnsafeSighashTypes(t *testing.T) {
 		ptx.Inputs[0].WitnessUtxo = prevout
 		ptx.Inputs[0].SighashType = sighashType
 		ptx.Inputs[0].TaprootLeafScript = []*psbt.TaprootTapLeafScript{{
-			Script:      tapscript,
-			LeafVersion: txscript.BaseLeafVersion,
+			ControlBlock: controlBlockBytes,
+			Script:       tapscript,
+			LeafVersion:  txscript.BaseLeafVersion,
 		}}
 		return ptx
 	}
