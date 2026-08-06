@@ -252,6 +252,38 @@ func encodePacket(t *testing.T, ptx *psbt.Packet) string {
 	return encoded
 }
 
+func TestValidateCheckpointBindingRejectsEmptyCheckpoint(t *testing.T) {
+	arkTx := wire.NewMsgTx(2)
+	arkTx.AddTxIn(&wire.TxIn{})
+	arkTx.AddTxOut(&wire.TxOut{Value: 1_000, PkScript: []byte{0x51}})
+
+	arkPtx, err := psbt.NewFromUnsignedTx(arkTx)
+	require.NoError(t, err)
+	arkPtx.Inputs[0].WitnessUtxo = &wire.TxOut{Value: 2_000, PkScript: []byte{0x51}}
+
+	signerKey := newResolverPrivateKey(t)
+
+	t.Run("no psbt inputs and no tx inputs", func(t *testing.T) {
+		checkpoint := &psbt.Packet{UnsignedTx: wire.NewMsgTx(2)}
+
+		err := validateCheckpointBinding(
+			arkPtx, 0, checkpoint, signerKey.PubKey(), []byte{txscript.OP_TRUE},
+		)
+		require.ErrorContains(t, err, "checkpoint has no inputs")
+	})
+
+	t.Run("tx inputs but no psbt inputs", func(t *testing.T) {
+		checkpointTx := wire.NewMsgTx(2)
+		checkpointTx.AddTxIn(&wire.TxIn{})
+		checkpoint := &psbt.Packet{UnsignedTx: checkpointTx}
+
+		err := validateCheckpointBinding(
+			arkPtx, 0, checkpoint, signerKey.PubKey(), []byte{txscript.OP_TRUE},
+		)
+		require.ErrorContains(t, err, "checkpoint has no inputs")
+	})
+}
+
 // TestRetryWithBackoffIsBounded proves the retry loop terminates on its own
 // budget even when the caller supplies a context that never expires.
 func TestRetryWithBackoffIsBounded(t *testing.T) {
@@ -285,3 +317,25 @@ func TestRetryWithBackoffIsBounded(t *testing.T) {
 }
 
 var errAlwaysFails = fmt.Errorf("always fails")
+
+func TestRetryWithBackoffExhaustsElapsedBudget(t *testing.T) {
+	cfg := retryConfig{
+		MaxAttempts:  0, // disabled: only the elapsed budget may fire
+		MaxElapsed:   time.Millisecond,
+		InitialDelay: 50 * time.Millisecond,
+		MaxDelay:     50 * time.Millisecond,
+		Multiplier:   1,
+		Jitter:       0, // deterministic delay
+	}
+
+	attempts := 0
+	err := retryWithBackoff(
+		context.Background(),
+		cfg,
+		func() error { attempts++; return errAlwaysFails },
+		nil,
+	)
+
+	require.ErrorContains(t, err, "retry budget exhausted after attempt 1")
+	require.Equal(t, 1, attempts)
+}
