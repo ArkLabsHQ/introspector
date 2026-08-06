@@ -1,6 +1,7 @@
 package application
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -104,6 +105,19 @@ func TestSubmitIntentMessageInputBinding(t *testing.T) {
 		require.Nil(t, signed)
 		// nothing may be signed once the proof is rejected
 		require.Empty(t, ptx.Inputs[0].TaprootScriptSpendSig)
+	})
+
+	t.Run("rejects missing witness utxo", func(t *testing.T) {
+		for _, inputIdx := range []int{0, 1} {
+			t.Run(fmt.Sprintf("input %d", inputIdx), func(t *testing.T) {
+				ptx := newIntentProof(t, []intentVtxo{owned, owned}, entry)
+				ptx.Inputs[inputIdx].WitnessUtxo = nil
+
+				signed, err := submitTestIntent(t, signerKey, ptx)
+				require.ErrorContains(t, err, "witness utxo")
+				require.Nil(t, signed)
+			})
+		}
 	})
 }
 
