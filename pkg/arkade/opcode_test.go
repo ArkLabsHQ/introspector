@@ -5116,6 +5116,10 @@ func inspectInputPropertyChecker(op byte) opcodePropertyChecker {
 			want, err := BigNumFromUint64(uint64(prevOut.Value)).Bytes()
 			require.NoError(t, err)
 			require.Equal(t, want, top)
+			topBigNum, err := BigNumFromBytes(top)
+			require.NoError(t, err)
+			require.LessOrEqual(t, topBigNum.Cmp(BigNumFromUint64(btcutil.MaxSatoshi)), 0)
+			require.GreaterOrEqual(t, topBigNum.Cmp(BigNumFromUint64(0)), 0)
 		case OP_INSPECTINPUTSCRIPTPUBKEY:
 			require.LessOrEqual(t, len(top), 5)
 			programOrHash := c.after.GetStack()[afterDepth-2]
@@ -5157,6 +5161,10 @@ func inspectOutputPropertyChecker(op byte) opcodePropertyChecker {
 			want, err := BigNumFromUint64(uint64(c.before.tx.TxOut[int(index.BigInt().Int64())].Value)).Bytes()
 			require.NoError(t, err)
 			require.Equal(t, want, c.after.GetStack()[afterDepth-1])
+			topBigNum, err := BigNumFromBytes(c.after.GetStack()[afterDepth-1])
+			require.NoError(t, err)
+			require.LessOrEqual(t, topBigNum.Cmp(BigNumFromUint64(btcutil.MaxSatoshi)), 0)
+			require.GreaterOrEqual(t, topBigNum.Cmp(BigNumFromUint64(0)), 0)
 		case OP_INSPECTOUTPUTSCRIPTPUBKEY:
 			require.Equal(t, beforeDepth+1, afterDepth)
 			require.LessOrEqual(t, len(c.after.GetStack()[afterDepth-1]), 5)
