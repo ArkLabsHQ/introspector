@@ -62,13 +62,6 @@ func TestValidateMessage(t *testing.T) {
 	}
 }
 
-// unknownMessage satisfies IntentMessage but is not one of the six arkd types,
-// so it exercises validateMessage's default branch.
-type unknownMessage struct{}
-
-func (unknownMessage) Encode() (string, error) { return "", nil }
-func (unknownMessage) Decode(string) error     { return nil }
-
 // TestSubmitIntentMessageInputBinding covers the message input (index 0) of an
 // intent proof. It is signed with input 1's arkade script hash, so its script
 // must actually be input 1's script: the VM never executes input 0 on its own.
@@ -172,6 +165,13 @@ func TestSubmitIntentEntryResolution(t *testing.T) {
 		require.Nil(t, signed)
 	})
 }
+
+// unknownMessage satisfies IntentMessage but is not one of the six arkd types,
+// so it exercises validateMessage's default branch.
+type unknownMessage struct{}
+
+func (unknownMessage) Encode() (string, error) { return "", nil }
+func (unknownMessage) Decode(string) error     { return nil }
 
 func submitTestIntent(
 	t *testing.T, signerKey *btcec.PrivateKey, ptx *psbt.Packet,
