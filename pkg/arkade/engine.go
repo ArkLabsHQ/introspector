@@ -27,6 +27,14 @@ const (
 	// taproot spends. This will be the serialized x-coordinate of the
 	// top-level taproot output public key.
 	payToTaprootDataSize = 32
+
+	// maxCombinedStackByteSize is the maximum total number of bytes the data
+	// and alt stacks may hold together. txscript.MaxStackSize caps the element
+	// count only, and every element may be up to
+	// txscript.MaxScriptElementSize bytes, so the count cap on its own would
+	// let a script hold ~520 KB of attacker-chosen data per input. This bound
+	// is far above the working set of any legitimate arkade script.
+	maxCombinedStackByteSize = 128 * 1024
 )
 
 const (
@@ -144,7 +152,12 @@ type Engine struct {
 	// limits is the per-input opcode-execution compute brake. NewEngine sets it
 	// to DefaultComputeLimits; it may be replaced before execution via
 	// WithComputeLimits.
+	//
+	// budget is the optional request-wide brake shared with the engines of the
+	// other inputs of the same request, set via WithComputeBudget. It is nil by
+	// default, in which case only the per-input limits apply.
 	limits ComputeLimits
+	budget *ComputeBudget
 
 	// stepCallback is an optional function that will be called every time
 	// a step has been performed during script execution.
@@ -314,26 +327,25 @@ func (vm *Engine) executeOpcode(op *opcode, data []byte) error {
 }
 
 // chargeOpcode counts one execution of op and returns an error once op exceeds
-// its configured per-input limit. Opcodes with no limit, and executions outside
-// a tapscript context, are never charged.
+// either its configured per-input limit or, when the engine was given a shared
+// ComputeBudget, the request-wide limit for op. Opcodes with no limit, and
+// executions outside a tapscript context, are never charged.
 func (vm *Engine) chargeOpcode(op byte) error {
 	if vm.taprootCtx == nil {
 		return nil
 	}
-	limit, ok := vm.limits[op]
-	if !ok {
-		return nil
+	if limit, ok := vm.limits[op]; ok {
+		if vm.taprootCtx.opCounts == nil {
+			vm.taprootCtx.opCounts = make(map[byte]int)
+		}
+		vm.taprootCtx.opCounts[op]++
+		if vm.taprootCtx.opCounts[op] > limit {
+			return scriptError(txscript.ErrScriptTooBig,
+				fmt.Sprintf("opcode %s exceeded execution limit of %d",
+					opcodeArray[op].name, limit))
+		}
 	}
-	if vm.taprootCtx.opCounts == nil {
-		vm.taprootCtx.opCounts = make(map[byte]int)
-	}
-	vm.taprootCtx.opCounts[op]++
-	if vm.taprootCtx.opCounts[op] > limit {
-		return scriptError(txscript.ErrScriptTooBig,
-			fmt.Sprintf("opcode %s exceeded execution limit of %d",
-				opcodeArray[op].name, limit))
-	}
-	return nil
+	return vm.budget.charge(op)
 }
 
 // checkValidPC returns an error if the current script position is not valid for
@@ -630,6 +642,15 @@ func (vm *Engine) Step() (done bool, err error) {
 		return false, scriptError(txscript.ErrStackOverflow, str)
 	}
 
+	// The element count alone does not bound memory, so the combination of the
+	// data and alt stacks must also stay within the aggregate byte budget.
+	combinedStackBytes := stackByteSize(&vm.dstack) + stackByteSize(&vm.astack)
+	if combinedStackBytes > maxCombinedStackByteSize {
+		str := fmt.Sprintf("combined stack size %d bytes > max allowed %d bytes",
+			combinedStackBytes, maxCombinedStackByteSize)
+		return false, scriptError(txscript.ErrStackOverflow, str)
+	}
+
 	// Prepare for next instruction.
 	vm.opcodeIdx++
 	if vm.tokenizer.Done() {
@@ -675,6 +696,16 @@ func (vm *Engine) Step() (done bool, err error) {
 	}
 
 	return false, nil
+}
+
+// stackByteSize returns the total number of bytes held by the elements of the
+// provided stack.
+func stackByteSize(stack *stack) int {
+	var total int
+	for _, item := range stack.stk {
+		total += len(item)
+	}
+	return total
 }
 
 // copyStack makes a deep copy of the provided slice.

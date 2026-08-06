@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -5518,6 +5519,175 @@ func hashBytes(h chainhash.Hash) []byte {
 func sha256Bytes(data []byte) []byte {
 	sum := sha256.Sum256(data)
 	return append([]byte(nil), sum[:]...)
+}
+
+// setOpcodeWorldPrevouts rebuilds the world's fetcher from the given prevouts so
+// a vector can hand OP_INSPECTINPUTVALUE an arbitrary (or missing) prevout.
+func setOpcodeWorldPrevouts(w *opcodeWorld, prevouts map[wire.OutPoint]*wire.TxOut) {
+	w.prevouts = prevouts
+	w.prevFetcher = newTestArkPrevOutFetcher(
+		txscript.NewMultiPrevOutFetcher(prevouts), nil, nil,
+	)
+}
+
+// TestOpcodeInspectInputValueRejectsNegativeAmount asserts that a prevout
+// declaring a negative satoshi value is rejected rather than wrapping around.
+// Casting int64(-1) to uint64 yields 2^64-1, which a covenant script doing
+// value conservation would read as a huge positive amount.
+func TestOpcodeInspectInputValueRejectsNegativeAmount(t *testing.T) {
+	t.Parallel()
+
+	world := buildOpcodeWorld()
+	outpoint := world.tx.TxIn[0].PreviousOutPoint
+	setOpcodeWorldPrevouts(world, map[wire.OutPoint]*wire.TxOut{
+		outpoint: {Value: -1, PkScript: []byte{OP_1, 0x20}},
+	})
+
+	vm, err := newOpcodeEngine(world, 0)
+	require.NoError(t, err)
+	vm.SetStack([][]byte{nil})
+
+	err = invokeOpcodeWithData(OP_INSPECTINPUTVALUE, nil, vm)
+	if err == nil {
+		wrapped, bnErr := BigNumFromBytes(vm.GetStack()[len(vm.GetStack())-1])
+		require.NoError(t, bnErr)
+		t.Fatalf("negative input value accepted: -1 sat pushed as %s", wrapped.BigInt())
+	}
+	requireScriptErrorCode(t, err, txscript.ErrInvalidStackOperation)
+}
+
+// TestOpcodeInspectOutputValueRejectsNegativeAmount is the OP_INSPECTOUTPUTVALUE
+// counterpart: a negative TxOut.Value must not wrap to a huge positive BigNum.
+func TestOpcodeInspectOutputValueRejectsNegativeAmount(t *testing.T) {
+	t.Parallel()
+
+	world := buildOpcodeWorld()
+	world.tx.TxOut[0].Value = -1
+
+	vm, err := newOpcodeEngine(world, 0)
+	require.NoError(t, err)
+	vm.SetStack([][]byte{nil})
+
+	err = invokeOpcodeWithData(OP_INSPECTOUTPUTVALUE, nil, vm)
+	if err == nil {
+		wrapped, bnErr := BigNumFromBytes(vm.GetStack()[len(vm.GetStack())-1])
+		require.NoError(t, bnErr)
+		t.Fatalf("negative output value accepted: -1 sat pushed as %s", wrapped.BigInt())
+	}
+	requireScriptErrorCode(t, err, txscript.ErrInvalidStackOperation)
+}
+
+// TestOpcodeInspectInputValueMissingPrevOut asserts that an outpoint the fetcher
+// has no entry for yields a script error instead of a nil dereference that would
+// panic the VM and take down the whole signing request.
+func TestOpcodeInspectInputValueMissingPrevOut(t *testing.T) {
+	t.Parallel()
+
+	world := buildOpcodeWorld()
+	setOpcodeWorldPrevouts(world, map[wire.OutPoint]*wire.TxOut{})
+
+	vm, err := newOpcodeEngine(world, 0)
+	require.NoError(t, err)
+	vm.SetStack([][]byte{nil})
+
+	require.NotPanics(t, func() {
+		err = invokeOpcodeWithData(OP_INSPECTINPUTVALUE, nil, vm)
+	})
+	requireScriptErrorCode(t, err, txscript.ErrInvalidIndex)
+}
+
+// Malicious serialized SHA256 contexts. gob sizes its allocations from length
+// prefixes carried in its own input, so these tiny blobs each cost megabytes
+// before the decode fails.
+var (
+	// A bare gob message header declaring a ~1GiB message body.
+	sha256StateHugeMessage = mustDecodeHex("fc3fffffff")
+
+	// A structurally well-framed type descriptor (its declared message length
+	// matches the bytes present) whose struct field-slice length has been
+	// patched to 0xFFFFFF elements. Proves that validating the framing is not
+	// on its own enough: the amplification also lives in nested lengths.
+	sha256StateHugeSlice = mustDecodeHex(
+		"1d7f030101015301ff800001fdffffff010141010400010142010c000000",
+	)
+)
+
+// allocBytesPerRun reports the average bytes allocated per call to fn.
+func allocBytesPerRun(runs int, fn func()) uint64 {
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	for range runs {
+		fn()
+	}
+	runtime.ReadMemStats(&after)
+	return (after.TotalAlloc - before.TotalAlloc) / uint64(runs)
+}
+
+// TestOpcodeSha256StateDecodeIsBounded proves that OP_SHA256UPDATE and
+// OP_SHA256FINALIZE cannot be driven into large allocations by the serialized
+// context they pop off the stack. Both opcodes always fail on these inputs, so
+// the observable defect is the memory spent on the way to that failure: a few
+// stack bytes buying ~10MiB per execution is a cheap denial of service.
+//
+// Deliberately not parallel: the assertion reads process-wide alloc counters.
+func TestOpcodeSha256StateDecodeIsBounded(t *testing.T) {
+	const (
+		runs     = 64
+		maxAlloc = 1 << 20 // 1MiB/call; the unfixed decoder spends ~10MiB.
+	)
+
+	states := map[string][]byte{
+		"huge_message": sha256StateHugeMessage,
+		"huge_slice":   sha256StateHugeSlice,
+		"truncated":    sha256InitGolden[:len(sha256InitGolden)-1],
+		"oversized":    append(append([]byte(nil), sha256InitGolden...), make([]byte, 256)...),
+	}
+
+	for _, op := range []byte{OP_SHA256UPDATE, OP_SHA256FINALIZE} {
+		for name, state := range states {
+			t.Run(fmt.Sprintf("%s/%s", opcodeArray[op].name, name), func(t *testing.T) {
+				vm, err := newOpcodeEngine(buildOpcodeWorld(), 0)
+				require.NoError(t, err)
+
+				// The state must be rejected outright.
+				vm.SetStack([][]byte{state, []byte("x")})
+				requireScriptErrorCode(
+					t, invokeOpcodeWithData(op, nil, vm),
+					txscript.ErrInvalidStackOperation,
+				)
+
+				perRun := allocBytesPerRun(runs, func() {
+					vm.SetStack([][]byte{state, []byte("x")})
+					_ = invokeOpcodeWithData(op, nil, vm)
+				})
+				require.Lessf(t, perRun, uint64(maxAlloc),
+					"%d state bytes allocated %d bytes per execution",
+					len(state), perRun)
+			})
+		}
+	}
+}
+
+// TestOpcodeSha256StateRoundTripsGolden guards against the bounds check above
+// being tightened into rejecting the states the VM itself produces.
+func TestOpcodeSha256StateRoundTripsGolden(t *testing.T) {
+	t.Parallel()
+
+	vm, err := newOpcodeEngine(buildOpcodeWorld(), 0)
+	require.NoError(t, err)
+
+	vm.SetStack([][]byte{[]byte("Hello")})
+	require.NoError(t, invokeOpcodeWithData(OP_SHA256INITIALIZE, nil, vm))
+	require.Equal(t, [][]byte{sha256InitGolden}, vm.GetStack())
+
+	vm.SetStack([][]byte{sha256InitGolden, []byte(" World")})
+	require.NoError(t, invokeOpcodeWithData(OP_SHA256UPDATE, nil, vm))
+	require.Equal(t, [][]byte{sha256UpdateGolden}, vm.GetStack())
+
+	vm.SetStack([][]byte{sha256UpdateGolden, []byte("!")})
+	require.NoError(t, invokeOpcodeWithData(OP_SHA256FINALIZE, nil, vm))
+	require.Equal(t, [][]byte{sha256FinalizeGolden}, vm.GetStack())
 }
 
 func TestOpcodeModexpSmoke(t *testing.T) {

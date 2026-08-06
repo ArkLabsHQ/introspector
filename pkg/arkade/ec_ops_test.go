@@ -716,17 +716,26 @@ func ecPairingSpec() *opcodeSpec {
 		checkProperties: pairingPropertyChecker(),
 		validVectors: []opcodeVector{
 			{
-				name: "empty_set_returns_true",
-				inputStack: [][]byte{
-					zero, // pair_count = 0
-					bnBytesUint(uint64(CurveAltBN128)),
-				},
-				expectedStack: [][]byte{{0x01}},
+				// A real single-pair check. The empty input set is no
+				// longer a valid vector; see the zero_pair_count case.
+				name:          "single_pair_returns_false",
+				inputStack:    pairingFalseVectors(),
+				expectedStack: [][]byte{nil},
 			},
 		},
 		invalidVectors: []opcodeVector{
 			{
 				name:          "underflow",
+				expectedError: txscript.ErrInvalidStackOperation,
+			},
+			{
+				// A zero pair_count must fail rather than vacuously
+				// satisfying a covenant gated on OP_ECPAIRING.
+				name: "zero_pair_count",
+				inputStack: [][]byte{
+					zero,
+					bnBytesUint(uint64(CurveAltBN128)),
+				},
 				expectedError: txscript.ErrInvalidStackOperation,
 			},
 			{
@@ -986,4 +995,35 @@ func TestECPairingG2InfinityIsIdentity(t *testing.T) {
 	vm.SetStack(stack)
 	require.NoError(t, invokeOpcodeWithData(OP_ECPAIRING, nil, vm))
 	require.Equal(t, [][]byte{{0x01}}, vm.GetStack())
+}
+
+// TestECPairingZeroPairCountRejected verifies that OP_ECPAIRING refuses a
+// pair_count of zero instead of vacuously pushing true.
+//
+// EIP-197 defines the empty pairing product as the identity, so an empty
+// input set is "true" there. Arkade Script has no such convention to honour:
+// OP_ECPAIRING exists to gate a covenant on a real pairing-product check, so
+// accepting zero pairs lets anyone satisfy that gate by supplying no pairs at
+// all, bypassing whatever the check was meant to enforce.
+func TestECPairingZeroPairCountRejected(t *testing.T) {
+	world := buildOpcodeWorld()
+	vm, err := newOpcodeEngine(world, 0)
+	require.NoError(t, err)
+
+	var zero []byte // pair_count = 0
+	vm.SetStack([][]byte{zero, bnBytesUint(uint64(CurveAltBN128))})
+
+	err = invokeOpcodeWithData(OP_ECPAIRING, nil, vm)
+	require.Error(t, err, "pair_count=0 must fail the script, not push true")
+	requireScriptErrorCode(t, err, txscript.ErrInvalidStackOperation)
+}
+
+// TestBN254PairingCheckRejectsEmpty pins the same rule one layer down, so the
+// vacuous-true cannot be reintroduced through bn254PairingCheck directly.
+func TestBN254PairingCheckRejectsEmpty(t *testing.T) {
+	_, err := bn254PairingCheck(nil)
+	require.Error(t, err)
+
+	_, err = bn254PairingCheck([]ecPair{})
+	require.Error(t, err)
 }

@@ -183,6 +183,7 @@ The service can be configured using environment variables:
 |----------|-------------|---------|
 | `EMULATOR_SECRET_KEY` | Private key for signing (hex encoded) | Required |
 | `EMULATOR_DEPRECATED_KEYS` | Comma-separated deprecated private keys (hex encoded) still accepted for signing. Empty means none. CSV is strict: leading commas, trailing commas, empty entries, whitespace, duplicates, and the current key are rejected. | Empty |
+| `EMULATOR_DEPRECATED_KEYS_VALID_UNTIL` | RFC3339 timestamp after which `EMULATOR_DEPRECATED_KEYS` stop being accepted for both fresh signing and finalization. Empty means deprecated keys remain valid indefinitely. | Empty |
 | `EMULATOR_PORT` | Server port (gRPC + HTTP REST gateway) | 7073 |
 | `EMULATOR_LOG_LEVEL` | Log level (0-6) | 4 (Debug) |
 | `EMULATOR_ARKD_URL` | URL of the `arkd` instance used for attempted finalization in [`SubmitTx`](#submittx) | Required |

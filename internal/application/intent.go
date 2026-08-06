@@ -1,7 +1,9 @@
 package application
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -35,6 +37,9 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 		return nil, fmt.Errorf("no emulator packet found in transaction")
 	}
 
+	budget := arkade.NewComputeBudgetWithLimits(arkade.AggregateComputeLimits(s.computeLimits))
+
+	var nSigned = 0
 	for _, entry := range packet {
 		inputIndex := int(entry.Vin)
 
@@ -45,10 +50,13 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 			continue
 		}
 
-		matchedSigner, script, err := resolveArkadeScriptSigner(s.signer, s.deprecatedSigners, ptx, entry)
+		matchedSigner, script, err := resolveArkadeScriptSigner(s.signer, s.activeDeprecatedSigners(), ptx, entry)
 		if err != nil {
-			// skip if the input is not a valid arkade script
-			continue
+			// there may be input/entry pairs attributed to a different signer
+			if errors.Is(err, arkade.ErrTweakedArkadePubKeyNotFound) && len(ptx.Inputs) > 1 {
+				continue
+			}
+			return nil, fmt.Errorf("failed to read arkade script: %w vin=%d", err, inputIndex)
 		}
 
 		if err := script.Execute(
@@ -56,6 +64,7 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 			prevOutFetcher,
 			inputIndex,
 			arkade.WithExactComputeLimits(s.computeLimits),
+			arkade.WithComputeBudget(budget),
 		); err != nil {
 			log.WithError(err).WithField("input_index", inputIndex).Error("arkade script execution failed")
 			return nil, fmt.Errorf("failed to execute arkade script at input %d: %w", inputIndex, err)
@@ -67,10 +76,25 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 
 		// if input index 1 is valid and signed, we can also sign the intent message input (index 0)
 		if inputIndex == 1 {
+			// the message input is signed with input 1's script hash, so it must
+			// really carry input 1's script: the vm never executes input 0 on its
+			// own, nothing else would bind the signature to the executed script
+			if !bytes.Equal(
+				ptx.Inputs[0].WitnessUtxo.PkScript, ptx.Inputs[1].WitnessUtxo.PkScript,
+			) {
+				return nil, fmt.Errorf("message input script does not match input 1 script")
+			}
+
 			if err := matchedSigner.signInput(ptx, 0, script.Hash(), prevOutFetcher); err != nil {
 				return nil, fmt.Errorf("failed to sign fake message input: %w", err)
 			}
 		}
+
+		nSigned++
+	}
+
+	if nSigned == 0 {
+		return nil, fmt.Errorf("failed to find any valid input/entry pairs")
 	}
 
 	return ptx, nil

@@ -22,6 +22,12 @@ const (
 	MaxScriptLength = 10_000
 	// MaxWitnessLength is the maximum serialized witness size per entry.
 	MaxWitnessLength = 1_000_000
+	// MaxTotalEntrySize is the maximum cumulative script + witness size across
+	// all entries of one packet. The per-entry caps alone would let a single
+	// OP_RETURN payload drive MaxEntryCount*(MaxScriptLength+MaxWitnessLength)
+	// (~1GB) of allocation before any validation runs, so parsing also spends
+	// against this total budget. It is sized so one maximal entry still fits.
+	MaxTotalEntrySize = MaxScriptLength + MaxWitnessLength
 )
 
 // EmulatorEntry represents a single entry in the Emulator Packet.
@@ -155,6 +161,7 @@ func DeserializeEmulatorPacket(data []byte) (EmulatorPacket, error) {
 	}
 
 	entries := make([]EmulatorEntry, 0, entryCount)
+	var totalSize uint64
 	for i := range entryCount {
 		var entry EmulatorEntry
 
@@ -171,6 +178,14 @@ func DeserializeEmulatorPacket(data []byte) (EmulatorPacket, error) {
 		if scriptLen > MaxScriptLength {
 			return nil, fmt.Errorf("max emulator script length exceeded, max=%d got=%d", MaxScriptLength, scriptLen)
 		}
+		totalSize += scriptLen
+		if totalSize > MaxTotalEntrySize {
+			return nil, fmt.Errorf("max emulator total entry size exceeded, max=%d got=%d", MaxTotalEntrySize, totalSize)
+		}
+		// Never allocate a declared length the remaining input cannot supply.
+		if scriptLen > uint64(r.Len()) {
+			return nil, fmt.Errorf("failed to read script for entry %d: %w", i, io.ErrUnexpectedEOF)
+		}
 		entry.Script = make([]byte, scriptLen)
 		if _, err := io.ReadFull(r, entry.Script); err != nil {
 			return nil, fmt.Errorf("failed to read script for entry %d: %w", i, err)
@@ -183,6 +198,14 @@ func DeserializeEmulatorPacket(data []byte) (EmulatorPacket, error) {
 		}
 		if witnessLen > MaxWitnessLength {
 			return nil, fmt.Errorf("max emulator witness length exceeded, max=%d got=%d", MaxWitnessLength, witnessLen)
+		}
+		totalSize += witnessLen
+		if totalSize > MaxTotalEntrySize {
+			return nil, fmt.Errorf("max emulator total entry size exceeded, max=%d got=%d", MaxTotalEntrySize, totalSize)
+		}
+		// Never allocate a declared length the remaining input cannot supply.
+		if witnessLen > uint64(r.Len()) {
+			return nil, fmt.Errorf("failed to read witness for entry %d: %w", i, io.ErrUnexpectedEOF)
 		}
 		witnessBytes := make([]byte, witnessLen)
 		if _, err := io.ReadFull(r, witnessBytes); err != nil {
@@ -225,7 +248,21 @@ func FindEmulatorPacket(tx *wire.MsgTx) (EmulatorPacket, error) {
 			continue
 		}
 
-		return DeserializeEmulatorPacket(unknownPacket.Data)
+		packet, err := DeserializeEmulatorPacket(unknownPacket.Data)
+		if err != nil {
+			return nil, err
+		}
+		// Entries index this transaction's inputs. Reject out-of-range vins
+		// here, before any per-entry work is done downstream.
+		for i, entry := range packet {
+			if int(entry.Vin) >= len(tx.TxIn) {
+				return nil, fmt.Errorf(
+					"vin %d out of range at entry %d, tx has %d inputs",
+					entry.Vin, i, len(tx.TxIn),
+				)
+			}
+		}
+		return packet, nil
 	}
 	return nil, nil
 }

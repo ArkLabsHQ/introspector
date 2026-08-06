@@ -1236,3 +1236,226 @@ func TestAssetOpcodes(t *testing.T) {
 		}
 	}
 }
+
+// newAssetOpcodeTestTx returns the transaction and prevout fetcher shared by the
+// asset opcode security regression tests below.
+func newAssetOpcodeTestTx() (*wire.MsgTx, *testArkPrevOutFetcher) {
+	fetcher := newTestArkPrevOutFetcher(
+		txscript.NewMultiPrevOutFetcher(map[wire.OutPoint]*wire.TxOut{
+			{Hash: chainhash.Hash{}, Index: 0}: {
+				Value: 1000000000,
+				PkScript: []byte{
+					OP_1, OP_DATA_32,
+					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				},
+			},
+		}), nil, nil,
+	)
+
+	tx := &wire.MsgTx{
+		Version: 1,
+		TxIn: []*wire.TxIn{
+			{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{}, Index: 0}},
+			{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{}, Index: 0}},
+		},
+		TxOut: []*wire.TxOut{
+			{Value: 500, PkScript: nil},
+			{Value: 300, PkScript: nil},
+		},
+	}
+
+	return tx, fetcher
+}
+
+// runAssetScript executes the given script against the given asset packet and
+// returns the execution error, if any.
+func runAssetScript(t *testing.T, builder *txscript.ScriptBuilder, packet asset.Packet) error {
+	t.Helper()
+
+	script, err := builder.Script()
+	if err != nil {
+		t.Fatalf("Script build failed: %v", err)
+	}
+
+	tx, fetcher := newAssetOpcodeTestTx()
+	engine, err := NewEngine(
+		script,
+		tx, 0,
+		txscript.NewSigCache(100),
+		txscript.NewTxSigHashes(tx, fetcher),
+		0,
+		fetcher,
+	)
+	if err != nil {
+		t.Fatalf("NewEngine failed: %v", err)
+	}
+
+	engine.SetAssetPacket(packet)
+	return engine.Execute()
+}
+
+// TestAssetIndexNoAliasing asserts that a stack-supplied transaction input or
+// output index only ever matches an asset entry whose vin/vout is exactly that
+// value. A comparison narrowed to a fixed-width unsigned type would let an
+// out-of-range index alias a real entry.
+func TestAssetIndexNoAliasing(t *testing.T) {
+	t.Parallel()
+
+	packet := asset.Packet{
+		{
+			AssetId: &asset.AssetId{Txid: chainhash.Hash{0x11}, Index: 0},
+			Inputs:  []asset.AssetInput{{Type: asset.AssetInputTypeLocal, Vin: 0, Amount: 500}},
+			Outputs: []asset.AssetOutput{{Vout: 0, Amount: 500}},
+		},
+	}
+
+	// Predicate-level check: an index differing from the entry's vout by a
+	// multiple of 2^32 must not match.
+	if assetIndexEqual(0, scriptNum(1<<32)) {
+		t.Error("index 2^32 must not alias vout 0")
+	}
+	if assetIndexEqual(5, scriptNum(1<<32+5)) {
+		t.Error("index 2^32+5 must not alias vout 5")
+	}
+	if assetIndexEqual(0, scriptNum(-1<<32)) {
+		t.Error("index -2^32 must not alias vout 0")
+	}
+	if !assetIndexEqual(7, scriptNum(7)) {
+		t.Error("index 7 must match vout 7")
+	}
+
+	// Script-level check: out-of-range indices reachable through the stack
+	// count no entries.
+	for _, index := range []int64{-1, 65536, 1 << 30} {
+		builder := txscript.NewScriptBuilder().
+			AddInt64(index).
+			AddOp(OP_INSPECTOUTASSETCOUNT).
+			AddInt64(0).
+			AddOp(OP_EQUAL)
+		if err := runAssetScript(t, builder, packet); err != nil {
+			t.Errorf("output index %d aliased an asset entry: %v", index, err)
+		}
+
+		builder = txscript.NewScriptBuilder().
+			AddInt64(index).
+			AddOp(OP_INSPECTINASSETCOUNT).
+			AddInt64(0).
+			AddOp(OP_EQUAL)
+		if err := runAssetScript(t, builder, packet); err != nil {
+			t.Errorf("input index %d aliased an asset entry: %v", index, err)
+		}
+	}
+}
+
+// TestAssetGroupCtrlGroupIndexBounds asserts that a control asset referencing a
+// group index beyond the packet is rejected rather than read out of bounds.
+func TestAssetGroupCtrlGroupIndexBounds(t *testing.T) {
+	t.Parallel()
+
+	for _, groupIndex := range []uint16{2, 65535} {
+		packet := asset.Packet{
+			{
+				AssetId: &asset.AssetId{Txid: chainhash.Hash{0x11}, Index: 0},
+				Outputs: []asset.AssetOutput{{Vout: 0, Amount: 100}},
+			},
+			{
+				AssetId: nil, // fresh issuance
+				ControlAsset: &asset.AssetRef{
+					Type:       asset.AssetRefByGroup,
+					GroupIndex: groupIndex,
+				},
+				Outputs: []asset.AssetOutput{{Vout: 1, Amount: 200}},
+			},
+		}
+
+		builder := txscript.NewScriptBuilder().
+			AddInt64(1).
+			AddOp(OP_INSPECTASSETGROUPCTRL)
+		if err := runAssetScript(t, builder, packet); err == nil {
+			t.Errorf("control asset group index %d should be out of range", groupIndex)
+		}
+	}
+}
+
+// TestFreshIssuanceAssetIDCollision asserts that an explicit AssetId can never
+// occupy the identity space reserved for fresh issuances, which derive their
+// canonical AssetID from the spending transaction hash and their packet
+// position. Without that separation a crafted group aliases the fresh issuance
+// and answers lookups in its name.
+func TestFreshIssuanceAssetIDCollision(t *testing.T) {
+	t.Parallel()
+
+	tx, _ := newAssetOpcodeTestTx()
+	txHash := tx.TxHash()
+
+	// Group 0 is a fresh issuance at packet position 0, so its canonical
+	// AssetID is (txHash, 0). Group 1 claims that very AssetID explicitly.
+	collidingPacket := asset.Packet{
+		{
+			AssetId: nil, // fresh issuance, canonical AssetID (txHash, 0)
+			Outputs: []asset.AssetOutput{{Vout: 0, Amount: 100}},
+		},
+		{
+			AssetId: &asset.AssetId{Txid: txHash, Index: 0},
+			Inputs:  []asset.AssetInput{{Type: asset.AssetInputTypeLocal, Vin: 0, Amount: 999}},
+			Outputs: []asset.AssetOutput{{Vout: 1, Amount: 999}},
+		},
+	}
+
+	// The fresh issuance holds nothing at output 1; only the colliding group
+	// does. A lookup under the fresh issuance's canonical AssetID must not be
+	// answered with the colliding group's amount.
+	builder := txscript.NewScriptBuilder().
+		AddInt64(1). // output index
+		AddData(txHash[:]).
+		AddInt64(0). // canonical asset_gidx of the fresh issuance
+		AddOp(OP_INSPECTOUTASSETLOOKUP).
+		AddOp(OP_VERIFY).
+		AddInt64(999).
+		AddOp(OP_EQUAL)
+	if err := runAssetScript(t, builder, collidingPacket); err == nil {
+		t.Error("colliding group answered a lookup for the fresh issuance AssetID")
+	}
+
+	// Resolving the colliding group itself must fail too, rather than emit an
+	// AssetID indistinguishable from the fresh issuance's.
+	builder = txscript.NewScriptBuilder().
+		AddInt64(1). // packet position of the colliding group
+		AddOp(OP_INSPECTASSETGROUPASSETID).
+		AddInt64(0). // canonical asset_gidx of the fresh issuance
+		AddOp(OP_EQUALVERIFY).
+		AddData(txHash[:]).
+		AddOp(OP_EQUAL)
+	if err := runAssetScript(t, builder, collidingPacket); err == nil {
+		t.Error("colliding group resolved to a fresh issuance AssetID")
+	}
+
+	// An explicit AssetId issued by any other transaction stays valid.
+	otherTxid := chainhash.Hash{0x11, 0x22, 0x33}
+	validPacket := asset.Packet{
+		{
+			AssetId: nil, // fresh issuance, canonical AssetID (txHash, 0)
+			Outputs: []asset.AssetOutput{{Vout: 0, Amount: 100}},
+		},
+		{
+			AssetId: &asset.AssetId{Txid: otherTxid, Index: 0},
+			Inputs:  []asset.AssetInput{{Type: asset.AssetInputTypeLocal, Vin: 0, Amount: 999}},
+			Outputs: []asset.AssetOutput{{Vout: 1, Amount: 999}},
+		},
+	}
+
+	builder = txscript.NewScriptBuilder().
+		AddInt64(1). // output index
+		AddData(otherTxid[:]).
+		AddInt64(0).
+		AddOp(OP_INSPECTOUTASSETLOOKUP).
+		AddOp(OP_VERIFY).
+		AddInt64(999).
+		AddOp(OP_EQUAL)
+	if err := runAssetScript(t, builder, validPacket); err != nil {
+		t.Errorf("lookup of a distinct explicit AssetID failed: %v", err)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"math"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/stretchr/testify/require"
@@ -553,4 +554,80 @@ func TestBigNumModexp(t *testing.T) {
 		)
 		require.ErrorIs(t, err, ErrBigNumNegativeExponent)
 	})
+}
+
+// bigNumOfBitLen builds a BigNum whose magnitude is bits wide. It bypasses
+// BigNumFromBytes on purpose: values wider than maxBigNumLen cannot be
+// decoded from the stack, but arithmetic (Mul, Add) promotes to the big path
+// without any size check, so a caller can hand Modexp an operand of any size.
+func bigNumOfBitLen(bits int) BigNum {
+	v := new(big.Int).Lsh(big.NewInt(1), uint(bits))
+	v.Sub(v, big.NewInt(569)) // odd, dense magnitude: worst case for Exp
+	return BigNum{big: v, useBig: true}
+}
+
+// TestBigNumModexpRejectsOversizedOperands verifies that Modexp refuses
+// operands wider than maxBigNumLen, the largest byte-length this file admits
+// for a BigNum operand or result.
+//
+// Without the bound, big.Int.Exp does work proportional to the exponent's bit
+// length times the square of the modulus size, both attacker-chosen. Measured
+// on the unfixed code: a 4160-bit exponent against a 200,000-bit modulus took
+// 62.9 s in a single call, with no upper limit at all.
+func TestBigNumModexpRejectsOversizedOperands(t *testing.T) {
+	t.Parallel()
+
+	// maxBigNumLen bytes == maxBigNumLen*8 bits is the largest accepted
+	// operand; one bit more must be refused.
+	overBits := maxBigNumLen*8 + 1
+	inRange := bigNumOfBitLen(maxBigNumLen * 8)
+
+	t.Run("oversized_exponent_rejected", func(t *testing.T) {
+		_, err := BigNumFromInt64(3).Modexp(bigNumOfBitLen(overBits), inRange)
+		require.ErrorIs(t, err, ErrBigNumModexpOperandTooLarge)
+	})
+
+	t.Run("oversized_modulus_rejected", func(t *testing.T) {
+		_, err := BigNumFromInt64(3).Modexp(inRange, bigNumOfBitLen(overBits))
+		require.ErrorIs(t, err, ErrBigNumModexpOperandTooLarge)
+	})
+
+	t.Run("oversized_base_rejected", func(t *testing.T) {
+		_, err := bigNumOfBitLen(overBits).Modexp(inRange, inRange)
+		require.ErrorIs(t, err, ErrBigNumModexpOperandTooLarge)
+	})
+
+	t.Run("operands_at_limit_accepted", func(t *testing.T) {
+		got, err := inRange.Modexp(inRange, inRange)
+		require.NoError(t, err)
+		require.Equal(t, -1, got.BigInt().Cmp(inRange.BigInt()),
+			"result must be reduced into [0, modulus)")
+	})
+}
+
+// TestBigNumModexpWorkIsBounded is the DoS reproduction: it drives Modexp
+// with the operand shape that was measured at 62.9 s before the fix (bounded
+// exponent, unbounded modulus) and requires that the call is now refused
+// rather than performed. The generous timeout keeps the test from being
+// flaky on slow CI while still failing outright on the unfixed code, which
+// cannot return in anything close to this budget.
+func TestBigNumModexpWorkIsBounded(t *testing.T) {
+	t.Parallel()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := BigNumFromInt64(3).Modexp(
+			bigNumOfBitLen(maxBigNumLen*8),
+			bigNumOfBitLen(200000),
+		)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, ErrBigNumModexpOperandTooLarge)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Modexp performed unbounded work on an oversized modulus " +
+			"instead of rejecting it")
+	}
 }

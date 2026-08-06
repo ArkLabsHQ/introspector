@@ -20,7 +20,7 @@ import (
 // before signing the forfeits, we also verify that is it part of the commitment tx
 func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFinalization) (*SignedBatchFinalization, error) {
 	signedInputs, err := getSignedInputAssociations(
-		finalization.Intent.Proof.Packet, s.signer, s.deprecatedSigners,
+		finalization.Intent.Proof.Packet, s.signer, s.activeDeprecatedSigners(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get signed inputs: %w", err)
@@ -55,8 +55,20 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 			// validate connector is part of the connector tree
 			connectorIndex := inputIndex ^ 1 // if inputIndex is 0, connectorIndex is 1, and vice versa
 			connector := forfeit.UnsignedTx.TxIn[connectorIndex].PreviousOutPoint
-			if !hasLeaf(finalization.ConnectorTree, connector) {
+			connectorOutput := leafOutput(finalization.ConnectorTree, connector)
+			if connectorOutput == nil {
 				return nil, fmt.Errorf("connector %s is not part of the tree", connector)
+			}
+
+			// the input side alone says nothing about where the forfeit sends the
+			// vtxo: without this the requester can reuse a vtxo input we signed in
+			// the past and redirect its value anywhere
+			if err := validateForfeitOutputs(
+				forfeit, inputIndex, association.prevout, connectorOutput,
+			); err != nil {
+				return nil, fmt.Errorf(
+					"malformed forfeit %s: %w", forfeit.UnsignedTx.TxID(), err,
+				)
 			}
 
 			// sign the forfeit
@@ -114,6 +126,10 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 type signedInputAssociation struct {
 	script *arkade.ArkadeScript
 	signer signer
+	// prevout is the vtxo output the intent proof spends. The tapscript
+	// signature verified below commits to it, so it is the trusted description
+	// of the vtxo a forfeit is allowed to spend.
+	prevout *wire.TxOut
 }
 
 // getSignedInputAssociations iterates over tapscript sigs to find arkade script inputs with valid signature.
@@ -197,8 +213,9 @@ func getSignedInputAssociations(
 				}
 
 				signedInputs[ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint] = signedInputAssociation{
-					script: script,
-					signer: candidate,
+					script:  script,
+					signer:  candidate,
+					prevout: input.WitnessUtxo,
 				}
 				break
 			}
@@ -211,28 +228,91 @@ func getSignedInputAssociations(
 	return signedInputs, nil
 }
 
-func hasLeaf(tree *tree.TxTree, outpoint wire.OutPoint) bool {
+// validateForfeitOutputs checks the output side of a forfeit against the two
+// prevouts it spends. tree.BuildForfeitTx, which arkd itself replays to accept a
+// forfeit, collects the vtxo and the connector into a single output followed by
+// the anchor, so everything but the destination script is determined by data the
+// emulator can trust: the vtxo prevout is committed by the intent proof
+// signature and the connector output comes from the connector tree.
+func validateForfeitOutputs(
+	forfeit *psbt.Packet, vtxoIndex int, vtxoPrevout, connectorOutput *wire.TxOut,
+) error {
+	if vtxoPrevout == nil {
+		return fmt.Errorf("missing vtxo prevout for input %d", vtxoIndex)
+	}
+
+	spentVtxo := forfeit.Inputs[vtxoIndex].WitnessUtxo
+	if spentVtxo == nil {
+		return fmt.Errorf("missing witness utxo for input %d", vtxoIndex)
+	}
+	if spentVtxo.Value != vtxoPrevout.Value ||
+		!bytes.Equal(spentVtxo.PkScript, vtxoPrevout.PkScript) {
+		return fmt.Errorf(
+			"input %d does not spend the vtxo committed by the intent proof", vtxoIndex,
+		)
+	}
+
+	connectorIndex := vtxoIndex ^ 1
+	spentConnector := forfeit.Inputs[connectorIndex].WitnessUtxo
+	if spentConnector == nil {
+		return fmt.Errorf("missing witness utxo for input %d", connectorIndex)
+	}
+	if spentConnector.Value != connectorOutput.Value ||
+		!bytes.Equal(spentConnector.PkScript, connectorOutput.PkScript) {
+		return fmt.Errorf(
+			"input %d does not spend the connector output of the tree", connectorIndex,
+		)
+	}
+
+	if len(forfeit.UnsignedTx.TxOut) != 2 {
+		return fmt.Errorf("expected 2 outputs, got %d", len(forfeit.UnsignedTx.TxOut))
+	}
+
+	anchor := forfeit.UnsignedTx.TxOut[1]
+	if anchor.Value != txutils.ANCHOR_VALUE ||
+		!bytes.Equal(anchor.PkScript, txutils.ANCHOR_PKSCRIPT) {
+		return fmt.Errorf("output 1 is not the anchor output")
+	}
+
+	expectedValue := vtxoPrevout.Value + connectorOutput.Value - txutils.ANCHOR_VALUE
+	if forfeit.UnsignedTx.TxOut[0].Value != expectedValue {
+		return fmt.Errorf(
+			"output 0 pays %d, expected %d",
+			forfeit.UnsignedTx.TxOut[0].Value, expectedValue,
+		)
+	}
+
+	return nil
+}
+
+// leafOutput returns the output spent by outpoint if it is a non-anchor output
+// of a leaf of the tree, nil otherwise.
+func leafOutput(tree *tree.TxTree, outpoint wire.OutPoint) *wire.TxOut {
 	if tree == nil {
-		return false
+		return nil
 	}
 
 	node := tree.Find(outpoint.Hash.String())
 	if node == nil {
-		return false
+		return nil
 	}
 
 	if len(node.Children) != 0 {
 		// not a leaf
-		return false
+		return nil
 	}
 
 	if len(node.Root.UnsignedTx.TxOut) <= int(outpoint.Index) {
 		// index out of range
-		return false
+		return nil
 	}
 
 	output := node.Root.UnsignedTx.TxOut[outpoint.Index]
 
-	// false if the output is anchor
-	return !bytes.Equal(output.PkScript, txutils.ANCHOR_PKSCRIPT)
+	// nil if the output is anchor
+	if bytes.Equal(output.PkScript, txutils.ANCHOR_PKSCRIPT) {
+		return nil
+	}
+
+	return output
 }

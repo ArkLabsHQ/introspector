@@ -3009,6 +3009,64 @@ func TestArkadeSighashByteLayoutMatchesBIP342WithAnnexAndCodeSep(t *testing.T) {
 		"annex and code-separator fields must match BIP342 byte layout")
 }
 
+// TestStepEnforcesAggregateStackByteSize proves the element-count cap alone is
+// not a memory bound: a stack that is comfortably under txscript.MaxStackSize
+// elements can still hold hundreds of kilobytes, so Step must also reject on
+// the combined byte size of the data and alt stacks.
+func TestStepEnforcesAggregateStackByteSize(t *testing.T) {
+	t.Parallel()
+
+	vm, err := newOpcodeEngine(buildOpcodeWorld(), 0)
+	require.NoError(t, err)
+
+	// 900 max-size elements: 100 elements below the count cap, but ~468 KB.
+	big := make([][]byte, 900)
+	for i := range big {
+		big[i] = make([]byte, txscript.MaxScriptElementSize)
+	}
+	vm.SetStack(big)
+
+	_, err = vm.Step()
+	requireScriptErrorCode(t, err, txscript.ErrStackOverflow)
+}
+
+// TestStepCountsAltStackBytes verifies the byte cap covers both stacks, so
+// parking data on the alt stack cannot be used to double the budget.
+func TestStepCountsAltStackBytes(t *testing.T) {
+	t.Parallel()
+
+	vm, err := newOpcodeEngine(buildOpcodeWorld(), 0)
+	require.NoError(t, err)
+
+	half := make([][]byte, 450)
+	for i := range half {
+		half[i] = make([]byte, txscript.MaxScriptElementSize)
+	}
+	vm.SetStack(half)
+	vm.SetAltStack(half)
+
+	_, err = vm.Step()
+	requireScriptErrorCode(t, err, txscript.ErrStackOverflow)
+}
+
+// TestStepAllowsStackUnderByteCap guards the other side of the cap: a stack
+// well within the byte budget must keep executing.
+func TestStepAllowsStackUnderByteCap(t *testing.T) {
+	t.Parallel()
+
+	vm, err := newOpcodeEngine(buildOpcodeWorld(), 0)
+	require.NoError(t, err)
+
+	small := make([][]byte, 100)
+	for i := range small {
+		small[i] = make([]byte, txscript.MaxScriptElementSize)
+	}
+	vm.SetStack(small)
+
+	_, err = vm.Step()
+	require.NoError(t, err)
+}
+
 // TestArkadeSighashIsDomainSeparated locks in the BIP-340 tag separation: the
 // arkade digest must NOT collide with the BIP342 digest. We use a tx with no
 // emulator packet so masking is a no-op — any digest difference is solely
