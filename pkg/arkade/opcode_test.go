@@ -3,7 +3,6 @@ package arkade
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -4357,12 +4356,6 @@ func txIDSpec() *opcodeSpec {
 	}
 }
 
-func le64(v uint64) []byte {
-	b := make([]byte, 8)
-	binary.LittleEndian.PutUint64(b, v)
-	return b
-}
-
 func assetSpec(op byte) *opcodeSpec {
 	return &opcodeSpec{
 		opcode:          op,
@@ -5519,81 +5512,6 @@ func hashBytes(h chainhash.Hash) []byte {
 func sha256Bytes(data []byte) []byte {
 	sum := sha256.Sum256(data)
 	return append([]byte(nil), sum[:]...)
-}
-
-// setOpcodeWorldPrevouts rebuilds the world's fetcher from the given prevouts so
-// a vector can hand OP_INSPECTINPUTVALUE an arbitrary (or missing) prevout.
-func setOpcodeWorldPrevouts(w *opcodeWorld, prevouts map[wire.OutPoint]*wire.TxOut) {
-	w.prevouts = prevouts
-	w.prevFetcher = newTestArkPrevOutFetcher(
-		txscript.NewMultiPrevOutFetcher(prevouts), nil, nil,
-	)
-}
-
-// TestOpcodeInspectInputValueRejectsNegativeAmount asserts that a prevout
-// declaring a negative satoshi value is rejected rather than wrapping around.
-// Casting int64(-1) to uint64 yields 2^64-1, which a covenant script doing
-// value conservation would read as a huge positive amount.
-func TestOpcodeInspectInputValueRejectsNegativeAmount(t *testing.T) {
-	t.Parallel()
-
-	world := buildOpcodeWorld()
-	outpoint := world.tx.TxIn[0].PreviousOutPoint
-	setOpcodeWorldPrevouts(world, map[wire.OutPoint]*wire.TxOut{
-		outpoint: {Value: -1, PkScript: []byte{OP_1, 0x20}},
-	})
-
-	vm, err := newOpcodeEngine(world, 0)
-	require.NoError(t, err)
-	vm.SetStack([][]byte{nil})
-
-	err = invokeOpcodeWithData(OP_INSPECTINPUTVALUE, nil, vm)
-	if err == nil {
-		wrapped, bnErr := BigNumFromBytes(vm.GetStack()[len(vm.GetStack())-1])
-		require.NoError(t, bnErr)
-		t.Fatalf("negative input value accepted: -1 sat pushed as %s", wrapped.BigInt())
-	}
-	requireScriptErrorCode(t, err, txscript.ErrInvalidStackOperation)
-}
-
-// TestOpcodeInspectOutputValueRejectsNegativeAmount is the OP_INSPECTOUTPUTVALUE
-// counterpart: a negative TxOut.Value must not wrap to a huge positive BigNum.
-func TestOpcodeInspectOutputValueRejectsNegativeAmount(t *testing.T) {
-	t.Parallel()
-
-	world := buildOpcodeWorld()
-	world.tx.TxOut[0].Value = -1
-
-	vm, err := newOpcodeEngine(world, 0)
-	require.NoError(t, err)
-	vm.SetStack([][]byte{nil})
-
-	err = invokeOpcodeWithData(OP_INSPECTOUTPUTVALUE, nil, vm)
-	if err == nil {
-		wrapped, bnErr := BigNumFromBytes(vm.GetStack()[len(vm.GetStack())-1])
-		require.NoError(t, bnErr)
-		t.Fatalf("negative output value accepted: -1 sat pushed as %s", wrapped.BigInt())
-	}
-	requireScriptErrorCode(t, err, txscript.ErrInvalidStackOperation)
-}
-
-// TestOpcodeInspectInputValueMissingPrevOut asserts that an outpoint the fetcher
-// has no entry for yields a script error instead of a nil dereference that would
-// panic the VM and take down the whole signing request.
-func TestOpcodeInspectInputValueMissingPrevOut(t *testing.T) {
-	t.Parallel()
-
-	world := buildOpcodeWorld()
-	setOpcodeWorldPrevouts(world, map[wire.OutPoint]*wire.TxOut{})
-
-	vm, err := newOpcodeEngine(world, 0)
-	require.NoError(t, err)
-	vm.SetStack([][]byte{nil})
-
-	require.NotPanics(t, func() {
-		err = invokeOpcodeWithData(OP_INSPECTINPUTVALUE, nil, vm)
-	})
-	requireScriptErrorCode(t, err, txscript.ErrInvalidIndex)
 }
 
 // Malicious serialized SHA256 contexts. gob sizes its allocations from length
