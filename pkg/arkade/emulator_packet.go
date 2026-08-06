@@ -257,7 +257,7 @@ func FindEmulatorPacket(tx *wire.MsgTx) (EmulatorPacket, error) {
 		for i, entry := range packet {
 			if int(entry.Vin) >= len(tx.TxIn) {
 				return nil, fmt.Errorf(
-					"vin %d out of range at entry %d, tx has %d inputs",
+					"input index out of range: vin %d out of range at entry %d, tx has %d inputs",
 					entry.Vin, i, len(tx.TxIn),
 				)
 			}
