@@ -2579,6 +2579,13 @@ func opcodeChecksigFromStack(op *opcode, data []byte, vm *Engine) error {
 	return nil
 }
 
+// isInfinity reports whether an affine point is the point at infinity, which secp
+// represents as zero coordinates. The point must already have been normalized with
+// ToAffine: a Jacobian identity may carry a non-zero Z.
+func isInfinity(point *secp.JacobianPoint) bool {
+	return point.X.IsZero() && point.Y.IsZero()
+}
+
 // opcodeECMulScalarVerify verifies that Q = k*P where k is a 32-byte big endian scalar
 // and P, Q are compressed EC points on the secp256k1 curve.
 // Stack transformation: [... k P Q] -> [...]
@@ -2602,6 +2609,12 @@ func opcodeECMulScalarVerify(op *opcode, data []byte, vm *Engine) error {
 		return scriptError(txscript.ErrInvalidStackOperation, "OP_ECMULSCALARVERIFY requires 32-byte scalar")
 	}
 
+	if len(P) != 33 {
+		return scriptError(
+			txscript.ErrInvalidStackOperation, "OP_ECMULSCALARVERIFY requires 33-byte compressed P",
+		)
+	}
+
 	pubKeyP, err := secp.ParsePubKey(P)
 	if err != nil {
 		return scriptError(txscript.ErrInvalidStackOperation, "invalid point P")
@@ -2621,6 +2634,12 @@ func opcodeECMulScalarVerify(op *opcode, data []byte, vm *Engine) error {
 	var result secp.JacobianPoint
 	secp.ScalarMultNonConst(&scalar, &point, &result)
 	result.ToAffine()
+
+	// The identity has no valid compressed encoding; serializing it would yield
+	// 02||0^32, which a byte comparison would then accept as a valid Q.
+	if isInfinity(&result) {
+		return scriptError(txscript.ErrInvalidStackOperation, "k*P is the point at infinity")
+	}
 
 	kP := secp.NewPublicKey(&result.X, &result.Y)
 
@@ -2686,6 +2705,10 @@ func opcodeTweakVerify(op *opcode, data []byte, vm *Engine) error {
 	var result secp.JacobianPoint
 	secp.AddNonConst(&pointP, &kG, &result)
 	result.ToAffine()
+
+	if isInfinity(&result) {
+		return scriptError(txscript.ErrInvalidStackOperation, "P + k*G is the point at infinity")
+	}
 
 	tweakedKey := secp.NewPublicKey(&result.X, &result.Y)
 
