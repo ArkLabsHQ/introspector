@@ -833,7 +833,7 @@ func TestBoarding(t *testing.T) {
 	// create the client
 	conn, err := grpc.NewClient("localhost:7073", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
-	emulatorClient := emulatorclient.NewGRPCClient(conn)
+	emulatorClient := &prevArkTxEmulatorClient{TransportClient: emulatorclient.NewGRPCClient(conn)}
 
 	emulatorInfo, err := emulatorClient.GetInfo(ctx)
 	require.NoError(t, err)
@@ -908,6 +908,7 @@ func TestBoarding(t *testing.T) {
 	faucetMsgTx := wire.NewMsgTx(wire.TxVersion)
 	err = faucetMsgTx.Deserialize(bytes.NewReader(rawTxBytes))
 	require.NoError(t, err)
+	integrationPrevArkTxs.Store(faucetMsgTx.TxID(), faucetMsgTx.Copy())
 
 	contractPkScript, err := script.P2TRScript(vtxoTapKey)
 	require.NoError(t, err)
@@ -1297,7 +1298,7 @@ const password = "password"
 func setupIndexer(t *testing.T) indexer.Indexer {
 	svc, err := grpcindexer.NewClient("localhost:7070")
 	require.NoError(t, err)
-	return svc
+	return &recordingIndexer{Indexer: svc}
 }
 
 func setupArkSDKwithPublicKey(
@@ -1541,7 +1542,7 @@ func setupServerWalletAndCLI() error {
 			continue
 		}
 
-		emulatorClient := emulatorclient.NewGRPCClient(conn)
+		emulatorClient := &prevArkTxEmulatorClient{TransportClient: emulatorclient.NewGRPCClient(conn)}
 
 		if _, err := emulatorClient.GetInfo(context.Background()); err == nil {
 			break

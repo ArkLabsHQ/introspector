@@ -751,6 +751,7 @@ func buildVtxoInput(prevTx *psbt.Packet, out *wire.TxOut, outIndex uint32, templ
 // removePrevoutTxFields removes prevout tx metadata from the selected inputs.
 func removePrevoutTxFields(t *testing.T, ptx *psbt.Packet, inputIndexes ...int) {
 	t.Helper()
+	skipPrevArkTxFields.Store(ptx.UnsignedTx.TxID(), struct{}{})
 
 	prevoutFieldKey := append([]byte{txutils.ArkPsbtFieldKeyType}, arkade.ArkFieldPrevArkTx...)
 

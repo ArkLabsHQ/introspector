@@ -8,6 +8,7 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	arkscript "github.com/arkade-os/arkd/pkg/ark-lib/script"
+	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
@@ -224,17 +225,26 @@ func newIntentVtxo(t *testing.T, closurePubKeys ...*btcec.PublicKey) intentVtxo 
 
 // newIntentProof builds an intent-proof shaped psbt: input 0 is the message
 // input built from input 1's script, the remaining inputs are the coins being
-// proven. The entries are embedded in the emulator packet OP_RETURN output.
+// proven. Each proven input carries the authenticated prevout tx it spends.
+// The entries are embedded in the emulator packet OP_RETURN output.
 func newIntentProof(
 	t *testing.T, inputs []intentVtxo, entries ...arkade.EmulatorEntry,
 ) *psbt.Packet {
 	t.Helper()
 
 	tx := wire.NewMsgTx(2)
-	for i := range inputs {
-		tx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{
-			Hash: chainhash.Hash{byte(i + 1)}, Index: 0,
+	tx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{
+		Hash: chainhash.Hash{1}, Index: 0,
+	}})
+	prevTxs := make(map[int]*wire.MsgTx)
+	for i := 1; i < len(inputs); i++ {
+		prevTx := wire.NewMsgTx(2)
+		prevTx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{
+			Hash: chainhash.Hash{byte(i + 100)}, Index: 0,
 		}})
+		prevTx.AddTxOut(&wire.TxOut{Value: 2_000, PkScript: inputs[i].pkScript})
+		prevTxs[i] = prevTx
+		tx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: prevTx.TxHash(), Index: 0}})
 	}
 	tx.AddTxOut(&wire.TxOut{Value: 1_000, PkScript: inputs[0].pkScript})
 
@@ -254,6 +264,9 @@ func newIntentProof(
 			Script:       in.leafScript,
 			LeafVersion:  txscript.BaseLeafVersion,
 		}}
+		if prevTx, ok := prevTxs[i]; ok {
+			require.NoError(t, txutils.SetArkPsbtField(ptx, i, arkade.PrevArkTxField, *prevTx))
+		}
 	}
 
 	packet, err := arkade.NewPacket(entries...)

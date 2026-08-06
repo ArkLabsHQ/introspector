@@ -11,10 +11,13 @@ import (
 	"time"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
+	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil/psbt"
+	"github.com/btcsuite/btcd/txscript"
+	"github.com/btcsuite/btcd/wire"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -23,15 +26,9 @@ import (
 func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, error) {
 	arkPtx := tx.ArkTx
 
-	// index checkpoints by txid for easy lookup while signing ark transaction
-	indexedCheckpoints := make(map[string]*psbt.Packet) // txid => checkpoint psbt
-	for _, checkpoint := range tx.Checkpoints {
-		indexedCheckpoints[checkpoint.UnsignedTx.TxID()] = checkpoint
-	}
-	// preserve original checkpoint order for deterministic response
-	orderedCheckpointTxids := make([]string, 0, len(tx.Checkpoints))
-	for _, checkpoint := range tx.Checkpoints {
-		orderedCheckpointTxids = append(orderedCheckpointTxids, checkpoint.UnsignedTx.TxID())
+	indexedCheckpoints, err := indexCheckpoints(arkPtx, tx.Checkpoints)
+	if err != nil {
+		return nil, err
 	}
 
 	prevOutFetcher, err := prevOutFetcherForArkTx(arkPtx, tx.Checkpoints)
@@ -65,6 +62,13 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 			return nil, fmt.Errorf("failed to read arkade script: %w vin=%d", err, inputIndex)
 		}
 
+		inputTxid := arkPtx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint.Hash.String()
+		checkpointPtx := indexedCheckpoints[inputTxid]
+		arkOutpoint := arkPtx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
+		if err := validateCheckpoint(arkPtx, inputIndex, checkpointPtx, prevOutFetcher.fetchVtxoPrevOut(arkOutpoint), script.TapLeaf()); err != nil {
+			return nil, fmt.Errorf("invalid checkpoint for input %d: %w", inputIndex, err)
+		}
+
 		log.Debugf("executing arkade script: %x", script.Script())
 		if err := script.Execute(
 			arkPtx.UnsignedTx,
@@ -79,19 +83,6 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 
 		if err := matchedSigner.signInput(arkPtx, inputIndex, script.Hash(), prevOutFetcher); err != nil {
 			return nil, fmt.Errorf("failed to sign input %d: %w", inputIndex, err)
-		}
-
-		// search for checkpoint
-		inputTxid := arkPtx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint.Hash.String()
-		checkpointPtx, ok := indexedCheckpoints[inputTxid]
-		if !ok {
-			return nil, fmt.Errorf("checkpoint not found for input %d", inputIndex)
-		}
-
-		if err := validateCheckpointBinding(
-			arkPtx, inputIndex, checkpointPtx, matchedSigner.secretKey.PubKey(), entry.Script,
-		); err != nil {
-			return nil, fmt.Errorf("invalid checkpoint for input %d: %w", inputIndex, err)
 		}
 
 		checkpointPrevoutFetcher, err := computePrevoutFetcher(checkpointPtx)
@@ -114,10 +105,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		return nil, fmt.Errorf("failed to find any valid input/entry pairs")
 	}
 
-	signedCheckpointTxs := make([]*psbt.Packet, 0, len(orderedCheckpointTxids))
-	for _, txid := range orderedCheckpointTxids {
-		signedCheckpointTxs = append(signedCheckpointTxs, indexedCheckpoints[txid])
-	}
+	signedCheckpointTxs := tx.Checkpoints
 
 	isFinalizer, err := finalizerAcc.isFinalizer()
 	if err != nil {
@@ -212,37 +200,110 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 	}, nil
 }
 
-// validateCheckpointBinding asserts the checkpoint accompanying an ark input is
-// really the one that input spends. Matching the checkpoint txid alone leaves
-// the requester free to pair an ark input with a checkpoint whose leaf and
-// witness utxo describe something else entirely, and still have it signed.
-func validateCheckpointBinding(
-	arkPtx *psbt.Packet,
-	inputIndex int,
-	checkpointPtx *psbt.Packet,
-	signerPubKey *btcec.PublicKey,
-	arkadeScript []byte,
+func indexCheckpoints(arkPtx *psbt.Packet, checkpoints []*psbt.Packet) (map[string]*psbt.Packet, error) {
+	if arkPtx == nil || arkPtx.UnsignedTx == nil {
+		return nil, fmt.Errorf("missing ark transaction")
+	}
+	if len(checkpoints) != len(arkPtx.UnsignedTx.TxIn) {
+		return nil, fmt.Errorf("expected %d checkpoints, got %d", len(arkPtx.UnsignedTx.TxIn), len(checkpoints))
+	}
+
+	indexed := make(map[string]*psbt.Packet, len(checkpoints))
+	for i, checkpoint := range checkpoints {
+		if checkpoint == nil || checkpoint.UnsignedTx == nil {
+			return nil, fmt.Errorf("checkpoint %d is missing its transaction", i)
+		}
+		txid := checkpoint.UnsignedTx.TxID()
+		if _, exists := indexed[txid]; exists {
+			return nil, fmt.Errorf("duplicate checkpoint %s", txid)
+		}
+		indexed[txid] = checkpoint
+	}
+
+	used := make(map[string]struct{}, len(arkPtx.UnsignedTx.TxIn))
+	for inputIndex, input := range arkPtx.UnsignedTx.TxIn {
+		txid := input.PreviousOutPoint.Hash.String()
+		if _, ok := indexed[txid]; !ok {
+			return nil, fmt.Errorf("checkpoint not found for input %d", inputIndex)
+		}
+		if _, exists := used[txid]; exists {
+			return nil, fmt.Errorf("checkpoint %s is associated with multiple ark inputs", txid)
+		}
+		used[txid] = struct{}{}
+	}
+
+	return indexed, nil
+}
+
+func validateCheckpoint(
+	arkPtx *psbt.Packet, inputIndex int, checkpoint *psbt.Packet,
+	previousOutput *wire.TxOut, expectedLeaf txscript.TapLeaf,
 ) error {
-	if len(checkpointPtx.Inputs) == 0 || len(checkpointPtx.UnsignedTx.TxIn) == 0 {
-		return fmt.Errorf("checkpoint has no inputs")
+	if inputIndex < 0 || inputIndex >= len(arkPtx.Inputs) || inputIndex >= len(arkPtx.UnsignedTx.TxIn) {
+		return fmt.Errorf("ark input index out of range")
+	}
+	if checkpoint == nil || checkpoint.UnsignedTx == nil || len(checkpoint.Inputs) != 1 || len(checkpoint.UnsignedTx.TxIn) != 1 {
+		return fmt.Errorf("checkpoint must have exactly one input")
+	}
+	if len(checkpoint.UnsignedTx.TxOut) != 2 {
+		return fmt.Errorf("checkpoint must have one vtxo output and one anchor output")
 	}
 
-	// the checkpoint txid is already pinned to the outpoint, so its outputs are
-	// authenticated and the ark input witness utxo must agree with them
-	outpoint := arkPtx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
-	if err := reconcilePrevout(
-		inputIndex, checkpointPtx.UnsignedTx, outpoint.Index,
-		arkPtx.Inputs[inputIndex].WitnessUtxo,
-	); err != nil {
-		return fmt.Errorf("checkpoint output does not match ark input: %w", err)
+	arkOutpoint := arkPtx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
+	if arkOutpoint.Hash != checkpoint.UnsignedTx.TxHash() {
+		return fmt.Errorf("ark input does not spend checkpoint")
+	}
+	if arkOutpoint.Index != 0 {
+		return fmt.Errorf("ark input must spend checkpoint output 0")
+	}
+	if !equalTxOut(arkPtx.Inputs[inputIndex].WitnessUtxo, checkpoint.UnsignedTx.TxOut[arkOutpoint.Index]) {
+		return fmt.Errorf("checkpoint output does not match ark input witness utxo")
+	}
+	if !equalTxOut(checkpoint.UnsignedTx.TxOut[1], txutils.AnchorOutput()) {
+		return fmt.Errorf("checkpoint anchor output is invalid")
 	}
 
-	// checkpoint input 0 is signed with the ark input's script tweak, so the
-	// tweaked key must be a member of the checkpoint leaf closure
-	if _, err := arkade.ReadArkadeScript(
-		checkpointPtx, signerPubKey, arkade.EmulatorEntry{Vin: 0, Script: arkadeScript},
-	); err != nil {
-		return fmt.Errorf("checkpoint input 0 is not bound to the arkade script: %w", err)
+	if previousOutput == nil {
+		return fmt.Errorf("missing authenticated previous ark output")
+	}
+	if !equalTxOut(checkpoint.Inputs[0].WitnessUtxo, previousOutput) {
+		return fmt.Errorf("checkpoint input witness utxo does not match previous ark transaction")
+	}
+	if checkpoint.UnsignedTx.TxOut[0].Value != previousOutput.Value {
+		return fmt.Errorf("checkpoint vtxo output value does not match its input")
+	}
+
+	if err := validateTaprootLeaf(arkPtx.Inputs[inputIndex], expectedLeaf); err != nil {
+		return fmt.Errorf("ark input tapleaf: %w", err)
+	}
+	if err := validateTaprootLeaf(checkpoint.Inputs[0], expectedLeaf); err != nil {
+		return fmt.Errorf("checkpoint tapleaf: %w", err)
+	}
+
+	return nil
+}
+
+func validateTaprootLeaf(input psbt.PInput, expectedLeaf txscript.TapLeaf) error {
+	if input.WitnessUtxo == nil || !txscript.IsPayToTaproot(input.WitnessUtxo.PkScript) {
+		return fmt.Errorf("witness utxo is not taproot")
+	}
+	if len(input.TaprootLeafScript) == 0 || input.TaprootLeafScript[0] == nil {
+		return fmt.Errorf("missing taproot leaf script")
+	}
+
+	leaf := input.TaprootLeafScript[0]
+	controlBlock, err := txscript.ParseControlBlock(leaf.ControlBlock)
+	if err != nil {
+		return fmt.Errorf("invalid control block: %w", err)
+	}
+	if controlBlock.LeafVersion != leaf.LeafVersion {
+		return fmt.Errorf("control block leaf version does not match taproot leaf script")
+	}
+	if txscript.NewTapLeaf(leaf.LeafVersion, leaf.Script).TapHash() != expectedLeaf.TapHash() {
+		return fmt.Errorf("tapleaf does not match ark input")
+	}
+	if err := txscript.VerifyTaprootLeafCommitment(controlBlock, input.WitnessUtxo.PkScript[2:], leaf.Script); err != nil {
+		return fmt.Errorf("tapleaf is not committed by witness utxo: %w", err)
 	}
 
 	return nil
