@@ -108,6 +108,94 @@ func TestSubmitFinalizationValidatesForfeitOutputs(t *testing.T) {
 	})
 }
 
+func TestValidateForfeitOutputsInternals(t *testing.T) {
+	vtxoPrevout := &wire.TxOut{Value: 100_000, PkScript: []byte{0x51}}
+	connectorOutput := &wire.TxOut{Value: 450, PkScript: []byte{0x52}}
+
+	newForfeit := func() *psbt.Packet {
+		tx := wire.NewMsgTx(2)
+		tx.AddTxIn(&wire.TxIn{})
+		tx.AddTxIn(&wire.TxIn{})
+		tx.AddTxOut(&wire.TxOut{
+			Value:    vtxoPrevout.Value + connectorOutput.Value - txutils.ANCHOR_VALUE,
+			PkScript: []byte{0x53},
+		})
+		tx.AddTxOut(txutils.AnchorOutput())
+
+		forfeit, err := psbt.NewFromUnsignedTx(tx)
+		require.NoError(t, err)
+		forfeit.Inputs[0].WitnessUtxo = vtxoPrevout
+		forfeit.Inputs[1].WitnessUtxo = connectorOutput
+		return forfeit
+	}
+
+	t.Run("canonical forfeit is accepted", func(t *testing.T) {
+		require.NoError(t, validateForfeitOutputs(newForfeit(), 0, vtxoPrevout, connectorOutput))
+	})
+
+	t.Run("nil vtxo prevout is rejected", func(t *testing.T) {
+		err := validateForfeitOutputs(newForfeit(), 0, nil, connectorOutput)
+		require.ErrorContains(t, err, "missing vtxo prevout for input 0")
+	})
+
+	t.Run("missing vtxo witness utxo is rejected", func(t *testing.T) {
+		forfeit := newForfeit()
+		forfeit.Inputs[0].WitnessUtxo = nil
+
+		err := validateForfeitOutputs(forfeit, 0, vtxoPrevout, connectorOutput)
+		require.ErrorContains(t, err, "missing witness utxo for input 0")
+	})
+
+	t.Run("missing connector witness utxo is rejected", func(t *testing.T) {
+		forfeit := newForfeit()
+		forfeit.Inputs[1].WitnessUtxo = nil
+
+		err := validateForfeitOutputs(forfeit, 0, vtxoPrevout, connectorOutput)
+		require.ErrorContains(t, err, "missing witness utxo for input 1")
+	})
+}
+
+func TestLeafOutput(t *testing.T) {
+	connectorTx := wire.NewMsgTx(3)
+	connectorTx.AddTxIn(&wire.TxIn{})
+	connectorTx.AddTxOut(&wire.TxOut{Value: 450, PkScript: []byte{0x52}})
+	connectorTx.AddTxOut(txutils.AnchorOutput())
+
+	root, err := psbt.NewFromUnsignedTx(connectorTx)
+	require.NoError(t, err)
+
+	connectorTree := &tree.TxTree{Root: root}
+	txid := connectorTx.TxHash()
+
+	t.Run("nil tree", func(t *testing.T) {
+		require.Nil(t, leafOutput(nil, wire.OutPoint{Hash: txid, Index: 0}))
+	})
+
+	t.Run("outpoint not in the tree", func(t *testing.T) {
+		require.Nil(t, leafOutput(
+			connectorTree, wire.OutPoint{Hash: chainhash.Hash{0xff}, Index: 0},
+		))
+	})
+
+	t.Run("output index out of range", func(t *testing.T) {
+		require.Nil(t, leafOutput(connectorTree, wire.OutPoint{Hash: txid, Index: 5}))
+	})
+
+	t.Run("anchor output", func(t *testing.T) {
+		require.Nil(t, leafOutput(connectorTree, wire.OutPoint{Hash: txid, Index: 1}))
+	})
+
+	t.Run("non-leaf node", func(t *testing.T) {
+		parent := &tree.TxTree{Root: root, Children: map[uint32]*tree.TxTree{0: {}}}
+		require.Nil(t, leafOutput(parent, wire.OutPoint{Hash: txid, Index: 0}))
+	})
+
+	t.Run("leaf output is returned", func(t *testing.T) {
+		out := leafOutput(connectorTree, wire.OutPoint{Hash: txid, Index: 0})
+		require.Equal(t, connectorTx.TxOut[0], out)
+	})
+}
+
 // forfeitFixture holds a signer that already approved an intent proof for a
 // single vtxo, plus the connector tree that vtxo's forfeit must use.
 type forfeitFixture struct {
