@@ -14,6 +14,13 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// internalErrMsg is returned in place of an unexpected error. The detail is
+// logged server-side instead of being echoed back, since callers reaching these
+// endpoints are unauthenticated and the underlying errors can carry
+// implementation detail. Validation errors stay descriptive so that a
+// legitimate caller can fix its request.
+const internalErrMsg = "internal error"
+
 type handler struct {
 	version string
 	svc     application.Service
@@ -74,7 +81,7 @@ func (h *handler) SubmitTx(
 	approvedTx, err := h.svc.SubmitTx(ctx, offchainTx)
 	if err != nil {
 		log.WithError(err).Error("failed to process transaction")
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, status.Error(codes.Internal, internalErrMsg)
 	}
 
 	encodedArkTx, err := approvedTx.ArkTx.B64Encode()
@@ -114,12 +121,13 @@ func (h *handler) SubmitIntent(
 	signedIntentProof, err := h.svc.SubmitIntent(ctx, *intent)
 	if err != nil {
 		log.WithError(err).Error("failed to process intent")
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, status.Error(codes.Internal, internalErrMsg)
 	}
 
 	encodedProof, err := signedIntentProof.B64Encode()
 	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		log.WithError(err).Error("failed to encode intent proof")
+		return nil, status.Error(codes.Internal, internalErrMsg)
 	}
 
 	return &emulatorv1.SubmitIntentResponse{
@@ -188,7 +196,7 @@ func (h *handler) SubmitFinalization(
 	signedBatchFinalization, err := h.svc.SubmitFinalization(ctx, batchFinalization)
 	if err != nil {
 		log.WithError(err).Error("failed to process finalization")
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, status.Error(codes.Internal, internalErrMsg)
 	}
 
 	encodedForfeits := make([]string, 0, len(signedBatchFinalization.Forfeits))
@@ -231,12 +239,13 @@ func (h *handler) SubmitOnchainTx(
 	signed, err := h.svc.SubmitOnchainTx(ctx, application.OnchainTx{Tx: ptx})
 	if err != nil {
 		log.WithError(err).Error("failed to process onchain tx")
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, status.Error(codes.Internal, internalErrMsg)
 	}
 
 	encoded, err := signed.B64Encode()
 	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		log.WithError(err).Error("failed to encode onchain tx")
+		return nil, status.Error(codes.Internal, internalErrMsg)
 	}
 
 	return &emulatorv1.SubmitOnchainTxResponse{SignedTx: encoded}, nil

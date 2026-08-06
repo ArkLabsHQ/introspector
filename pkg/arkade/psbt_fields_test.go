@@ -62,6 +62,45 @@ func TestPrevoutTxField(t *testing.T) {
 	})
 }
 
+// TestPrevoutTxFieldRejectsOversizedValue proves the prevout tx coders bound the
+// blob they hand to Deserialize, so an attacker cannot drive unbounded parse
+// work and allocation before any other validation runs.
+func TestPrevoutTxFieldRejectsOversizedValue(t *testing.T) {
+	coders := map[string]struct {
+		keyData []byte
+		coder   txutils.ArkPsbtFieldCoder[wire.MsgTx]
+	}{
+		"prevarktx": {ArkFieldPrevArkTx, PrevArkTxField},
+		"prevouttx": {ArkFieldPrevoutTx, PrevoutTxField},
+	}
+
+	for name, c := range coders {
+		t.Run(name, func(t *testing.T) {
+			t.Run("oversized value is rejected", func(t *testing.T) {
+				unknown := &psbt.Unknown{
+					Key:   makeArkPsbtKey(c.keyData),
+					Value: make([]byte, MaxPrevoutTxLength+1),
+				}
+
+				_, err := c.coder.Decode(unknown)
+				require.ErrorContains(t, err, "max prevout tx length exceeded")
+			})
+
+			t.Run("value at the cap is still parsed", func(t *testing.T) {
+				prevTx := newTestPrevoutTx(3)
+
+				unknown, err := c.coder.Encode(*prevTx)
+				require.NoError(t, err)
+				require.LessOrEqual(t, len(unknown.Value), MaxPrevoutTxLength)
+
+				decoded, err := c.coder.Decode(unknown)
+				require.NoError(t, err)
+				require.Equal(t, prevTx.TxHash(), decoded.TxHash())
+			})
+		})
+	}
+}
+
 func newTestPSBT(t *testing.T, numInputs int) *psbt.Packet {
 	t.Helper()
 

@@ -75,6 +75,7 @@ type ecPair struct {
 var (
 	errECPointOffCurve   = errors.New("point not on curve")
 	errECG2NotInSubgroup = errors.New("G2 point not in r-subgroup")
+	errECPairingEmpty    = errors.New("pairing check requires at least one pair")
 )
 
 // popCurveID pops the top stack item and resolves it to a known curve.
@@ -242,6 +243,10 @@ func opcodeECPairing(op *opcode, _ []byte, vm *Engine) error {
 			"pair_count out of range")
 	}
 	count := countBI.Int64()
+	if count < 1 {
+		return scriptError(txscript.ErrInvalidStackOperation,
+			"pair_count must be at least 1")
+	}
 	if count > maxECPairingCount {
 		return scriptError(txscript.ErrInvalidStackOperation,
 			fmt.Sprintf("pair_count %d exceeds max %d", count, maxECPairingCount))
@@ -429,10 +434,15 @@ func bn254G1AffineCoords(p *gnarkbn254.G1Affine) (*big.Int, *big.Int) {
 
 // bn254PairingCheck returns whether the product of pairings is the identity
 // in GT. Validates G1 on-curve and G2 on-curve + in-subgroup before invoking
-// gnark's PairingCheck. An empty input set returns true to match EIP-197.
+// gnark's PairingCheck.
+//
+// An empty input set is rejected rather than treated as true. EIP-197 defines
+// the empty pairing product as the identity, but Arkade Script uses
+// OP_ECPAIRING to gate covenants on a real pairing-product check, so a
+// vacuous pass would let anyone satisfy such a gate by supplying no pairs.
 func bn254PairingCheck(pairs []ecPair) (bool, error) {
 	if len(pairs) == 0 {
-		return true, nil
+		return false, errECPairingEmpty
 	}
 	g1s := make([]gnarkbn254.G1Affine, len(pairs))
 	g2s := make([]gnarkbn254.G2Affine, len(pairs))

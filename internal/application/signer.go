@@ -28,8 +28,28 @@ func (s signer) signInput(ptx *psbt.Packet, inputIndex int, tweak []byte, prevou
 		return fmt.Errorf("not a taproot input, cannot sign")
 	}
 
+	// only the first leaf is ever signed, the others are ignored on purpose:
+	// arkd builds one leaf per input and the emulator has no way to pick between
+	// several of them
 	if len(input.TaprootLeafScript) == 0 || input.TaprootLeafScript[0] == nil {
 		return fmt.Errorf("no taproot leaf script, cannot sign")
+	}
+
+	// the leaf script is the requester's assertion until it is checked against
+	// the taproot output key committed in the prevout being spent
+	if err := arkade.VerifyTaprootLeafCommitment(
+		input.WitnessUtxo.PkScript, input.TaprootLeafScript[0],
+	); err != nil {
+		return fmt.Errorf("cannot sign input: %w", err)
+	}
+
+	// only sign digests committing to every input and output: NONE, SINGLE and
+	// ANYONECANPAY leave part of the transaction free to change after signing
+	if input.SighashType != txscript.SigHashDefault &&
+		input.SighashType != txscript.SigHashAll {
+		return fmt.Errorf(
+			"unsupported sighash type 0x%02x, cannot sign", byte(input.SighashType),
+		)
 	}
 
 	tapLeaf := txscript.NewBaseTapLeaf(input.TaprootLeafScript[0].Script)

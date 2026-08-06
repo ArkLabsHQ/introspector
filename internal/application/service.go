@@ -64,16 +64,34 @@ type Service interface {
 }
 
 type service struct {
-	signer               signer
-	deprecatedSigners    []signer
-	publicKey            string
-	deprecatedPublicKeys []string
-	arkdClient           client.TransportClient
-	arkdPubKey           *btcec.PublicKey
-	computeLimits        arkade.ComputeLimits
+	signer                   signer
+	deprecatedSigners        []signer
+	deprecatedKeysValidUntil *time.Time
+	publicKey                string
+	deprecatedPublicKeys     []string
+	arkdClient               client.TransportClient
+	arkdPubKey               *btcec.PublicKey
+	computeLimits            arkade.ComputeLimits
 }
 
-func New(ctx context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, arkdURL string, computeLimits arkade.ComputeLimits) (Service, error) {
+// activeDeprecatedSigners returns the deprecated signers usable for the
+// current request. A requester steers which key signs by choosing which
+// tweaked key appears in the tapscript it submits, so deprecated keys carry
+// indefinite signing authority unless bounded here. When
+// deprecatedKeysValidUntil is set and has passed, deprecated keys stop being
+// honored for both fresh signing (resolveArkadeScriptSigner) and
+// finalization (getSignedInputAssociations) alike: a VTXO whose covenant
+// still names a deprecated key must be spent before the cutover, or it can no
+// longer be finalized by this emulator. A nil cutoff (the default, unset via
+// config) preserves today's unbounded behavior.
+func (s *service) activeDeprecatedSigners() []signer {
+	if s.deprecatedKeysValidUntil != nil && time.Now().After(*s.deprecatedKeysValidUntil) {
+		return nil
+	}
+	return s.deprecatedSigners
+}
+
+func New(ctx context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, deprecatedKeysValidUntil *time.Time, arkdURL string, computeLimits arkade.ComputeLimits) (Service, error) {
 	if secretKey == nil {
 		return nil, fmt.Errorf("current signer key is required")
 	}
@@ -129,13 +147,14 @@ func New(ctx context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btc
 	}
 
 	return &service{
-		signer:               signer{secretKey},
-		deprecatedSigners:    deprecatedSigners,
-		publicKey:            publicKey,
-		deprecatedPublicKeys: deprecatedPublicKeys,
-		arkdClient:           arkdClient,
-		arkdPubKey:           arkdPubKey,
-		computeLimits:        computeLimits,
+		signer:                   signer{secretKey},
+		deprecatedSigners:        deprecatedSigners,
+		deprecatedKeysValidUntil: deprecatedKeysValidUntil,
+		publicKey:                publicKey,
+		deprecatedPublicKeys:     deprecatedPublicKeys,
+		arkdClient:               arkdClient,
+		arkdPubKey:               arkdPubKey,
+		computeLimits:            computeLimits,
 	}, nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"maps"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -25,9 +26,10 @@ func TestLoadConfig(t *testing.T) {
 	}
 
 	type validTest struct {
-		name               string
-		env                map[string]string
-		deprecatedKeyHexes []string
+		name                     string
+		env                      map[string]string
+		deprecatedKeyHexes       []string
+		wantDeprecatedValidUntil string
 	}
 
 	validTests := []validTest{
@@ -55,6 +57,21 @@ func TestLoadConfig(t *testing.T) {
 			}),
 			deprecatedKeyHexes: []string{testKeyHex(2), testKeyHex(3)},
 		},
+		{
+			name: "allows empty deprecated keys valid until",
+			env: envWith(map[string]string{
+				"EMULATOR_DEPRECATED_KEYS_VALID_UNTIL": "",
+			}),
+		},
+		{
+			name: "parses deprecated keys valid until",
+			env: envWith(map[string]string{
+				"EMULATOR_DEPRECATED_KEYS":             testKeyHex(2),
+				"EMULATOR_DEPRECATED_KEYS_VALID_UNTIL": "2027-01-01T00:00:00Z",
+			}),
+			deprecatedKeyHexes:       []string{testKeyHex(2)},
+			wantDeprecatedValidUntil: "2027-01-01T00:00:00Z",
+		},
 	}
 
 	t.Run("valid", func(t *testing.T) {
@@ -70,6 +87,12 @@ func TestLoadConfig(t *testing.T) {
 				require.Len(t, cfg.DeprecatedKeys, len(tt.deprecatedKeyHexes))
 				for i, expected := range tt.deprecatedKeyHexes {
 					require.Equal(t, expected, hex.EncodeToString(cfg.DeprecatedKeys[i].Serialize()))
+				}
+				if tt.wantDeprecatedValidUntil == "" {
+					require.Nil(t, cfg.DeprecatedKeysValidUntil)
+				} else {
+					require.NotNil(t, cfg.DeprecatedKeysValidUntil)
+					require.Equal(t, tt.wantDeprecatedValidUntil, cfg.DeprecatedKeysValidUntil.Format(time.RFC3339))
 				}
 			})
 		}
@@ -175,6 +198,13 @@ func TestLoadConfig(t *testing.T) {
 				"EMULATOR_DEPRECATED_KEYS": testKeyHex(2) + "," + testKeyHex(2),
 			}),
 			wantErr: "duplicate deprecated key",
+		},
+		{
+			name: "invalid deprecated keys valid until format",
+			env: envWith(map[string]string{
+				"EMULATOR_DEPRECATED_KEYS_VALID_UNTIL": "2027-01-01",
+			}),
+			wantErr: "invalid DEPRECATED_KEYS_VALID_UNTIL",
 		},
 		{
 			name: "leading comma in deprecated keys",

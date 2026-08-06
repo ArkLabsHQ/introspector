@@ -51,10 +51,12 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 
 	finalizerAcc := newFinalizerAccumulator(s.arkdPubKey)
 
+	budget := arkade.NewComputeBudgetWithLimits(arkade.AggregateComputeLimits(s.computeLimits))
+
 	var nSigned = 0
 	for _, entry := range packet {
 		inputIndex := int(entry.Vin)
-		matchedSigner, script, err := resolveArkadeScriptSigner(s.signer, s.deprecatedSigners, arkPtx, entry)
+		matchedSigner, script, err := resolveArkadeScriptSigner(s.signer, s.activeDeprecatedSigners(), arkPtx, entry)
 		if err != nil {
 			// there may be input/entry pairs attributed to a different signer
 			if errors.Is(err, arkade.ErrTweakedArkadePubKeyNotFound) && len(arkPtx.Inputs) > 1 {
@@ -69,6 +71,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 			prevOutFetcher,
 			inputIndex,
 			arkade.WithExactComputeLimits(s.computeLimits),
+			arkade.WithComputeBudget(budget),
 		); err != nil {
 			return nil, fmt.Errorf("failed to execute arkade script: %w vin=%d", err, inputIndex)
 		}
@@ -83,6 +86,12 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		checkpointPtx, ok := indexedCheckpoints[inputTxid]
 		if !ok {
 			return nil, fmt.Errorf("checkpoint not found for input %d", inputIndex)
+		}
+
+		if err := validateCheckpointBinding(
+			arkPtx, inputIndex, checkpointPtx, matchedSigner.secretKey.PubKey(), entry.Script,
+		); err != nil {
+			return nil, fmt.Errorf("invalid checkpoint for input %d: %w", inputIndex, err)
 		}
 
 		checkpointPrevoutFetcher, err := computePrevoutFetcher(checkpointPtx)
@@ -162,9 +171,20 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 	finalEncodedCheckpoints := make([]string, 0, len(tx.Checkpoints))
 	logCheckpoints := make(map[string]any)
 	for i, checkpoint := range signedCheckpointTxs {
+		arkdCheckpoint, ok := arkdCheckpointPSBTs[checkpoint.UnsignedTx.TxID()]
+		if !ok {
+			return nil, fmt.Errorf("arkd response is missing checkpoint %d", i)
+		}
+		if len(arkdCheckpoint.Inputs) == 0 {
+			return nil, fmt.Errorf("arkd checkpoint %d has no inputs", i)
+		}
+		if len(checkpoint.Inputs) == 0 {
+			return nil, fmt.Errorf("checkpoint %d has no inputs", i)
+		}
+
 		checkpoint.Inputs[0].TaprootScriptSpendSig = append(
 			checkpoint.Inputs[0].TaprootScriptSpendSig,
-			arkdCheckpointPSBTs[checkpoint.UnsignedTx.TxID()].Inputs[0].TaprootScriptSpendSig...,
+			arkdCheckpoint.Inputs[0].TaprootScriptSpendSig...,
 		)
 		encoded, err := checkpoint.B64Encode()
 		if err != nil {
@@ -190,6 +210,42 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		ArkTx:       finalArkPtx,
 		Checkpoints: signedCheckpointTxs,
 	}, nil
+}
+
+// validateCheckpointBinding asserts the checkpoint accompanying an ark input is
+// really the one that input spends. Matching the checkpoint txid alone leaves
+// the requester free to pair an ark input with a checkpoint whose leaf and
+// witness utxo describe something else entirely, and still have it signed.
+func validateCheckpointBinding(
+	arkPtx *psbt.Packet,
+	inputIndex int,
+	checkpointPtx *psbt.Packet,
+	signerPubKey *btcec.PublicKey,
+	arkadeScript []byte,
+) error {
+	if len(checkpointPtx.Inputs) == 0 || len(checkpointPtx.UnsignedTx.TxIn) == 0 {
+		return fmt.Errorf("checkpoint has no inputs")
+	}
+
+	// the checkpoint txid is already pinned to the outpoint, so its outputs are
+	// authenticated and the ark input witness utxo must agree with them
+	outpoint := arkPtx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
+	if err := reconcilePrevout(
+		inputIndex, checkpointPtx.UnsignedTx, outpoint.Index,
+		arkPtx.Inputs[inputIndex].WitnessUtxo,
+	); err != nil {
+		return fmt.Errorf("checkpoint output does not match ark input: %w", err)
+	}
+
+	// checkpoint input 0 is signed with the ark input's script tweak, so the
+	// tweaked key must be a member of the checkpoint leaf closure
+	if _, err := arkade.ReadArkadeScript(
+		checkpointPtx, signerPubKey, arkade.EmulatorEntry{Vin: 0, Script: arkadeScript},
+	); err != nil {
+		return fmt.Errorf("checkpoint input 0 is not bound to the arkade script: %w", err)
+	}
+
+	return nil
 }
 
 func (s *service) retryFinalize(ctx context.Context, txid string, checkpoints []string) error {
@@ -286,6 +342,8 @@ func verifyNonArkdCheckpointSignatures(checkpoints []*psbt.Packet, arkdPubKey *b
 
 type retryConfig struct {
 	MinAttempts  int
+	MaxAttempts  int
+	MaxElapsed   time.Duration
 	InitialDelay time.Duration
 	MaxDelay     time.Duration
 	Multiplier   float64
@@ -293,7 +351,11 @@ type retryConfig struct {
 }
 
 var finalizeRetryConfig = retryConfig{
-	MinAttempts:  10,
+	MinAttempts: 10,
+	// absolute caps, enforced even when the caller passes a context without
+	// deadline, so the signer can never be wedged by an unresponsive arkd
+	MaxAttempts:  15,
+	MaxElapsed:   2 * time.Minute,
 	InitialDelay: 1 * time.Second,
 	MaxDelay:     10 * time.Second,
 	Multiplier:   2.0,
@@ -304,6 +366,7 @@ func retryWithBackoff(
 	ctx context.Context, cfg retryConfig, op func() error, onErr func(attempt int, err error),
 ) error {
 	backoffDelay := cfg.InitialDelay
+	deadline := time.Now().Add(cfg.MaxElapsed)
 	for attempt := 1; ; attempt++ {
 		err := op()
 		if err == nil {
@@ -313,8 +376,18 @@ func retryWithBackoff(
 			onErr(attempt, err)
 		}
 
+		// absolute bounds, independent of the caller supplied context, so the
+		// loop always returns even when ctx has no deadline
+		if cfg.MaxAttempts > 0 && attempt >= cfg.MaxAttempts {
+			return fmt.Errorf("retry exhausted after attempt %d: %w", attempt, err)
+		}
+
 		delay := applyJitter(backoffDelay, cfg.Jitter)
 		backoffDelay = min(cfg.MaxDelay, backoffDelay*time.Duration(cfg.Multiplier))
+
+		if cfg.MaxElapsed > 0 && !time.Now().Add(delay).Before(deadline) {
+			return fmt.Errorf("retry budget exhausted after attempt %d: %w", attempt, err)
+		}
 
 		// try a minimum number of times before respecting ctx.Done
 		if attempt < cfg.MinAttempts {

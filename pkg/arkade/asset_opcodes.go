@@ -35,7 +35,10 @@ func opcodeInspectAssetGroupAssetId(op *opcode, data []byte, vm *Engine) error {
 		return scriptError(txscript.ErrInvalidStackOperation, "group index out of range")
 	}
 
-	id := resolveAssetID(vm.tx.TxHash(), int(k), vm.assetPacket[int(k)])
+	id, err := resolveAssetID(vm.tx.TxHash(), int(k), vm.assetPacket[int(k)])
+	if err != nil {
+		return err
+	}
 	vm.dstack.PushByteArray(id.Txid[:])
 	vm.dstack.PushInt(scriptNum(id.Index))
 	return nil
@@ -80,7 +83,10 @@ func opcodeInspectAssetGroupCtrl(op *opcode, data []byte, vm *Engine) error {
 		if k >= len(vm.assetPacket) {
 			return scriptError(txscript.ErrInvalidStackOperation, "control asset group index out of range")
 		}
-		id := resolveAssetID(vm.tx.TxHash(), k, vm.assetPacket[k])
+		id, err := resolveAssetID(vm.tx.TxHash(), k, vm.assetPacket[k])
+		if err != nil {
+			return err
+		}
 		vm.dstack.PushByteArray(id.Txid[:])
 		vm.dstack.PushInt(scriptNum(id.Index))
 		vm.dstack.PushInt(1)
@@ -106,7 +112,10 @@ func opcodeFindAssetGroupByAssetId(op *opcode, data []byte, vm *Engine) error {
 
 	txHash := vm.tx.TxHash()
 	for k, group := range vm.assetPacket {
-		id := resolveAssetID(txHash, k, group)
+		id, err := resolveAssetID(txHash, k, group)
+		if err != nil {
+			return err
+		}
 		if assetIDEqual(id, searchTxid, searchGidx) {
 			vm.dstack.PushInt(scriptNum(k))
 			vm.dstack.PushInt(1)
@@ -305,7 +314,7 @@ func opcodeInspectOutAssetCount(op *opcode, data []byte, vm *Engine) error {
 	count := 0
 	for _, group := range vm.assetPacket {
 		for _, output := range group.Outputs {
-			if uint32(output.Vout) == uint32(o) {
+			if assetIndexEqual(output.Vout, o) {
 				count++
 			}
 		}
@@ -340,9 +349,12 @@ func opcodeInspectOutAssetAt(op *opcode, data []byte, vm *Engine) error {
 	idx := 0
 
 	for k, group := range vm.assetPacket {
-		id := resolveAssetID(txHash, k, group)
+		id, err := resolveAssetID(txHash, k, group)
+		if err != nil {
+			return err
+		}
 		for _, output := range group.Outputs {
-			if uint32(output.Vout) == uint32(o) {
+			if assetIndexEqual(output.Vout, o) {
 				if scriptNum(idx) == t {
 					vm.dstack.PushByteArray(id.Txid[:])
 					vm.dstack.PushInt(scriptNum(id.Index))
@@ -381,13 +393,16 @@ func opcodeInspectOutAssetLookup(op *opcode, data []byte, vm *Engine) error {
 	txHash := vm.tx.TxHash()
 
 	for k, group := range vm.assetPacket {
-		id := resolveAssetID(txHash, k, group)
+		id, err := resolveAssetID(txHash, k, group)
+		if err != nil {
+			return err
+		}
 		if !assetIDEqual(id, searchTxid, searchGidx) {
 			continue
 		}
 
 		for _, output := range group.Outputs {
-			if uint32(output.Vout) == uint32(o) {
+			if assetIndexEqual(output.Vout, o) {
 				if err := vm.dstack.PushBigNum(BigNumFromUint64(output.Amount)); err != nil {
 					return err
 				}
@@ -418,7 +433,7 @@ func opcodeInspectInAssetCount(op *opcode, data []byte, vm *Engine) error {
 	count := 0
 	for _, group := range vm.assetPacket {
 		for _, input := range group.Inputs {
-			if uint32(input.Vin) == uint32(i) {
+			if assetIndexEqual(input.Vin, i) {
 				count++
 			}
 		}
@@ -455,9 +470,12 @@ func opcodeInspectInAssetAt(op *opcode, data []byte, vm *Engine) error {
 	idx := 0
 
 	for k, group := range vm.assetPacket {
-		id := resolveAssetID(txHash, k, group)
+		id, err := resolveAssetID(txHash, k, group)
+		if err != nil {
+			return err
+		}
 		for _, input := range group.Inputs {
-			if uint32(input.Vin) == uint32(i) {
+			if assetIndexEqual(input.Vin, i) {
 				if scriptNum(idx) == t {
 					vm.dstack.PushByteArray(id.Txid[:])
 					vm.dstack.PushInt(scriptNum(id.Index))
@@ -498,13 +516,16 @@ func opcodeInspectInAssetLookup(op *opcode, data []byte, vm *Engine) error {
 	txHash := vm.tx.TxHash()
 
 	for k, group := range vm.assetPacket {
-		id := resolveAssetID(txHash, k, group)
+		id, err := resolveAssetID(txHash, k, group)
+		if err != nil {
+			return err
+		}
 		if !assetIDEqual(id, searchTxid, searchGidx) {
 			continue
 		}
 
 		for _, input := range group.Inputs {
-			if uint32(input.Vin) == uint32(i) {
+			if assetIndexEqual(input.Vin, i) {
 				if err := vm.dstack.PushBigNum(BigNumFromUint64(input.Amount)); err != nil {
 					return err
 				}
@@ -580,13 +601,31 @@ const maxAssetGroupIndex = 65535
 // resolveAssetID returns the canonical AssetID of the packet group at position k.
 // A group with an explicit AssetId is returned as stored; a fresh issuance
 // derives its identity from the current transaction hash and its packet
-// position. Callers must pass a k already validated to lie in [0, len(packet)),
-// so casting it to the uint16 asset_gidx field is always safe.
-func resolveAssetID(txHash chainhash.Hash, k int, group asset.AssetGroup) asset.AssetId {
+// position. Callers must pass a k already validated to lie in [0, len(packet)).
+//
+// The two identity spaces must stay disjoint. Every fresh issuance of this
+// transaction resolves to (txHash, packet position), so an explicit AssetId
+// naming this same transaction would alias the fresh issuance sitting at that
+// position and answer lookups in its name; such a group is rejected. A packet
+// position beyond the uint16 asset_gidx field is rejected for the same reason,
+// as truncating it would alias the fresh issuance 65536 positions earlier.
+func resolveAssetID(txHash chainhash.Hash, k int, group asset.AssetGroup) (asset.AssetId, error) {
 	if group.AssetId != nil {
-		return *group.AssetId
+		if group.AssetId.Txid.IsEqual(&txHash) {
+			return asset.AssetId{}, scriptError(
+				txscript.ErrInvalidStackOperation,
+				"explicit asset id collides with fresh issuance identity",
+			)
+		}
+		return *group.AssetId, nil
 	}
-	return asset.AssetId{Txid: txHash, Index: uint16(k)}
+
+	if k > maxAssetGroupIndex {
+		return asset.AssetId{}, scriptError(
+			txscript.ErrInvalidStackOperation, "group position exceeds max asset_gidx",
+		)
+	}
+	return asset.AssetId{Txid: txHash, Index: uint16(k)}, nil
 }
 
 // popAssetID pops and validates a two-item canonical AssetID from the stack. The
@@ -616,6 +655,14 @@ func popAssetID(vm *Engine) (chainhash.Hash, uint16, error) {
 
 	copy(txid[:], txidBytes)
 	return txid, uint16(gidx), nil
+}
+
+// assetIndexEqual reports whether an asset entry's transaction index (a vin or a
+// vout) equals the supplied index. The comparison is made in the wide signed
+// scriptNum domain: narrowing either side to a fixed-width unsigned type would
+// let an index differing by a multiple of that width alias a real entry.
+func assetIndexEqual(index uint16, want scriptNum) bool {
+	return scriptNum(index) == want
 }
 
 // assetIDEqual reports whether a resolved canonical AssetID equals the supplied

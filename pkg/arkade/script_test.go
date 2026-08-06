@@ -436,6 +436,129 @@ func TestArkadeScriptExecuteCodeSepInUnexecutedBranchIgnored(t *testing.T) {
 		"false-branch signature must not verify against the unexecuted codesep position")
 }
 
+// TestArkadeScriptExecuteRejectsMissingPrevout locks in fail-closed behavior
+// when the prevout fetcher has no entry for the input being executed. Falling
+// back to an input amount of 0 fabricates a value that both the VM's
+// introspection opcodes and the arkade sighash commit to, so a covenant script
+// checking value conservation could be satisfied against a prevout that was
+// never supplied.
+func TestArkadeScriptExecuteRejectsMissingPrevout(t *testing.T) {
+	t.Parallel()
+
+	outpoint := wire.OutPoint{Hash: chainhash.Hash{0x08}, Index: 0}
+	tx := &wire.MsgTx{
+		Version: 2,
+		TxIn: []*wire.TxIn{{
+			PreviousOutPoint: outpoint,
+			Sequence:         0xffffffff,
+		}},
+		TxOut: []*wire.TxOut{{
+			Value:    900,
+			PkScript: []byte{OP_TRUE},
+		}},
+	}
+	// the fetcher knows nothing about the outpoint being spent
+	prevOutFetcher := newTestArkPrevOutFetcher(
+		txscript.NewMultiPrevOutFetcher(nil), nil, nil,
+	)
+
+	script := &ArkadeScript{
+		script:          []byte{OP_TRUE},
+		spendingTapLeaf: txscript.NewBaseTapLeaf([]byte{OP_TRUE}),
+	}
+
+	err := script.Execute(tx, prevOutFetcher, 0)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no prevout")
+}
+
+// TestVerifyTaprootLeafCommitment covers the binding between a taproot leaf
+// script advertised by the requester and the taproot output key committed in
+// the prevout script it claims to spend.
+func TestVerifyTaprootLeafCommitment(t *testing.T) {
+	t.Parallel()
+
+	committedLeaf := txscript.NewBaseTapLeaf([]byte{OP_TRUE})
+	siblingLeaf := txscript.NewBaseTapLeaf([]byte{OP_1, OP_1, OP_EQUAL})
+	tapTree := txscript.AssembleTaprootScriptTree(committedLeaf, siblingLeaf)
+
+	internalKey, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	rootHash := tapTree.RootNode.TapHash()
+	outputKey := txscript.ComputeTaprootOutputKey(internalKey.PubKey(), rootHash[:])
+	pkScript, err := txscript.PayToTaprootScript(outputKey)
+	require.NoError(t, err)
+
+	proof := tapTree.LeafMerkleProofs[0]
+	ctrlBlock := proof.ToControlBlock(internalKey.PubKey())
+	ctrlBlockBytes, err := ctrlBlock.ToBytes()
+	require.NoError(t, err)
+
+	t.Run("committed leaf", func(t *testing.T) {
+		require.NoError(t, VerifyTaprootLeafCommitment(pkScript, &psbt.TaprootTapLeafScript{
+			ControlBlock: ctrlBlockBytes,
+			Script:       committedLeaf.Script,
+			LeafVersion:  txscript.BaseLeafVersion,
+		}))
+	})
+
+	t.Run("leaf not in the committed tree", func(t *testing.T) {
+		// the requester swaps in a script of their choosing while keeping the
+		// control block of a leaf that really is in the tree
+		err := VerifyTaprootLeafCommitment(pkScript, &psbt.TaprootTapLeafScript{
+			ControlBlock: ctrlBlockBytes,
+			Script:       []byte{OP_DROP, OP_TRUE},
+			LeafVersion:  txscript.BaseLeafVersion,
+		})
+		require.ErrorContains(t, err, "not committed")
+	})
+
+	t.Run("control block of an unrelated tree", func(t *testing.T) {
+		otherKey, err := btcec.NewPrivateKey()
+		require.NoError(t, err)
+		otherTree := txscript.AssembleTaprootScriptTree(siblingLeaf)
+		otherProof := otherTree.LeafMerkleProofs[0]
+		otherCtrlBlock := otherProof.ToControlBlock(otherKey.PubKey())
+		otherCtrlBlockBytes, err := otherCtrlBlock.ToBytes()
+		require.NoError(t, err)
+
+		err = VerifyTaprootLeafCommitment(pkScript, &psbt.TaprootTapLeafScript{
+			ControlBlock: otherCtrlBlockBytes,
+			Script:       siblingLeaf.Script,
+			LeafVersion:  txscript.BaseLeafVersion,
+		})
+		require.ErrorContains(t, err, "not committed")
+	})
+
+	t.Run("leaf version mismatch", func(t *testing.T) {
+		err := VerifyTaprootLeafCommitment(pkScript, &psbt.TaprootTapLeafScript{
+			ControlBlock: ctrlBlockBytes,
+			Script:       committedLeaf.Script,
+			LeafVersion:  txscript.TapscriptLeafVersion(txscript.BaseLeafVersion + 2),
+		})
+		require.ErrorContains(t, err, "leaf version")
+	})
+
+	t.Run("not a taproot prevout", func(t *testing.T) {
+		err := VerifyTaprootLeafCommitment([]byte{OP_TRUE}, &psbt.TaprootTapLeafScript{
+			ControlBlock: ctrlBlockBytes,
+			Script:       committedLeaf.Script,
+			LeafVersion:  txscript.BaseLeafVersion,
+		})
+		require.ErrorContains(t, err, "not a taproot")
+	})
+
+	t.Run("malformed control block", func(t *testing.T) {
+		err := VerifyTaprootLeafCommitment(pkScript, &psbt.TaprootTapLeafScript{
+			ControlBlock: []byte{0xc0},
+			Script:       committedLeaf.Script,
+			LeafVersion:  txscript.BaseLeafVersion,
+		})
+		require.ErrorContains(t, err, "control block")
+	})
+}
+
 func TestReadArkadeScriptRejectsNonBaseSpendingTapLeafVersion(t *testing.T) {
 	t.Parallel()
 

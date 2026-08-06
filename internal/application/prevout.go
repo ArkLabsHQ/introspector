@@ -1,6 +1,7 @@
 package application
 
 import (
+	"bytes"
 	"fmt"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
@@ -30,6 +31,13 @@ func prevOutFetcherForIntent(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher, error)
 		if err := validatePrevoutTx(inputIndex, prevTx, outpoint.Hash); err != nil {
 			return nil, err
 		}
+
+		if err := reconcilePrevout(
+			inputIndex, prevTx, outpoint.Index, ptx.Inputs[inputIndex].WitnessUtxo,
+		); err != nil {
+			return nil, err
+		}
+
 		prevOutArkTxs[outpoint] = prevTx
 		prevOutIdxs[outpoint] = outpoint.Index
 	}
@@ -65,7 +73,7 @@ func prevOutFetcherForArkTx(
 		if !ok {
 			return nil, fmt.Errorf("checkpoint not found for input %d", inputIndex)
 		}
-		if len(checkpoint.UnsignedTx.TxIn) == 0 {
+		if len(checkpoint.UnsignedTx.TxIn) == 0 || len(checkpoint.Inputs) == 0 {
 			return nil, fmt.Errorf("checkpoint has no inputs for input %d", inputIndex)
 		}
 
@@ -74,11 +82,13 @@ func prevOutFetcherForArkTx(
 			return nil, err
 		}
 
-		if checkpointInputPrevout.Index >= uint32(len(prevTx.TxOut)) {
-			return nil, fmt.Errorf(
-				"prevout tx output index out of range for input %d: index=%d outputs=%d",
-				inputIndex, checkpointInputPrevout.Index, len(prevTx.TxOut),
-			)
+		// the prevout tx carried by an ark tx input funds the checkpoint input,
+		// not the ark input itself, so it must be reconciled against the
+		// checkpoint witness utxo
+		if err := reconcilePrevout(
+			inputIndex, prevTx, checkpointInputPrevout.Index, checkpoint.Inputs[0].WitnessUtxo,
+		); err != nil {
+			return nil, err
 		}
 
 		prevOutArkTxs[outpoint] = prevTx
@@ -109,11 +119,10 @@ func prevOutFetcherForOnchainTx(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher, err
 			return nil, err
 		}
 
-		if outpoint.Index >= uint32(len(prevTx.TxOut)) {
-			return nil, fmt.Errorf(
-				"prevout tx output index out of range for input %d: index=%d outputs=%d",
-				inputIndex, outpoint.Index, len(prevTx.TxOut),
-			)
+		if err := reconcilePrevout(
+			inputIndex, prevTx, outpoint.Index, ptx.Inputs[inputIndex].WitnessUtxo,
+		); err != nil {
+			return nil, err
 		}
 
 		prevOutTxs[outpoint] = prevTx
@@ -206,6 +215,44 @@ func validatePrevoutTx(inputIndex int, prevTx *wire.MsgTx, expectedHash chainhas
 		return fmt.Errorf(
 			"prevout tx hash mismatch for input %d: got %s, expected %s",
 			inputIndex, actualHash, expectedHash,
+		)
+	}
+
+	return nil
+}
+
+// reconcilePrevout asserts the witness utxo asserted by the requester matches
+// exactly the output it claims to spend on the verified prevout tx.
+// The prevout tx only proves it hashes to the spent outpoint, it says nothing
+// about the witness utxo: without this check a requester can pair a
+// self-consistent prevout tx with a witness utxo declaring any amount and
+// script, which is what the VM introspects and what the signature commits to.
+func reconcilePrevout(
+	inputIndex int, prevTx *wire.MsgTx, outputIndex uint32, witnessUtxo *wire.TxOut,
+) error {
+	if witnessUtxo == nil {
+		return fmt.Errorf("witness utxo is nil for input %d", inputIndex)
+	}
+
+	if outputIndex >= uint32(len(prevTx.TxOut)) {
+		return fmt.Errorf(
+			"prevout tx output index out of range for input %d: index=%d outputs=%d",
+			inputIndex, outputIndex, len(prevTx.TxOut),
+		)
+	}
+
+	prevOut := prevTx.TxOut[outputIndex]
+	if prevOut.Value != witnessUtxo.Value {
+		return fmt.Errorf(
+			"prevout tx value mismatch for input %d: got %d, expected %d",
+			inputIndex, witnessUtxo.Value, prevOut.Value,
+		)
+	}
+
+	if !bytes.Equal(prevOut.PkScript, witnessUtxo.PkScript) {
+		return fmt.Errorf(
+			"prevout tx script mismatch for input %d: got %x, expected %x",
+			inputIndex, witnessUtxo.PkScript, prevOut.PkScript,
 		)
 	}
 

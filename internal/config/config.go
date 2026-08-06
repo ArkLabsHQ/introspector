@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/arkade-os/emulator/internal/application"
 	"github.com/arkade-os/emulator/pkg/arkade"
@@ -15,12 +16,13 @@ import (
 )
 
 const (
-	SecretKey      = "SECRET_KEY"
-	DeprecatedKeys = "DEPRECATED_KEYS"
-	Port           = "PORT"
-	LogLevel       = "LOG_LEVEL"
-	ArkdURL        = "ARKD_URL"
-	ComputeLimits  = "COMPUTE_LIMITS"
+	SecretKey                = "SECRET_KEY"
+	DeprecatedKeys           = "DEPRECATED_KEYS"
+	DeprecatedKeysValidUntil = "DEPRECATED_KEYS_VALID_UNTIL"
+	Port                     = "PORT"
+	LogLevel                 = "LOG_LEVEL"
+	ArkdURL                  = "ARKD_URL"
+	ComputeLimits            = "COMPUTE_LIMITS"
 )
 
 var (
@@ -29,11 +31,12 @@ var (
 )
 
 type Config struct {
-	CurrentKey     *btcec.PrivateKey
-	DeprecatedKeys []*btcec.PrivateKey
-	Port           uint32
-	ArkdURL        string
-	ComputeLimits  arkade.ComputeLimits
+	CurrentKey               *btcec.PrivateKey
+	DeprecatedKeys           []*btcec.PrivateKey
+	DeprecatedKeysValidUntil *time.Time
+	Port                     uint32
+	ArkdURL                  string
+	ComputeLimits            arkade.ComputeLimits
 }
 
 func LoadConfig() (*Config, error) {
@@ -76,12 +79,22 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
+	var deprecatedKeysValidUntil *time.Time
+	if raw := viper.GetString(DeprecatedKeysValidUntil); raw != "" {
+		t, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid %s, want RFC3339 timestamp: %w", DeprecatedKeysValidUntil, err)
+		}
+		deprecatedKeysValidUntil = &t
+	}
+
 	cfg := &Config{
-		CurrentKey:     currentKey,
-		DeprecatedKeys: deprecatedKeys,
-		Port:           viper.GetUint32(Port),
-		ArkdURL:        viper.GetString(ArkdURL),
-		ComputeLimits:  computeLimits,
+		CurrentKey:               currentKey,
+		DeprecatedKeys:           deprecatedKeys,
+		DeprecatedKeysValidUntil: deprecatedKeysValidUntil,
+		Port:                     viper.GetUint32(Port),
+		ArkdURL:                  viper.GetString(ArkdURL),
+		ComputeLimits:            computeLimits,
 	}
 	if cfg.ArkdURL == "" {
 		return nil, fmt.Errorf("missing arkd url")
@@ -159,5 +172,5 @@ func parsePrivateKey(keyHex, name string) (*btcec.PrivateKey, error) {
 }
 
 func (c *Config) AppService(ctx context.Context) (application.Service, error) {
-	return application.New(ctx, c.CurrentKey, c.DeprecatedKeys, c.ArkdURL, c.ComputeLimits)
+	return application.New(ctx, c.CurrentKey, c.DeprecatedKeys, c.DeprecatedKeysValidUntil, c.ArkdURL, c.ComputeLimits)
 }

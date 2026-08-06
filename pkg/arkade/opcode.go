@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"crypto/sha256"
+	"encoding"
 	"encoding/gob"
 	"encoding/hex"
 	"errors"
@@ -2034,7 +2035,7 @@ func opcodeInspectInputValue(op *opcode, data []byte, vm *Engine) error {
 
 func pushSatoshiValue(value int64, vm *Engine) error {
 	if value < 0 || value > btcutil.MaxSatoshi {
-		return scriptError(txscript.ErrInvalidIndex, "value out of range")
+		return scriptError(txscript.ErrInvalidStackOperation, "value out of range")
 	}
 	return vm.dstack.PushBigNum(BigNumFromUint64(uint64(value)))
 }
@@ -2696,6 +2697,46 @@ func opcodeTweakVerify(op *opcode, data []byte, vm *Engine) error {
 	return nil
 }
 
+// A serialized SHA256 context is the gob encoding of a hash state: a framing
+// prefix - the type descriptor plus the length of the marshaled state - followed
+// by the marshaled state itself. Both parts are a fixed size, so the framing is
+// identical for every context the VM emits.
+//
+// The gob decoder sizes its allocations from length prefixes carried in its own
+// input, so a handful of stack bytes can drive it into megabytes of allocation
+// before it fails. Requiring the exact framing we emit means every length the
+// decoder reads is one we produced. It also pins the encoding of a given state
+// to a single byte string.
+var sha256StatePrefix, sha256StateLen = sha256StateFraming()
+
+func sha256StateFraming() ([]byte, int) {
+	var state bytes.Buffer
+	if err := gob.NewEncoder(&state).Encode(sha256.New()); err != nil {
+		panic(fmt.Sprintf("failed to encode SHA256 state: %v", err))
+	}
+
+	marshaled, err := sha256.New().(encoding.BinaryMarshaler).MarshalBinary()
+	if err != nil {
+		panic(fmt.Sprintf("failed to marshal SHA256 state: %v", err))
+	}
+
+	encoded := state.Bytes()
+	return append([]byte(nil), encoded[:len(encoded)-len(marshaled)]...), len(encoded)
+}
+
+// decodeSha256State loads a serialized SHA256 context popped off the stack.
+func decodeSha256State(state []byte) (hash.Hash, error) {
+	if len(state) != sha256StateLen || !bytes.HasPrefix(state, sha256StatePrefix) {
+		return nil, scriptError(txscript.ErrInvalidStackOperation, "invalid hash state")
+	}
+
+	h := sha256.New()
+	if err := gob.NewDecoder(bytes.NewReader(state)).Decode(h); err != nil {
+		return nil, scriptError(txscript.ErrInvalidStackOperation, "failed to load hash state")
+	}
+	return h, nil
+}
+
 // opcodeSha256Initialize pops a bytestring and pushes a SHA256 context created by adding
 // the bytestring to the initial SHA256 context.
 func opcodeSha256Initialize(op *opcode, _ []byte, vm *Engine) error {
@@ -2730,9 +2771,9 @@ func opcodeSha256Update(op *opcode, _ []byte, vm *Engine) error {
 		return err
 	}
 
-	h := sha256.New()
-	if err := gob.NewDecoder(bytes.NewReader(state)).Decode(h); err != nil {
-		return scriptError(txscript.ErrInvalidStackOperation, "failed to load hash state")
+	h, err := decodeSha256State(state)
+	if err != nil {
+		return err
 	}
 
 	if _, err := h.Write(data); err != nil {
@@ -2760,9 +2801,9 @@ func opcodeSha256Finalize(op *opcode, _ []byte, vm *Engine) error {
 		return err
 	}
 
-	h := sha256.New()
-	if err := gob.NewDecoder(bytes.NewReader(state)).Decode(h); err != nil {
-		return scriptError(txscript.ErrInvalidStackOperation, "failed to load hash state")
+	h, err := decodeSha256State(state)
+	if err != nil {
+		return err
 	}
 	if _, err := h.Write(data); err != nil {
 		return scriptError(txscript.ErrInvalidStackOperation, "failed to write data to SHA256")
