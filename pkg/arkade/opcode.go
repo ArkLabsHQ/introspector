@@ -2035,7 +2035,7 @@ func opcodeInspectInputValue(op *opcode, data []byte, vm *Engine) error {
 
 func pushSatoshiValue(value int64, vm *Engine) error {
 	if value < 0 || value > btcutil.MaxSatoshi {
-		return scriptError(txscript.ErrInvalidIndex, "value out of range")
+		return scriptError(txscript.ErrInvalidStackOperation, "value out of range")
 	}
 	return vm.dstack.PushBigNum(BigNumFromUint64(uint64(value)))
 }
