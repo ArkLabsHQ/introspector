@@ -351,3 +351,73 @@ func newResolverPacketForEntries(t *testing.T, entries []resolverEntrySigner) *p
 
 	return ptx
 }
+
+func TestSignInputRejectsUnsafeSighashTypes(t *testing.T) {
+	key := newResolverPrivateKey(t)
+	closure := arkscript.MultisigClosure{PubKeys: []*btcec.PublicKey{
+		arkade.ComputeArkadeScriptPublicKey(key.PubKey(), nil),
+	}}
+	tapscript, err := closure.Script()
+	require.NoError(t, err)
+
+	leaf := txscript.NewBaseTapLeaf(tapscript)
+	tapTree := txscript.AssembleTaprootScriptTree(leaf)
+	root := tapTree.RootNode.TapHash()
+	outputKey := txscript.ComputeTaprootOutputKey(key.PubKey(), root[:])
+	pkScript, err := txscript.PayToTaprootScript(outputKey)
+	require.NoError(t, err)
+
+	prevout := &wire.TxOut{Value: 1000, PkScript: pkScript}
+	prevoutFetcher := txscript.NewCannedPrevOutputFetcher(prevout.PkScript, prevout.Value)
+
+	newPacket := func(t *testing.T, sighashType txscript.SigHashType) *psbt.Packet {
+		t.Helper()
+
+		tx := wire.NewMsgTx(2)
+		tx.AddTxIn(&wire.TxIn{})
+		tx.AddTxOut(&wire.TxOut{Value: 900, PkScript: pkScript})
+		ptx, err := psbt.NewFromUnsignedTx(tx)
+		require.NoError(t, err)
+
+		ptx.Inputs[0].WitnessUtxo = prevout
+		ptx.Inputs[0].SighashType = sighashType
+		ptx.Inputs[0].TaprootLeafScript = []*psbt.TaprootTapLeafScript{{
+			Script:      tapscript,
+			LeafVersion: txscript.BaseLeafVersion,
+		}}
+		return ptx
+	}
+
+	tests := []struct {
+		name        string
+		sighashType txscript.SigHashType
+		accepted    bool
+	}{
+		{name: "default", sighashType: txscript.SigHashDefault, accepted: true},
+		{name: "all", sighashType: txscript.SigHashAll, accepted: true},
+		{name: "none", sighashType: txscript.SigHashNone},
+		{name: "single", sighashType: txscript.SigHashSingle},
+		{name: "anyonecanpay", sighashType: txscript.SigHashAnyOneCanPay},
+		{name: "all anyonecanpay", sighashType: txscript.SigHashAll | txscript.SigHashAnyOneCanPay},
+		{name: "none anyonecanpay", sighashType: txscript.SigHashNone | txscript.SigHashAnyOneCanPay},
+		{name: "single anyonecanpay", sighashType: txscript.SigHashSingle | txscript.SigHashAnyOneCanPay},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ptx := newPacket(t, tc.sighashType)
+
+			err := signer{key}.signInput(ptx, 0, nil, prevoutFetcher)
+
+			if tc.accepted {
+				require.NoError(t, err)
+				require.Len(t, ptx.Inputs[0].TaprootScriptSpendSig, 1)
+				require.Equal(t, tc.sighashType, ptx.Inputs[0].TaprootScriptSpendSig[0].SigHash)
+				return
+			}
+
+			require.ErrorContains(t, err, "unsupported sighash type")
+			require.Empty(t, ptx.Inputs[0].TaprootScriptSpendSig)
+		})
+	}
+}
