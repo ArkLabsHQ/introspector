@@ -58,10 +58,6 @@ type delegateBatchEventsHandler struct {
 
 	batchExpiry  arklib.RelativeLocktime
 	cacheBatchId string
-
-	// OverrideCommitmentTx, when set, replaces the commitment tx from the
-	// batch finalization event in the SubmitFinalization call.
-	OverrideCommitmentTx string
 }
 
 func (h *delegateBatchEventsHandler) OnBatchStarted(
@@ -219,13 +215,8 @@ func (h *delegateBatchEventsHandler) OnBatchFinalization(
 		return err
 	}
 
-	commitmentTx := event.Tx
-	if h.OverrideCommitmentTx != "" {
-		commitmentTx = h.OverrideCommitmentTx
-	}
-
 	signedForfeits, signedCommitmentTx, err := h.emulatorClient.SubmitFinalization(
-		ctx, h.intent, forfeits, flatConnectorTree, commitmentTx,
+		ctx, h.intent, forfeits, flatConnectorTree, event.Tx,
 	)
 	if err != nil {
 		return err
@@ -429,21 +420,18 @@ func (h *boardingBatchEventsHandler) OnBatchFinalization(
 		}
 	}
 
-	commitmentTx := h.OverrideCommitmentTx
-	if commitmentTx == "" {
-		b64, err := commitmentPtx.B64Encode()
-		if err != nil {
-			return err
-		}
-
-		commitmentTx, err = h.wallet.SignTransaction(ctx, h.explorer, b64)
-		if err != nil {
-			return err
-		}
+	b64, err := commitmentPtx.B64Encode()
+	if err != nil {
+		return err
 	}
 
-	_, signedCommitmentTx, err := h.emulatorClient.SubmitFinalization(
-		ctx, h.intent, []string{}, nil, commitmentTx,
+	signedCommitmentTx, err := h.wallet.SignTransaction(ctx, h.explorer, b64)
+	if err != nil {
+		return err
+	}
+
+	_, signedCommitmentTx, err = h.emulatorClient.SubmitFinalization(
+		ctx, h.intent, []string{}, nil, signedCommitmentTx,
 	)
 	if err != nil {
 		return err
