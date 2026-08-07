@@ -1,6 +1,7 @@
 package application
 
 import (
+	"context"
 	"testing"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
@@ -9,6 +10,7 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/arkade-os/emulator/pkg/arkade"
+	"github.com/arkade-os/go-sdk/indexer"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil/psbt"
@@ -368,7 +370,7 @@ func (f *forfeitFixture) submit(
 ) (*SignedBatchFinalization, error) {
 	t.Helper()
 
-	svc := &service{signer: signer{f.signerKey}}
+	svc := &service{signer: signer{f.signerKey}, indexerClient: &mockIndexerClient{}}
 	return svc.SubmitFinalization(t.Context(), BatchFinalization{
 		Intent:        f.intent,
 		Forfeits:      forfeits,
@@ -385,4 +387,14 @@ func (f *forfeitFixture) randomP2TRScript(t *testing.T) []byte {
 	pkScript, err := arkscript.P2TRScript(key.PubKey())
 	require.NoError(t, err)
 	return pkScript
+}
+
+// mockIndexerClient confirms every commitment tx; any other call panics on
+// the nil embedded interface.
+type mockIndexerClient struct{ indexer.Indexer }
+
+func (m *mockIndexerClient) GetCommitmentTx(
+	context.Context, string,
+) (*indexer.CommitmentTx, error) {
+	return &indexer.CommitmentTx{}, nil
 }
