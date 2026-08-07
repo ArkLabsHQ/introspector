@@ -127,7 +127,7 @@ func TestPayToTwoOutputs(t *testing.T) {
 	// --- Emulator client ---
 	conn, err := grpc.NewClient("localhost:7073", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
-	emulatorClient := emulatorclient.NewGRPCClient(conn)
+	emulatorClient := &prevArkTxEmulatorClient{TransportClient: emulatorclient.NewGRPCClient(conn)}
 
 	emulatorInfo, err := emulatorClient.GetInfo(ctx)
 	require.NoError(t, err)

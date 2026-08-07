@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -791,7 +792,116 @@ func setupEmulatorClient(t *testing.T, ctx context.Context) (emulatorclient.Tran
 	publicKey, err := btcec.ParsePubKey(publicKeyBytes)
 	require.NoError(t, err)
 
-	return emulatorClient, publicKey, conn
+	return &prevArkTxEmulatorClient{TransportClient: emulatorClient}, publicKey, conn
+}
+
+var integrationPrevArkTxs sync.Map
+var skipPrevArkTxFields sync.Map
+
+type prevArkTxEmulatorClient struct {
+	emulatorclient.TransportClient
+}
+
+func (c *prevArkTxEmulatorClient) SubmitTx(
+	ctx context.Context, encodedArkTx string, encodedCheckpoints []string,
+) (string, []string, error) {
+	arkPtx, err := psbt.NewFromRawBytes(strings.NewReader(encodedArkTx), true)
+	if err != nil {
+		return "", nil, err
+	}
+	if _, skip := skipPrevArkTxFields.Load(arkPtx.UnsignedTx.TxID()); !skip {
+		checkpoints := make(map[string]*psbt.Packet, len(encodedCheckpoints))
+		for _, encoded := range encodedCheckpoints {
+			checkpoint, err := psbt.NewFromRawBytes(strings.NewReader(encoded), true)
+			if err != nil {
+				return "", nil, err
+			}
+			checkpoints[checkpoint.UnsignedTx.TxID()] = checkpoint
+		}
+		for inputIndex, input := range arkPtx.UnsignedTx.TxIn {
+			fields, err := txutils.GetArkPsbtFields(arkPtx, inputIndex, arkade.PrevArkTxField)
+			if err != nil {
+				return "", nil, err
+			}
+			if len(fields) > 0 {
+				continue
+			}
+			checkpoint := checkpoints[input.PreviousOutPoint.Hash.String()]
+			if checkpoint == nil || len(checkpoint.UnsignedTx.TxIn) != 1 {
+				continue
+			}
+			parentTxid := checkpoint.UnsignedTx.TxIn[0].PreviousOutPoint.Hash.String()
+			parent, ok := integrationPrevArkTxs.Load(parentTxid)
+			if !ok {
+				return "", nil, fmt.Errorf("previous ark transaction %s not retained by integration test", parentTxid)
+			}
+			if err := txutils.SetArkPsbtField(arkPtx, inputIndex, arkade.PrevArkTxField, *parent.(*wire.MsgTx)); err != nil {
+				return "", nil, err
+			}
+		}
+		encodedArkTx, err = arkPtx.B64Encode()
+		if err != nil {
+			return "", nil, err
+		}
+	}
+
+	signedArkTx, signedCheckpoints, err := c.TransportClient.SubmitTx(ctx, encodedArkTx, encodedCheckpoints)
+	if err == nil {
+		integrationPrevArkTxs.Store(arkPtx.UnsignedTx.TxID(), arkPtx.UnsignedTx.Copy())
+	}
+	return signedArkTx, signedCheckpoints, err
+}
+
+func (c *prevArkTxEmulatorClient) SubmitIntent(
+	ctx context.Context, intent emulatorclient.Intent,
+) (string, error) {
+	ptx, err := psbt.NewFromRawBytes(strings.NewReader(intent.Proof), true)
+	if err != nil {
+		return "", err
+	}
+	for inputIndex := 1; inputIndex < len(ptx.UnsignedTx.TxIn); inputIndex++ {
+		input := ptx.UnsignedTx.TxIn[inputIndex]
+		fields, err := txutils.GetArkPsbtFields(ptx, inputIndex, arkade.PrevArkTxField)
+		if err != nil {
+			return "", err
+		}
+		if len(fields) > 0 {
+			continue
+		}
+		parent, ok := integrationPrevArkTxs.Load(input.PreviousOutPoint.Hash.String())
+		if !ok {
+			return "", fmt.Errorf("previous ark transaction %s not retained by integration test", input.PreviousOutPoint.Hash)
+		}
+		if err := txutils.SetArkPsbtField(ptx, inputIndex, arkade.PrevArkTxField, *parent.(*wire.MsgTx)); err != nil {
+			return "", err
+		}
+	}
+	intent.Proof, err = ptx.B64Encode()
+	if err != nil {
+		return "", err
+	}
+	return c.TransportClient.SubmitIntent(ctx, intent)
+}
+
+type recordingIndexer struct {
+	indexer.Indexer
+}
+
+func (i *recordingIndexer) GetVirtualTxs(
+	ctx context.Context, txids []string, opts ...indexer.RequestOption,
+) (*indexer.VirtualTxsResponse, error) {
+	response, err := i.Indexer.GetVirtualTxs(ctx, txids, opts...)
+	if err != nil {
+		return nil, err
+	}
+	for _, encoded := range response.Txs {
+		ptx, err := psbt.NewFromRawBytes(strings.NewReader(encoded), true)
+		if err != nil {
+			return nil, err
+		}
+		integrationPrevArkTxs.Store(ptx.UnsignedTx.TxID(), ptx.UnsignedTx.Copy())
+	}
+	return response, nil
 }
 
 // createVtxoScriptWithArkadeScript creates a vtxo script with a multisig closure containing the arkade script pubkey
@@ -1066,6 +1176,7 @@ func vtxoInputFromScriptOutput(
 	tapscript []byte,
 ) offchain.VtxoInput {
 	t.Helper()
+	integrationPrevArkTxs.Store(prevTx.TxID(), prevTx.Copy())
 
 	tapKey, tapTree, err := vtxoScript.TapTree()
 	require.NoError(t, err)
