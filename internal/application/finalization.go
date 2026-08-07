@@ -36,7 +36,9 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 	commitmentTxid := finalization.CommitmentTx.UnsignedTx.TxID()
 	err := retryWithBackoff(ctx, commitmentTxRetryConfig,
 		func() error {
-			_, err := s.indexerClient.GetCommitmentTx(ctx, commitmentTxid)
+			_, err := s.indexerClient.GetCommitmentTx(
+				withClientVersion(ctx, s.clientVersion), commitmentTxid,
+			)
 			return err
 		}, nil,
 	)
