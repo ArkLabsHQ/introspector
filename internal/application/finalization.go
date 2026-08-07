@@ -10,6 +10,7 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/arkade-os/emulator/pkg/arkade"
+	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/txscript"
@@ -77,6 +78,9 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 			if !ok {
 				continue
 			}
+			if err := association.validateFinalizationInput(forfeit, inputIndex, s.arkdPubKey); err != nil {
+				return nil, err
+			}
 
 			// validate connector is part of the connector tree
 			connectorIndex := inputIndex ^ 1 // if inputIndex is 0, connectorIndex is 1, and vice versa
@@ -85,12 +89,11 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 			if connectorOutput == nil {
 				return nil, fmt.Errorf("connector %s is not part of the tree", connector)
 			}
-
 			// the input side alone says nothing about where the forfeit sends the
 			// vtxo: without this the requester can reuse a vtxo input we signed in
 			// the past and redirect its value anywhere
 			if err := validateForfeitOutputs(
-				forfeit, inputIndex, association.prevout, connectorOutput,
+				forfeit, inputIndex, &association.prevout, connectorOutput,
 			); err != nil {
 				return nil, fmt.Errorf(
 					"malformed forfeit %s: %w", forfeit.UnsignedTx.TxID(), err,
@@ -133,6 +136,11 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 		if !ok {
 			continue
 		}
+		if err := association.validateFinalizationInput(
+			finalization.CommitmentTx, inputIndex, s.arkdPubKey,
+		); err != nil {
+			return nil, err
+		}
 
 		if err := association.signer.signInput(
 			finalization.CommitmentTx, inputIndex, association.script.Hash(), prevoutFetcher,
@@ -150,12 +158,37 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 }
 
 type signedInputAssociation struct {
-	script *arkade.ArkadeScript
-	signer signer
-	// prevout is the vtxo output the intent proof spends. The tapscript
-	// signature verified below commits to it, so it is the trusted description
-	// of the vtxo a forfeit is allowed to spend.
-	prevout *wire.TxOut
+	script  *arkade.ArkadeScript
+	signer  signer
+	prevout wire.TxOut
+}
+
+func (a signedInputAssociation) validateFinalizationInput(
+	ptx *psbt.Packet, inputIndex int, arkdPubKey *btcec.PublicKey,
+) error {
+	if !containsPubKey(a.script.ClosurePubKeys(), arkdPubKey) {
+		return fmt.Errorf("input %d: finalization leaf does not require the arkd signer", inputIndex)
+	}
+	if len(ptx.Inputs) <= inputIndex {
+		return fmt.Errorf("input %d: PSBT input index out of range", inputIndex)
+	}
+
+	input := ptx.Inputs[inputIndex]
+	if input.WitnessUtxo == nil || input.WitnessUtxo.Value != a.prevout.Value ||
+		!bytes.Equal(input.WitnessUtxo.PkScript, a.prevout.PkScript) {
+		return fmt.Errorf("input %d: witness UTXO does not match intent proof", inputIndex)
+	}
+	if len(input.TaprootLeafScript) == 0 || input.TaprootLeafScript[0] == nil {
+		return fmt.Errorf("input %d: missing taproot leaf script", inputIndex)
+	}
+
+	tapLeaf := input.TaprootLeafScript[0]
+	if txscript.NewTapLeaf(tapLeaf.LeafVersion, tapLeaf.Script).TapHash() !=
+		a.script.TapLeaf().TapHash() {
+		return fmt.Errorf("input %d: taproot leaf script does not match intent proof", inputIndex)
+	}
+
+	return nil
 }
 
 // getSignedInputAssociations iterates over tapscript sigs to find arkade script inputs with valid signature.
@@ -239,9 +272,12 @@ func getSignedInputAssociations(
 				}
 
 				signedInputs[ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint] = signedInputAssociation{
-					script:  script,
-					signer:  candidate,
-					prevout: input.WitnessUtxo,
+					script: script,
+					signer: candidate,
+					prevout: wire.TxOut{
+						Value:    input.WitnessUtxo.Value,
+						PkScript: append([]byte(nil), input.WitnessUtxo.PkScript...),
+					},
 				}
 				break
 			}
@@ -344,7 +380,6 @@ func leafOutput(tree *tree.TxTree, outpoint wire.OutPoint) *wire.TxOut {
 
 	output := node.Root.UnsignedTx.TxOut[outpoint.Index]
 
-	// nil if the output is anchor
 	if bytes.Equal(output.PkScript, txutils.ANCHOR_PKSCRIPT) {
 		return nil
 	}
