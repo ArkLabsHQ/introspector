@@ -20,6 +20,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
+	secp "github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"github.com/stretchr/testify/require"
 )
 
@@ -5614,4 +5615,76 @@ func TestOpcodeModexpSmoke(t *testing.T) {
 	require.Equal(t, "OP_MODEXP", opcodeArray[OP_MODEXP].name)
 	require.Equal(t, 1, opcodeArray[OP_MODEXP].length)
 	require.NotNil(t, opcodeArray[OP_MODEXP].opfunc)
+}
+
+const (
+	// secp256k1 group order minus one, the tweak that cancels the generator point.
+	orderMinusOneHex = "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140"
+	// compressed secp256k1 generator point.
+	generatorHex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+)
+
+// compressed serialization of the point at infinity, which is not a valid encoding:
+// both opcodes must reject it rather than accept it as a matching Q.
+var infinityCompressed = mustDecodeHex(
+	"020000000000000000000000000000000000000000000000000000000000000000",
+)
+
+func TestOpcodeECMulScalarVerifyRejectsInfinity(t *testing.T) {
+	t.Parallel()
+
+	vm := &Engine{}
+	vm.dstack.PushByteArray(make([]byte, 32)) // k = 0
+	vm.dstack.PushByteArray(mustDecodeHex(generatorHex))
+	vm.dstack.PushByteArray(infinityCompressed)
+
+	requireScriptErrorCode(
+		t, opcodeECMulScalarVerify(nil, nil, vm), txscript.ErrInvalidStackOperation,
+	)
+}
+
+func TestOpcodeTweakVerifyRejectsInfinity(t *testing.T) {
+	t.Parallel()
+
+	// P = x(G) tweaked by n-1 cancels to the point at infinity.
+	vm := &Engine{}
+	vm.dstack.PushByteArray(mustDecodeHex(generatorHex)[1:])
+	vm.dstack.PushByteArray(mustDecodeHex(orderMinusOneHex))
+	vm.dstack.PushByteArray(infinityCompressed)
+
+	requireScriptErrorCode(t, opcodeTweakVerify(nil, nil, vm), txscript.ErrInvalidStackOperation)
+}
+
+func TestOpcodeECMulScalarVerifyRequiresCompressedP(t *testing.T) {
+	t.Parallel()
+
+	priv, err := secp.GeneratePrivateKey()
+	require.NoError(t, err)
+
+	var scalar secp.ModNScalar
+	scalar.SetInt(2)
+	k := make([]byte, 32)
+	k[31] = 2
+
+	var point, result secp.JacobianPoint
+	priv.PubKey().AsJacobian(&point)
+	secp.ScalarMultNonConst(&scalar, &point, &result)
+	result.ToAffine()
+	Q := secp.NewPublicKey(&result.X, &result.Y).SerializeCompressed()
+
+	// the compressed encoding of the same key is accepted
+	vm := &Engine{}
+	vm.dstack.PushByteArray(k)
+	vm.dstack.PushByteArray(priv.PubKey().SerializeCompressed())
+	vm.dstack.PushByteArray(Q)
+	require.NoError(t, opcodeECMulScalarVerify(nil, nil, vm))
+
+	// the uncompressed encoding is not
+	vm = &Engine{}
+	vm.dstack.PushByteArray(k)
+	vm.dstack.PushByteArray(priv.PubKey().SerializeUncompressed())
+	vm.dstack.PushByteArray(Q)
+	requireScriptErrorCode(
+		t, opcodeECMulScalarVerify(nil, nil, vm), txscript.ErrInvalidStackOperation,
+	)
 }
