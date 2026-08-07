@@ -34,11 +34,13 @@ func (s signer) signInput(ptx *psbt.Packet, inputIndex int, tweak []byte, prevou
 		return fmt.Errorf("not a taproot input, cannot sign")
 	}
 
-	// only the first leaf is ever signed, the others are ignored on purpose:
-	// arkd builds one leaf per input and the emulator has no way to pick between
-	// several of them
-	if len(input.TaprootLeafScript) == 0 || input.TaprootLeafScript[0] == nil {
-		return fmt.Errorf("no taproot leaf script, cannot sign")
+	// the whole codebase reads and signs the leaf at index 0, reject ambiguous inputs
+	// instead of silently picking one of several declared leaves
+	if len(input.TaprootLeafScript) != 1 || input.TaprootLeafScript[0] == nil {
+		return fmt.Errorf(
+			"expected exactly 1 taproot leaf script, got %d, cannot sign",
+			len(input.TaprootLeafScript),
+		)
 	}
 
 	// the leaf script is the requester's assertion until it is checked against
