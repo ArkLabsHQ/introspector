@@ -8,8 +8,21 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
 	"github.com/arkade-os/emulator/internal/application"
+	"github.com/btcsuite/btcd/blockchain"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 )
+
+func parsePsbt(b64 string) (*psbt.Packet, error) {
+	ptx, err := psbt.NewFromRawBytes(strings.NewReader(b64), true)
+	if err != nil {
+		return nil, err
+	}
+	if err := blockchain.CheckTransactionSanity(btcutil.NewTx(ptx.UnsignedTx)); err != nil {
+		return nil, err
+	}
+	return ptx, nil
+}
 
 // parseIntent decodes the proof and intent message. The emulator takes every
 // intent type through one endpoint, so it sniffs `BaseMessage.Type` then decodes
@@ -25,7 +38,7 @@ func parseIntent(fromProto *emulatorv1.Intent) (*application.Intent, error) {
 		return nil, fmt.Errorf("missing message")
 	}
 
-	proofPsbt, err := psbt.NewFromRawBytes(strings.NewReader(proof), true)
+	proofPsbt, err := parsePsbt(proof)
 	if err != nil {
 		return nil, fmt.Errorf("invalid proof: %w", err)
 	}
