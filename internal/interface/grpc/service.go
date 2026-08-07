@@ -142,7 +142,7 @@ func (s *service) newServer() error {
 	// Server grpc.
 	grpcServer := grpc.NewServer(grpcConfig...)
 
-	appSvc, err := s.cfg.AppService(ctx)
+	appSvc, err := s.cfg.AppService(ctx, s.version)
 	if err != nil {
 		return err
 	}

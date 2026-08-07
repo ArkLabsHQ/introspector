@@ -16,6 +16,7 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	log "github.com/sirupsen/logrus"
+	"google.golang.org/grpc/metadata"
 )
 
 type Info struct {
@@ -75,6 +76,7 @@ type service struct {
 	arkdPubKey               *btcec.PublicKey
 	indexerClient            indexer.Indexer
 	computeLimits            arkade.ComputeLimits
+	clientVersion            string
 }
 
 // activeDeprecatedSigners returns the deprecated signers usable for the
@@ -94,10 +96,12 @@ func (s *service) activeDeprecatedSigners() []signer {
 	return s.deprecatedSigners
 }
 
-func New(ctx context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, deprecatedKeysValidUntil *time.Time, arkdURL, arkdIndexerURL string, computeLimits arkade.ComputeLimits) (Service, error) {
+func New(ctx context.Context, version string, secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, deprecatedKeysValidUntil *time.Time, arkdURL, arkdIndexerURL string, computeLimits arkade.ComputeLimits) (Service, error) {
 	if secretKey == nil {
 		return nil, fmt.Errorf("current signer key is required")
 	}
+
+	clientVersion := xSdkVersionValue(version)
 
 	arkdClient, err := grpcclient.NewClient(arkdURL)
 	if err != nil {
@@ -127,7 +131,7 @@ func New(ctx context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btc
 		ctx, arkdConnectRetryConfig,
 		func() error {
 			var e error
-			arkdInfo, e = arkdClient.GetInfo(ctx)
+			arkdInfo, e = arkdClient.GetInfo(withClientVersion(ctx, clientVersion))
 			return e
 		},
 		func(attempt int, e error) {
@@ -164,6 +168,7 @@ func New(ctx context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btc
 		arkdPubKey:               arkdPubKey,
 		indexerClient:            indexerClient,
 		computeLimits:            computeLimits,
+		clientVersion:            clientVersion,
 	}, nil
 }
 
@@ -185,4 +190,12 @@ var arkdConnectRetryConfig = retryConfig{
 	MaxDelay:     45 * time.Second,
 	Multiplier:   2.0,
 	Jitter:       0.2,
+}
+
+func xSdkVersionValue(version string) string {
+	return "emulator/" + version
+}
+
+func withClientVersion(ctx context.Context, clientVersion string) context.Context {
+	return metadata.AppendToOutgoingContext(ctx, "x-sdk-version", clientVersion)
 }
