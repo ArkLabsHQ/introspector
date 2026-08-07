@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
@@ -59,14 +58,14 @@ func (h *handler) SubmitTx(
 		return nil, status.Error(codes.InvalidArgument, "missing checkpoint txs")
 	}
 
-	arkPtx, err := psbt.NewFromRawBytes(strings.NewReader(arkTx), true)
+	arkPtx, err := parsePsbt(arkTx)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid ark tx")
 	}
 
 	checkpointPsbt := make([]*psbt.Packet, 0, len(checkpoints))
 	for _, checkpoint := range checkpoints {
-		checkpointPtx, err := psbt.NewFromRawBytes(strings.NewReader(checkpoint), true)
+		checkpointPtx, err := parsePsbt(checkpoint)
 		if err != nil {
 			return nil, status.Error(codes.InvalidArgument, "invalid checkpoint tx")
 		}
@@ -156,14 +155,14 @@ func (h *handler) SubmitFinalization(
 		return nil, status.Error(codes.InvalidArgument, "missing commitment tx")
 	}
 
-	commitmentPtx, err := psbt.NewFromRawBytes(strings.NewReader(commitmentTx), true)
+	commitmentPtx, err := parsePsbt(commitmentTx)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid commitment tx")
 	}
 
 	forfeitPsbt := make([]*psbt.Packet, 0, len(forfeitTxs))
 	for _, forfeit := range forfeitTxs {
-		forfeitPtx, err := psbt.NewFromRawBytes(strings.NewReader(forfeit), true)
+		forfeitPtx, err := parsePsbt(forfeit)
 		if err != nil {
 			return nil, status.Error(codes.InvalidArgument, "invalid forfeit tx")
 		}
@@ -231,7 +230,7 @@ func (h *handler) SubmitOnchainTx(
 		return nil, status.Error(codes.InvalidArgument, "missing tx")
 	}
 
-	ptx, err := psbt.NewFromRawBytes(strings.NewReader(b64), true)
+	ptx, err := parsePsbt(b64)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid tx")
 	}

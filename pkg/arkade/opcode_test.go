@@ -4732,7 +4732,7 @@ func inspectInputValueSpec() *opcodeSpec {
 				setupWorld: func(w *opcodeWorld) {
 					w.prevouts[w.tx.TxIn[0].PreviousOutPoint].Value = -1
 				},
-				expectedError: txscript.ErrInvalidIndex,
+				expectedError: txscript.ErrInvalidStackOperation,
 			},
 			{
 				name:       "above_max_value",
@@ -4740,7 +4740,7 @@ func inspectInputValueSpec() *opcodeSpec {
 				setupWorld: func(w *opcodeWorld) {
 					w.prevouts[w.tx.TxIn[0].PreviousOutPoint].Value = btcutil.MaxSatoshi + 1
 				},
-				expectedError: txscript.ErrInvalidIndex,
+				expectedError: txscript.ErrInvalidStackOperation,
 			},
 			{
 				name:          "missing_prevout",
@@ -4849,13 +4849,13 @@ func inspectOutputValueSpec() *opcodeSpec {
 				name:          "negative_value",
 				inputStack:    [][]byte{nil},
 				setupWorld:    func(w *opcodeWorld) { w.tx.TxOut[0].Value = -1 },
-				expectedError: txscript.ErrInvalidIndex,
+				expectedError: txscript.ErrInvalidStackOperation,
 			},
 			{
 				name:          "above_max_value",
 				inputStack:    [][]byte{nil},
 				setupWorld:    func(w *opcodeWorld) { w.tx.TxOut[0].Value = btcutil.MaxSatoshi + 1 },
-				expectedError: txscript.ErrInvalidIndex,
+				expectedError: txscript.ErrInvalidStackOperation,
 			},
 			{name: "underflow", expectedError: txscript.ErrInvalidStackOperation},
 		},
