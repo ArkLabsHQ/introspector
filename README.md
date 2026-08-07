@@ -187,6 +187,7 @@ The service can be configured using environment variables:
 | `EMULATOR_PORT` | Server port (gRPC + HTTP REST gateway) | 7073 |
 | `EMULATOR_LOG_LEVEL` | Log level (0-6) | 4 (Debug) |
 | `EMULATOR_ARKD_URL` | URL of the `arkd` instance used for attempted finalization in [`SubmitTx`](#submittx) | Required |
+| `EMULATOR_ARKD_INDEXER_URL` | URL of the `arkd` indexer used to verify commitment txs in [`SubmitFinalization`](#submitfinalization) | `EMULATOR_ARKD_URL` |
 | `EMULATOR_COMPUTE_LIMITS` | Comma-separated `OPCODE=limit` overrides for per-input opcode execution caps, for example `OP_ECPAIRING=8,OP_MODEXP=128`. Overrides are applied on top of defaults; use an empty value such as `OP_ECADD=` to remove a default cap. | Default compute limits |
 
 ## Development

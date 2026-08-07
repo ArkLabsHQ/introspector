@@ -11,6 +11,8 @@ import (
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/arkade-os/go-sdk/client"
 	grpcclient "github.com/arkade-os/go-sdk/client/grpc"
+	"github.com/arkade-os/go-sdk/indexer"
+	grpcindexer "github.com/arkade-os/go-sdk/indexer/grpc"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	log "github.com/sirupsen/logrus"
@@ -71,6 +73,7 @@ type service struct {
 	deprecatedPublicKeys     []string
 	arkdClient               client.TransportClient
 	arkdPubKey               *btcec.PublicKey
+	indexerClient            indexer.Indexer
 	computeLimits            arkade.ComputeLimits
 }
 
@@ -91,7 +94,7 @@ func (s *service) activeDeprecatedSigners() []signer {
 	return s.deprecatedSigners
 }
 
-func New(ctx context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, deprecatedKeysValidUntil *time.Time, arkdURL string, computeLimits arkade.ComputeLimits) (Service, error) {
+func New(ctx context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, deprecatedKeysValidUntil *time.Time, arkdURL, arkdIndexerURL string, computeLimits arkade.ComputeLimits) (Service, error) {
 	if secretKey == nil {
 		return nil, fmt.Errorf("current signer key is required")
 	}
@@ -99,6 +102,11 @@ func New(ctx context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btc
 	arkdClient, err := grpcclient.NewClient(arkdURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create arkd client: %w", err)
+	}
+
+	indexerClient, err := grpcindexer.NewClient(arkdIndexerURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create arkd indexer client: %w", err)
 	}
 
 	publicKey := hex.EncodeToString(secretKey.PubKey().SerializeCompressed())
@@ -154,12 +162,14 @@ func New(ctx context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btc
 		deprecatedPublicKeys:     deprecatedPublicKeys,
 		arkdClient:               arkdClient,
 		arkdPubKey:               arkdPubKey,
+		indexerClient:            indexerClient,
 		computeLimits:            computeLimits,
 	}, nil
 }
 
 func (s *service) Close() {
 	s.arkdClient.Close()
+	s.indexerClient.Close()
 }
 
 func (s *service) GetInfo(ctx context.Context) (*Info, error) {

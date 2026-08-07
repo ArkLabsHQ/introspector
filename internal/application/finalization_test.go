@@ -1,7 +1,10 @@
 package application
 
 import (
+	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	arkintent "github.com/arkade-os/arkd/pkg/ark-lib/intent"
@@ -9,6 +12,7 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/arkade-os/emulator/pkg/arkade"
+	"github.com/arkade-os/go-sdk/indexer"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil/psbt"
@@ -106,6 +110,38 @@ func TestSubmitFinalizationValidatesForfeitOutputs(t *testing.T) {
 		require.ErrorContains(t, err, "malformed forfeit")
 		require.Empty(t, forfeit.Inputs[0].TaprootScriptSpendSig)
 	})
+}
+
+// TestSubmitFinalizationRejectsUnknownCommitmentTx proves SubmitFinalization
+// signs nothing — forfeits included — when the commitment tx is not a
+// commitment tx known to the arkd indexer.
+func TestSubmitFinalizationRejectsUnknownCommitmentTx(t *testing.T) {
+	// keep the retry loop fast for the unit test
+	oldRetryConfig := commitmentTxRetryConfig
+	commitmentTxRetryConfig = retryConfig{
+		MinAttempts:  1,
+		MaxAttempts:  2,
+		InitialDelay: time.Millisecond,
+		MaxDelay:     time.Millisecond,
+		Multiplier:   1,
+	}
+	t.Cleanup(func() { commitmentTxRetryConfig = oldRetryConfig })
+
+	fix := newForfeitFixture(t)
+	forfeit := fix.buildForfeit(t, fix.vtxoPrevout, fix.connectorOutput)
+
+	svc := &service{
+		signer:        signer{fix.signerKey},
+		indexerClient: &mockIndexerClient{err: errors.New("batch not found")},
+	}
+	_, err := svc.SubmitFinalization(t.Context(), BatchFinalization{
+		Intent:        fix.intent,
+		Forfeits:      []*psbt.Packet{forfeit},
+		ConnectorTree: fix.connectorTree,
+		CommitmentTx:  fix.commitmentTx,
+	})
+	require.ErrorContains(t, err, "not known to arkd indexer")
+	require.Empty(t, forfeit.Inputs[0].TaprootScriptSpendSig)
 }
 
 func TestValidateForfeitOutputsInternals(t *testing.T) {
@@ -368,7 +404,7 @@ func (f *forfeitFixture) submit(
 ) (*SignedBatchFinalization, error) {
 	t.Helper()
 
-	svc := &service{signer: signer{f.signerKey}}
+	svc := &service{signer: signer{f.signerKey}, indexerClient: &mockIndexerClient{}}
 	return svc.SubmitFinalization(t.Context(), BatchFinalization{
 		Intent:        f.intent,
 		Forfeits:      forfeits,
@@ -385,4 +421,20 @@ func (f *forfeitFixture) randomP2TRScript(t *testing.T) []byte {
 	pkScript, err := arkscript.P2TRScript(key.PubKey())
 	require.NoError(t, err)
 	return pkScript
+}
+
+// mockIndexerClient confirms every commitment tx unless err is set; any
+// other call panics on the nil embedded interface.
+type mockIndexerClient struct {
+	indexer.Indexer
+	err error
+}
+
+func (m *mockIndexerClient) GetCommitmentTx(
+	context.Context, string,
+) (*indexer.CommitmentTx, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return &indexer.CommitmentTx{}, nil
 }

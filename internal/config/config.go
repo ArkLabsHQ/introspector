@@ -22,6 +22,7 @@ const (
 	Port                     = "PORT"
 	LogLevel                 = "LOG_LEVEL"
 	ArkdURL                  = "ARKD_URL"
+	ArkdIndexerURL           = "ARKD_INDEXER_URL"
 	ComputeLimits            = "COMPUTE_LIMITS"
 )
 
@@ -36,6 +37,7 @@ type Config struct {
 	DeprecatedKeysValidUntil *time.Time
 	Port                     uint32
 	ArkdURL                  string
+	ArkdIndexerURL           string
 	ComputeLimits            arkade.ComputeLimits
 }
 
@@ -94,10 +96,15 @@ func LoadConfig() (*Config, error) {
 		DeprecatedKeysValidUntil: deprecatedKeysValidUntil,
 		Port:                     viper.GetUint32(Port),
 		ArkdURL:                  viper.GetString(ArkdURL),
+		ArkdIndexerURL:           viper.GetString(ArkdIndexerURL),
 		ComputeLimits:            computeLimits,
 	}
 	if cfg.ArkdURL == "" {
 		return nil, fmt.Errorf("missing arkd url")
+	}
+	// if unset, default to the same endpoint as arkd
+	if cfg.ArkdIndexerURL == "" {
+		cfg.ArkdIndexerURL = cfg.ArkdURL
 	}
 	return cfg, nil
 }
@@ -172,5 +179,5 @@ func parsePrivateKey(keyHex, name string) (*btcec.PrivateKey, error) {
 }
 
 func (c *Config) AppService(ctx context.Context) (application.Service, error) {
-	return application.New(ctx, c.CurrentKey, c.DeprecatedKeys, c.DeprecatedKeysValidUntil, c.ArkdURL, c.ComputeLimits)
+	return application.New(ctx, c.CurrentKey, c.DeprecatedKeys, c.DeprecatedKeysValidUntil, c.ArkdURL, c.ArkdIndexerURL, c.ComputeLimits)
 }
