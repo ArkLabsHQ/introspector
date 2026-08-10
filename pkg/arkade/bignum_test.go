@@ -312,6 +312,16 @@ func TestBigNumMulFastPathAndOverflow(t *testing.T) {
 	require.Zero(t, got.big.Cmp(want), "got %s, want 2^64", got.big)
 }
 
+func TestBigNumMulNegOneByMinInt64Promotes(t *testing.T) {
+	t.Parallel()
+	// MinInt64 / -1 wraps back to MinInt64, so the division-based overflow
+	// guard cannot detect this product.
+	got := BigNumFromInt64(-1).Mul(BigNumFromInt64(math.MinInt64))
+	require.True(t, got.useBig, "expected promotion, got %+v", got)
+	want := new(big.Int).Neg(big.NewInt(math.MinInt64))
+	require.Zero(t, got.big.Cmp(want), "got %s, want %s", got.big, want)
+}
+
 func TestBigNumDivAndModSignSemantics(t *testing.T) {
 	t.Parallel()
 	// Truncated division: sign of remainder follows dividend.
