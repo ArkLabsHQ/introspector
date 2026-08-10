@@ -181,7 +181,10 @@ func (n BigNum) Mul(m BigNum) BigNum {
 			return BigNum{small: 0}
 		}
 		r := n.small * m.small
-		if r/n.small == m.small {
+		// -1 * math.MinInt64 wraps to math.MinInt64, and Go defines
+		// math.MinInt64 / -1 as math.MinInt64, so the guard cannot see the
+		// overflow. It is the only pair for which the division itself wraps.
+		if (n.small != -1 || m.small != math.MinInt64) && r/n.small == m.small {
 			return BigNum{small: r}
 		}
 	}
