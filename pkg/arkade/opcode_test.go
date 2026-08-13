@@ -201,6 +201,7 @@ var opcodeSpecs = [256]*opcodeSpec{
 	OP_NIP:                stackOpSpec(OP_NIP),
 	OP_OVER:               stackOpSpec(OP_OVER),
 	OP_PICK:               pickSpec(),
+	OP_PUT:                putSpec(),
 	OP_ROLL:               rollSpec(),
 	OP_ROT:                stackOpSpec(OP_ROT),
 	OP_SWAP:               stackOpSpec(OP_SWAP),
@@ -339,7 +340,6 @@ var opcodeSpecs = [256]*opcodeSpec{
 	OP_VERNOTIF:                      reservedSpec(OP_VERNOTIF),
 	OP_RESERVED1:                     reservedSpec(OP_RESERVED1),
 	OP_RESERVED2:                     reservedSpec(OP_RESERVED2),
-	OP_UNKNOWN187:                    invalidSpec(OP_UNKNOWN187),
 	OP_UNKNOWN188:                    invalidSpec(OP_UNKNOWN188),
 	OP_UNKNOWN189:                    invalidSpec(OP_UNKNOWN189),
 	OP_UNKNOWN190:                    invalidSpec(OP_UNKNOWN190),
@@ -1191,6 +1191,77 @@ func pickSpec() *opcodeSpec {
 			{
 				name:          "out_of_range",
 				inputStack:    [][]byte{{0x01}, scriptNum(2).Bytes()},
+				expectedError: txscript.ErrInvalidStackOperation,
+			},
+			{name: "underflow", expectedError: txscript.ErrInvalidStackOperation},
+		},
+	}
+}
+
+func putSpec() *opcodeSpec {
+	return &opcodeSpec{
+		opcode: OP_PUT,
+		checkProperties: func(t *testing.T, c opcodeCheckContext) {
+			t.Helper()
+			require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+			require.Equal(t, c.before.condStack, c.after.condStack)
+
+			beforeStack := c.before.GetStack()
+			afterStack := c.after.GetStack()
+			if c.execErr != nil {
+				requireScriptErrorCodeIn(t, c.execErr,
+					txscript.ErrInvalidStackOperation,
+					txscript.ErrNumberTooBig,
+					txscript.ErrMinimalData,
+				)
+				require.GreaterOrEqual(t, len(afterStack), len(beforeStack)-2)
+				require.LessOrEqual(t, len(afterStack), len(beforeStack))
+				return
+			}
+
+			require.Equal(t, len(beforeStack)-2, len(afterStack))
+			n, err := MakeScriptNum(beforeStack[len(beforeStack)-1], true, maxScriptNumLen)
+			require.NoError(t, err)
+			expected := slices.Clone(beforeStack[:len(beforeStack)-2])
+			expected[len(expected)-int(n)-1] = beforeStack[len(beforeStack)-2]
+			require.Equal(t, expected, afterStack)
+		},
+		validVectors: []opcodeVector{
+			{
+				name:          "put_0",
+				inputStack:    [][]byte{{0x01}, {0x02}, {0x09}, nil},
+				expectedStack: [][]byte{{0x01}, {0x09}},
+			},
+			{
+				name:          "put_1",
+				inputStack:    [][]byte{{0x01}, {0x02}, {0x09}, scriptNum(1).Bytes()},
+				expectedStack: [][]byte{{0x09}, {0x02}},
+			},
+			{
+				name:          "put_2",
+				inputStack:    [][]byte{{0x01}, {0x02}, {0x03}, {0x09}, scriptNum(2).Bytes()},
+				expectedStack: [][]byte{{0x09}, {0x02}, {0x03}},
+			},
+			{
+				name:          "put_empty",
+				inputStack:    [][]byte{{0x01}, {0x02}, nil, nil},
+				expectedStack: [][]byte{{0x01}, nil},
+			},
+		},
+		invalidVectors: []opcodeVector{
+			{
+				name:          "negative_index",
+				inputStack:    [][]byte{{0x01}, {0x09}, scriptNum(-1).Bytes()},
+				expectedError: txscript.ErrInvalidStackOperation,
+			},
+			{
+				name:          "out_of_range",
+				inputStack:    [][]byte{{0x01}, {0x09}, scriptNum(1).Bytes()},
+				expectedError: txscript.ErrInvalidStackOperation,
+			},
+			{
+				name:          "missing_target",
+				inputStack:    [][]byte{{0x09}, nil},
 				expectedError: txscript.ErrInvalidStackOperation,
 			},
 			{name: "underflow", expectedError: txscript.ErrInvalidStackOperation},

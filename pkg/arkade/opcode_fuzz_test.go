@@ -72,6 +72,14 @@ func (defaultCaseBuilder) Build(data []byte, world *opcodeFuzzWorld) opcodeFuzzC
 	return c
 }
 
+type putCaseBuilder struct{}
+
+func (putCaseBuilder) Build(data []byte, world *opcodeFuzzWorld) opcodeFuzzCase {
+	c := defaultCaseBuilder{}.Build(data, world)
+	c.stackPushes = [][]byte{saltedBytes(data, 0x70), saltedBytes(data, 0x71), nil}
+	return c
+}
+
 type indexCaseBuilder struct {
 	isOut bool
 }
@@ -364,6 +372,7 @@ func (b assetLookupCaseBuilder) Build(data []byte, world *opcodeFuzzWorld) opcod
 }
 
 var fuzzCaseBuilders = [256]fuzzCaseBuilder{
+	OP_PUT:                           putCaseBuilder{},
 	OP_INSPECTINPUTOUTPOINT:          indexCaseBuilder{},
 	OP_INSPECTINPUTSEQUENCE:          indexCaseBuilder{},
 	OP_INSPECTINPUTSCRIPTPUBKEY:      indexCaseBuilder{},
