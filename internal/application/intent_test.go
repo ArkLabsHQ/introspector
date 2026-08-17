@@ -115,6 +115,32 @@ func TestSubmitIntentMessageInputBinding(t *testing.T) {
 	})
 }
 
+func TestSubmitIntentRejectsOnchainOutputsBeforeSigning(t *testing.T) {
+	signerKey := newResolverPrivateKey(t)
+	arkadeScript := []byte{txscript.OP_TRUE}
+	tweaked := arkade.ComputeArkadeScriptPublicKey(
+		signerKey.PubKey(), arkade.ArkadeScriptHash(arkadeScript),
+	)
+	owned := newIntentVtxo(t, tweaked)
+	ptx := newIntentProof(
+		t, []intentVtxo{owned, owned},
+		arkade.EmulatorEntry{Vin: 1, Script: arkadeScript},
+	)
+
+	svc := &service{signer: signer{signerKey}}
+	signed, err := svc.SubmitIntent(t.Context(), Intent{
+		Proof: intent.Proof{Packet: *ptx},
+		Message: &intent.RegisterMessage{
+			OnchainOutputIndexes: []int{0},
+		},
+	})
+
+	require.ErrorContains(t, err, "onchain outputs are not supported")
+	require.Nil(t, signed)
+	require.Empty(t, ptx.Inputs[0].TaprootScriptSpendSig)
+	require.Empty(t, ptx.Inputs[1].TaprootScriptSpendSig)
+}
+
 // TestSubmitIntentEntryResolution covers how SubmitIntent treats entries that do
 // not resolve to one of its signers. Entries attributed to another emulator are
 // legitimately skipped (as in SubmitTx/SubmitOnchainTx), but a malformed entry
