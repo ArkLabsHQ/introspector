@@ -100,12 +100,14 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 	return ptx, nil
 }
 
-// validateMessage checks the proof's validity window. Register and estimate-fee
-// carry ValidAt+ExpireAt; the rest only ExpireAt, read here via a type switch.
+// validateMessage checks intent admission policy and the proof's validity window.
 func validateMessage(message IntentMessage) error {
 	var validAt, expireAt int64
 	switch m := message.(type) {
 	case *intent.RegisterMessage:
+		if len(m.OnchainOutputIndexes) > 0 {
+			return fmt.Errorf("onchain outputs are not supported")
+		}
 		validAt, expireAt = m.ValidAt, m.ExpireAt
 	case *intent.EstimateIntentFeeMessage:
 		validAt, expireAt = m.ValidAt, m.ExpireAt
