@@ -192,6 +192,12 @@ func tunnelAssetMaps(packet asset.Packet, inputIndex, outputIndex, inputCount, o
 		if group.AssetId == nil || group.ControlAsset != nil || len(group.Metadata) > 0 {
 			return nil, nil, fmt.Errorf("asset packet is not a pure transfer")
 		}
+		if _, err := asset.NewAssetInputs(group.Inputs); err != nil {
+			return nil, nil, fmt.Errorf("invalid asset inputs: %w", err)
+		}
+		if _, err := asset.NewAssetOutputs(group.Outputs); err != nil {
+			return nil, nil, fmt.Errorf("invalid asset outputs: %w", err)
+		}
 		id := *group.AssetId
 		if safeSumInputs(group.Inputs).Cmp(safeSumOutputs(group.Outputs)) != 0 {
 			return nil, nil, fmt.Errorf("asset packet does not conserve amounts")

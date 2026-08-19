@@ -189,6 +189,26 @@ func TestTunnelAssetConservationDoesNotOverflow(t *testing.T) {
 	require.Equal(t, inputs, outputs)
 }
 
+func TestTunnelRejectsDuplicateAssetPositions(t *testing.T) {
+	t.Parallel()
+
+	id := asset.AssetId{Txid: chainhash.Hash{1}, Index: 2}
+	packet := asset.Packet{{
+		AssetId: &id,
+		Inputs: []asset.AssetInput{
+			{Type: asset.AssetInputTypeLocal, Vin: 0, Amount: 3},
+			{Type: asset.AssetInputTypeLocal, Vin: 0, Amount: 4},
+		},
+		Outputs: []asset.AssetOutput{
+			{Type: asset.AssetOutputTypeLocal, Vout: 0, Amount: 3},
+			{Type: asset.AssetOutputTypeLocal, Vout: 0, Amount: 4},
+		},
+	}}
+
+	_, _, err := tunnelAssetMaps(packet, 0, 0, 1, 1)
+	require.Error(t, err)
+}
+
 func TestTunnelClaimsAreOneToOne(t *testing.T) {
 	t.Parallel()
 
