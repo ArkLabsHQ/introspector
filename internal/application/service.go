@@ -22,7 +22,6 @@ import (
 type Info struct {
 	SignerPublicKey            string
 	DeprecatedSignerPublicKeys []string
-	TunnelPolicy               *TunnelPolicy
 }
 
 type OffchainTx struct {
@@ -199,15 +198,9 @@ func (s *service) Close() {
 }
 
 func (s *service) GetInfo(ctx context.Context) (*Info, error) {
-	var tunnelPolicy *TunnelPolicy
-	if s.tunnelPolicy.Enabled() {
-		policy := s.tunnelPolicy
-		tunnelPolicy = &policy
-	}
 	return &Info{
 		SignerPublicKey:            s.publicKey,
 		DeprecatedSignerPublicKeys: append([]string(nil), s.deprecatedPublicKeys...),
-		TunnelPolicy:               tunnelPolicy,
 	}, nil
 }
 

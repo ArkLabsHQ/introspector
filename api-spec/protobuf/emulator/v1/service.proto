@@ -62,13 +62,6 @@ message GetInfoResponse {
   string signer_pubkey = 2;
   // hex-encoded compressed public keys of deprecated signers accepted for signing.
   repeated string deprecated_signer_pubkeys = 3;
-  // delegated renewal policy; absent when OP_TUNNEL authorization is disabled.
-  TunnelPolicy tunnel_policy = 4;
-}
-
-message TunnelPolicy {
-  int64 renewal_window_seconds = 1;
-  int64 completion_margin_seconds = 2;
 }
 
 message SubmitTxRequest {

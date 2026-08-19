@@ -232,10 +232,6 @@
             "type": "string",
             "description": "hex-encoded compressed public key of the signer."
           },
-          "tunnelPolicy": {
-            "$ref": "#/components/schemas/TunnelPolicy",
-            "description": "delegated renewal policy; absent when OP_TUNNEL authorization is disabled."
-          },
           "version": {
             "type": "string"
           }
@@ -377,20 +373,6 @@
             "items": {
               "type": "string"
             }
-          }
-        }
-      },
-      "TunnelPolicy": {
-        "title": "TunnelPolicy",
-        "type": "object",
-        "properties": {
-          "completionMarginSeconds": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "renewalWindowSeconds": {
-            "type": "integer",
-            "format": "int64"
           }
         }
       },
