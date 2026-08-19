@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arkade-os/emulator/internal/application"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/spf13/viper"
@@ -381,4 +382,55 @@ func TestLoadConfigDefaultsComputeLimitsWhenUnset(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, arkade.DefaultComputeLimits(), cfg.ComputeLimits)
+}
+
+func TestLoadConfigTunnelPolicy(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     map[string]string
+		want    application.TunnelPolicy
+		wantErr string
+	}{
+		{name: "disabled", env: map[string]string{}},
+		{
+			name: "enabled",
+			env: map[string]string{
+				"EMULATOR_TUNNEL_RENEWAL_WINDOW":    "24h",
+				"EMULATOR_TUNNEL_COMPLETION_MARGIN": "30m",
+			},
+			want: application.TunnelPolicy{RenewalWindow: 24 * time.Hour, CompletionMargin: 30 * time.Minute},
+		},
+		{
+			name: "partial",
+			env: map[string]string{
+				"EMULATOR_TUNNEL_RENEWAL_WINDOW": "24h",
+			},
+			wantErr: "completion margin",
+		},
+		{
+			name: "subsecond",
+			env: map[string]string{
+				"EMULATOR_TUNNEL_RENEWAL_WINDOW":    "1500ms",
+				"EMULATOR_TUNNEL_COMPLETION_MARGIN": "1s",
+			},
+			wantErr: "whole-second",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			env := map[string]string{
+				"EMULATOR_SECRET_KEY": testKeyHex(1),
+				"EMULATOR_ARKD_URL":   "http://arkd:7070",
+			}
+			maps.Copy(env, test.env)
+			cfg, err := loadConfigForTest(t, env)
+			if test.wantErr != "" {
+				require.ErrorContains(t, err, test.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, test.want, cfg.TunnelPolicy)
+		})
+	}
 }

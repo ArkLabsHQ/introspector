@@ -24,6 +24,8 @@ const (
 	ArkdURL                  = "ARKD_URL"
 	ArkdIndexerURL           = "ARKD_INDEXER_URL"
 	ComputeLimits            = "COMPUTE_LIMITS"
+	TunnelRenewalWindow      = "TUNNEL_RENEWAL_WINDOW"
+	TunnelCompletionMargin   = "TUNNEL_COMPLETION_MARGIN"
 )
 
 var (
@@ -39,6 +41,7 @@ type Config struct {
 	ArkdURL                  string
 	ArkdIndexerURL           string
 	ComputeLimits            arkade.ComputeLimits
+	TunnelPolicy             application.TunnelPolicy
 }
 
 func LoadConfig() (*Config, error) {
@@ -80,6 +83,16 @@ func LoadConfig() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	tunnelPolicy := application.TunnelPolicy{
+		RenewalWindow:    viper.GetDuration(TunnelRenewalWindow),
+		CompletionMargin: viper.GetDuration(TunnelCompletionMargin),
+	}
+	if tunnelPolicy.RenewalWindow%time.Second != 0 || tunnelPolicy.CompletionMargin%time.Second != 0 {
+		return nil, fmt.Errorf("tunnel policy durations must use whole-second precision")
+	}
+	if err := tunnelPolicy.Validate(); err != nil {
+		return nil, err
+	}
 
 	var deprecatedKeysValidUntil *time.Time
 	if raw := viper.GetString(DeprecatedKeysValidUntil); raw != "" {
@@ -98,6 +111,7 @@ func LoadConfig() (*Config, error) {
 		ArkdURL:                  viper.GetString(ArkdURL),
 		ArkdIndexerURL:           viper.GetString(ArkdIndexerURL),
 		ComputeLimits:            computeLimits,
+		TunnelPolicy:             tunnelPolicy,
 	}
 	if cfg.ArkdURL == "" {
 		return nil, fmt.Errorf("missing arkd url")
@@ -179,5 +193,5 @@ func parsePrivateKey(keyHex, name string) (*btcec.PrivateKey, error) {
 }
 
 func (c *Config) AppService(ctx context.Context, version string) (application.Service, error) {
-	return application.New(ctx, version, c.CurrentKey, c.DeprecatedKeys, c.DeprecatedKeysValidUntil, c.ArkdURL, c.ArkdIndexerURL, c.ComputeLimits)
+	return application.New(ctx, version, c.CurrentKey, c.DeprecatedKeys, c.DeprecatedKeysValidUntil, c.ArkdURL, c.ArkdIndexerURL, c.ComputeLimits, c.TunnelPolicy)
 }

@@ -37,8 +37,9 @@ type IntentMessage interface {
 }
 
 type Intent struct {
-	Proof   intent.Proof
-	Message IntentMessage
+	Proof          intent.Proof
+	Message        IntentMessage
+	EncodedMessage string
 }
 
 type BatchFinalization struct {
@@ -76,6 +77,7 @@ type service struct {
 	arkdPubKey               *btcec.PublicKey
 	indexerClient            indexer.Indexer
 	computeLimits            arkade.ComputeLimits
+	tunnelPolicy             TunnelPolicy
 	clientVersion            string
 }
 
@@ -96,9 +98,12 @@ func (s *service) activeDeprecatedSigners() []signer {
 	return s.deprecatedSigners
 }
 
-func New(ctx context.Context, version string, secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, deprecatedKeysValidUntil *time.Time, arkdURL, arkdIndexerURL string, computeLimits arkade.ComputeLimits) (Service, error) {
+func New(ctx context.Context, version string, secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, deprecatedKeysValidUntil *time.Time, arkdURL, arkdIndexerURL string, computeLimits arkade.ComputeLimits, tunnelPolicy TunnelPolicy) (Service, error) {
 	if secretKey == nil {
 		return nil, fmt.Errorf("current signer key is required")
+	}
+	if err := tunnelPolicy.Validate(); err != nil {
+		return nil, err
 	}
 
 	clientVersion := xSdkVersionValue(version)
@@ -147,6 +152,9 @@ func New(ctx context.Context, version string, secretKey *btcec.PrivateKey, depre
 	if arkdInfo.SignerPubKey == "" {
 		return nil, fmt.Errorf("arkd info does not include signer pubkey")
 	}
+	if err := validateTunnelPolicyAgainstArkdInfo(tunnelPolicy, arkdInfo); err != nil {
+		return nil, err
+	}
 
 	decodedKey, err := hex.DecodeString(arkdInfo.SignerPubKey)
 	if err != nil {
@@ -168,8 +176,20 @@ func New(ctx context.Context, version string, secretKey *btcec.PrivateKey, depre
 		arkdPubKey:               arkdPubKey,
 		indexerClient:            indexerClient,
 		computeLimits:            computeLimits,
+		tunnelPolicy:             tunnelPolicy,
 		clientVersion:            clientVersion,
 	}, nil
+}
+
+func validateTunnelPolicyAgainstArkdInfo(policy TunnelPolicy, info *client.Info) error {
+	if !policy.Enabled() {
+		return nil
+	}
+	maxSessionSeconds := max(info.SessionDuration, info.ScheduledSessionDuration)
+	if maxSessionSeconds > 0 && policy.CompletionMargin < time.Duration(maxSessionSeconds)*time.Second {
+		return fmt.Errorf("tunnel completion margin must be at least arkd's maximum session duration of %s", time.Duration(maxSessionSeconds)*time.Second)
+	}
+	return nil
 }
 
 func (s *service) Close() {

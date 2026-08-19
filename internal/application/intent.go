@@ -16,7 +16,8 @@ import (
 // SubmitIntent aims to execute arkade scripts on unsigned intent proof
 // it must be used before registration of the intent
 func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet, error) {
-	if err := validateMessage(intent.Message); err != nil {
+	evaluatedAt := time.Now()
+	if err := validateMessageAt(intent.Message, evaluatedAt); err != nil {
 		return nil, fmt.Errorf("invalid message: %w", err)
 	}
 
@@ -35,6 +36,11 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 
 	if len(packet) == 0 {
 		return nil, fmt.Errorf("no emulator packet found in transaction")
+	}
+
+	tunnelContext, err := s.tunnelContextForIntent(ctx, intent, packet, evaluatedAt)
+	if err != nil {
+		return nil, err
 	}
 
 	budget := arkade.NewComputeBudgetWithLimits(arkade.AggregateComputeLimits(s.computeLimits))
@@ -59,12 +65,18 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 			return nil, fmt.Errorf("failed to read arkade script: %w vin=%d", err, inputIndex)
 		}
 
+		executeOptions := []arkade.ExecuteOption{
+			arkade.WithExactComputeLimits(s.computeLimits),
+			arkade.WithComputeBudget(budget),
+		}
+		if tunnelContext != nil {
+			executeOptions = append(executeOptions, arkade.WithTunnelContext(tunnelContext))
+		}
 		if err := script.Execute(
 			ptx.UnsignedTx,
 			prevOutFetcher,
 			inputIndex,
-			arkade.WithExactComputeLimits(s.computeLimits),
-			arkade.WithComputeBudget(budget),
+			executeOptions...,
 		); err != nil {
 			log.WithError(err).WithField("input_index", inputIndex).Error("arkade script execution failed")
 			return nil, fmt.Errorf("failed to execute arkade script at input %d: %w", inputIndex, err)
@@ -102,6 +114,10 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 
 // validateMessage checks intent admission policy and the proof's validity window.
 func validateMessage(message IntentMessage) error {
+	return validateMessageAt(message, time.Now())
+}
+
+func validateMessageAt(message IntentMessage, now time.Time) error {
 	var validAt, expireAt int64
 	switch m := message.(type) {
 	case *intent.RegisterMessage:
@@ -123,7 +139,6 @@ func validateMessage(message IntentMessage) error {
 		return fmt.Errorf("unsupported intent message type")
 	}
 
-	now := time.Now()
 	if expireAt > 0 && time.Unix(expireAt, 0).Before(now) {
 		return fmt.Errorf("intent message expired")
 	}

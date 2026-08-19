@@ -86,6 +86,10 @@ func (c *TunnelContext) authorize(vm *Engine, outputIndex int) error {
 	if c.HasOnchainOutputs {
 		return fmt.Errorf("register intent contains on-chain outputs")
 	}
+	if c.Purpose == TunnelPurposeRegisterIntent &&
+		(c.RenewalWindow <= 0 || c.CompletionMargin <= 0 || c.CompletionMargin >= c.RenewalWindow) {
+		return fmt.Errorf("tunnel policy is disabled or invalid")
+	}
 	if c.claimedInputs == nil {
 		c.claimedInputs = make(map[int]TunnelMapping)
 	}
@@ -164,9 +168,6 @@ func (c *TunnelContext) authorize(vm *Engine, outputIndex int) error {
 }
 
 func (c *TunnelContext) validateAdmission(source TunnelSource) error {
-	if c.RenewalWindow <= 0 || c.CompletionMargin <= 0 || c.CompletionMargin >= c.RenewalWindow {
-		return fmt.Errorf("tunnel policy is disabled or invalid")
-	}
 	if c.EvaluatedAt.IsZero() || c.RegisterExpireAt.IsZero() {
 		return fmt.Errorf("missing authorization time or register expiry")
 	}
