@@ -351,7 +351,7 @@ var opcodeSpecs = [256]*opcodeSpec{
 	OP_INSPECTPACKET:                 inspectPacketSpec(),
 	OP_INSPECTINPUTPACKET:            inspectInputPacketSpec(),
 	OP_SIGHASH:                       sighashSpec(),
-	OP_UNKNOWN247:                    invalidSpec(OP_UNKNOWN247),
+	OP_TUNNEL:                        tunnelSpec(),
 	OP_UNKNOWN248:                    invalidSpec(OP_UNKNOWN248),
 	OP_UNKNOWN249:                    invalidSpec(OP_UNKNOWN249),
 	OP_SMALLINTEGER:                  invalidSpec(OP_SMALLINTEGER),
@@ -663,6 +663,16 @@ func invalidSpec(op byte) *opcodeSpec {
 		checkProperties: unchangedStateWithErrorCodeChecker(txscript.ErrReservedOpcode),
 		invalidVectors: []opcodeVector{
 			{name: "invalid", expectedError: txscript.ErrReservedOpcode},
+		},
+	}
+}
+
+func tunnelSpec() *opcodeSpec {
+	return &opcodeSpec{
+		opcode:          OP_TUNNEL,
+		checkProperties: unchangedStateWithErrorCodeChecker(txscript.ErrInvalidStackOperation),
+		invalidVectors: []opcodeVector{
+			{name: "missing_context", inputStack: [][]byte{nil}, expectedError: txscript.ErrInvalidStackOperation},
 		},
 	}
 }

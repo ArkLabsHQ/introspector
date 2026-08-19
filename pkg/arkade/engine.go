@@ -112,6 +112,7 @@ type Engine struct {
 	prevOutFetcher ArkPrevOutFetcher
 	assetPacket    asset.Packet
 	emulatorPacket EmulatorPacket
+	tunnelContext  *TunnelContext
 
 	// The following fields handle keeping track of the current execution state
 	// of the engine.

@@ -27,6 +27,12 @@ type ArkadeScript struct {
 
 type ExecuteOption func(*Engine)
 
+func WithTunnelContext(ctx *TunnelContext) ExecuteOption {
+	return func(engine *Engine) {
+		engine.tunnelContext = ctx
+	}
+}
+
 func WithDebugCallback(callback func(*StepInfo, *Engine) error) ExecuteOption {
 	return func(engine *Engine) {
 		engine.stepCallback = func(step *StepInfo) error {

@@ -370,6 +370,7 @@ var fuzzCaseBuilders = [256]fuzzCaseBuilder{
 	OP_INSPECTINPUTVALUE:             indexCaseBuilder{},
 	OP_INSPECTOUTPUTVALUE:            indexCaseBuilder{isOut: true},
 	OP_INSPECTOUTPUTSCRIPTPUBKEY:     indexCaseBuilder{isOut: true},
+	OP_TUNNEL:                        indexCaseBuilder{isOut: true},
 	OP_INSPECTINPUTARKADESCRIPTHASH:  indexCaseBuilder{},
 	OP_INSPECTINPUTARKADEWITNESSHASH: indexCaseBuilder{},
 	OP_INSPECTPACKET:                 packetCaseBuilder{},
