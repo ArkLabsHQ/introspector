@@ -18,6 +18,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const testIntentMessage = `{"type":"register"}`
+
 func TestValidateMessage(t *testing.T) {
 	now := time.Now()
 	past := now.Add(-time.Hour).Unix()
@@ -53,7 +55,7 @@ func TestValidateMessage(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateMessage(tc.message)
+			err := validateMessage(tc.message, now)
 			if tc.wantErr == "" {
 				require.NoError(t, err)
 				return
@@ -99,6 +101,21 @@ func TestSubmitIntentMessageInputBinding(t *testing.T) {
 		require.Nil(t, signed)
 		// nothing may be signed once the proof is rejected
 		require.Empty(t, ptx.Inputs[0].TaprootScriptSpendSig)
+	})
+
+	t.Run("rejects a message not committed by the proof", func(t *testing.T) {
+		ptx := newIntentProof(t, []intentVtxo{owned, owned}, entry)
+		svc := &service{signer: signer{signerKey}}
+
+		signed, err := svc.SubmitIntent(t.Context(), Intent{
+			Proof:          intent.Proof{Packet: *ptx},
+			Message:        &intent.RegisterMessage{},
+			EncodedMessage: `{"type":"register","valid_at":0}`,
+		})
+		require.ErrorContains(t, err, "not committed by the proof")
+		require.Nil(t, signed)
+		require.Empty(t, ptx.Inputs[0].TaprootScriptSpendSig)
+		require.Empty(t, ptx.Inputs[1].TaprootScriptSpendSig)
 	})
 
 	t.Run("rejects missing witness utxo", func(t *testing.T) {
@@ -207,8 +224,9 @@ func submitTestIntent(
 
 	svc := &service{signer: signer{signerKey}}
 	return svc.SubmitIntent(t.Context(), Intent{
-		Proof:   intent.Proof{Packet: *ptx},
-		Message: &intent.RegisterMessage{ExpireAt: time.Now().Add(time.Hour).Unix()},
+		Proof:          intent.Proof{Packet: *ptx},
+		Message:        &intent.RegisterMessage{},
+		EncodedMessage: testIntentMessage,
 	})
 }
 
@@ -294,6 +312,13 @@ func newIntentProof(
 			require.NoError(t, txutils.SetArkPsbtField(ptx, i, arkade.PrevArkTxField, *prevTx))
 		}
 	}
+	expected, err := intent.New(testIntentMessage, []intent.Input{{
+		OutPoint:    &ptx.UnsignedTx.TxIn[1].PreviousOutPoint,
+		Sequence:    ptx.UnsignedTx.TxIn[1].Sequence,
+		WitnessUtxo: ptx.Inputs[1].WitnessUtxo,
+	}}, nil)
+	require.NoError(t, err)
+	ptx.UnsignedTx.TxIn[0].PreviousOutPoint = expected.UnsignedTx.TxIn[0].PreviousOutPoint
 
 	packet, err := arkade.NewPacket(entries...)
 	require.NoError(t, err)

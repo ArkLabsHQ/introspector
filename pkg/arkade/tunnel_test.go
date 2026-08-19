@@ -1,6 +1,7 @@
 package arkade
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -20,10 +21,7 @@ func TestTunnelExactContinuation(t *testing.T) {
 	require.NoError(t, invokeOpcodeWithData(OP_TUNNEL, nil, vm))
 	require.Equal(t, [][]byte{{1}}, vm.GetStack())
 
-	mapping, ok := ctx.MappingForInput(0)
-	require.True(t, ok)
-	require.Equal(t, 0, mapping.OutputIndex)
-	require.Equal(t, vm.tx.TxIn[0].PreviousOutPoint, mapping.SourceOutPoint)
+	require.True(t, ctx.InputWasTunneled(0))
 }
 
 func TestTunnelAdmissionBoundaries(t *testing.T) {
@@ -167,6 +165,28 @@ func TestTunnelPreservesAssetsAndRequiresPureTransfer(t *testing.T) {
 			requireScriptErrorCode(t, err, txscript.ErrInvalidStackOperation)
 		})
 	}
+}
+
+func TestTunnelAssetConservationDoesNotOverflow(t *testing.T) {
+	t.Parallel()
+
+	id := asset.AssetId{Txid: chainhash.Hash{1}, Index: 2}
+	packet := asset.Packet{{
+		AssetId: &id,
+		Inputs: []asset.AssetInput{
+			{Type: asset.AssetInputTypeLocal, Vin: 0, Amount: math.MaxUint64},
+			{Type: asset.AssetInputTypeLocal, Vin: 1, Amount: 1},
+		},
+		Outputs: []asset.AssetOutput{
+			{Type: asset.AssetOutputTypeLocal, Vout: 0, Amount: math.MaxUint64},
+			{Type: asset.AssetOutputTypeLocal, Vout: 1, Amount: 1},
+		},
+	}}
+
+	inputs, outputs, err := tunnelAssetMaps(packet, 0, 0, 2, 2)
+	require.NoError(t, err)
+	require.Equal(t, map[asset.AssetId]uint64{id: math.MaxUint64}, inputs)
+	require.Equal(t, inputs, outputs)
 }
 
 func TestTunnelClaimsAreOneToOne(t *testing.T) {

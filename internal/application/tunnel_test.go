@@ -64,6 +64,7 @@ func TestTunnelPolicyValidation(t *testing.T) {
 	require.NoError(t, (TunnelPolicy{RenewalWindow: time.Hour, CompletionMargin: time.Minute}).Validate())
 	require.Error(t, (TunnelPolicy{RenewalWindow: time.Hour}).Validate())
 	require.Error(t, (TunnelPolicy{RenewalWindow: time.Hour, CompletionMargin: time.Hour}).Validate())
+	require.Error(t, (TunnelPolicy{RenewalWindow: -time.Hour, CompletionMargin: -time.Minute}).Validate())
 }
 
 func TestTunnelPolicyCoversArkdSession(t *testing.T) {
@@ -136,8 +137,9 @@ func TestSubmitIntentExecutesTunnelWithIndexedSource(t *testing.T) {
 	request.Proof = intent.Proof{Packet: *signed}
 	associations, err := getSignedInputAssociations(request.Proof.Packet, signer{signerKey}, nil)
 	require.NoError(t, err)
-	require.NoError(t, svc.replayTunnelAuthorizations(t.Context(), request, associations))
+	require.NoError(t, svc.replayTunnelAuthorizations(request, associations))
 	require.True(t, associations[firstInput.PreviousOutPoint].tunneled)
+	require.Equal(t, 1, indexerClient.calls)
 
 	commitmentTx := wire.NewMsgTx(3)
 	commitmentTx.AddTxIn(wire.NewTxIn(&firstInput.PreviousOutPoint, nil, nil))

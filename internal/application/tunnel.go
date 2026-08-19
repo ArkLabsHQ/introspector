@@ -1,7 +1,6 @@
 package application
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
@@ -23,11 +22,11 @@ type TunnelPolicy struct {
 }
 
 func (p TunnelPolicy) Enabled() bool {
-	return p.RenewalWindow > 0 || p.CompletionMargin > 0
+	return p.RenewalWindow > 0 && p.CompletionMargin > 0
 }
 
 func (p TunnelPolicy) Validate() error {
-	if !p.Enabled() {
+	if p.RenewalWindow == 0 && p.CompletionMargin == 0 {
 		return nil
 	}
 	if p.RenewalWindow <= 0 || p.CompletionMargin <= 0 || p.CompletionMargin >= p.RenewalWindow {
@@ -59,10 +58,6 @@ func (s *service) tunnelContextForIntent(ctx context.Context, request Intent, pa
 	if !ok {
 		return nil, nil
 	}
-	if err := validateIntentMessageCommitment(request); err != nil {
-		return nil, fmt.Errorf("tunnel intent message is not committed by the proof: %w", err)
-	}
-
 	tunnelContext := &arkade.TunnelContext{
 		Purpose:           arkade.TunnelPurposeRegisterIntent,
 		EvaluatedAt:       evaluatedAt,
@@ -93,33 +88,6 @@ func scriptHasTunnel(script []byte) (bool, error) {
 		}
 	}
 	return false, tokenizer.Err()
-}
-
-func validateIntentMessageCommitment(request Intent) error {
-	ptx := &request.Proof.Packet
-	if len(ptx.UnsignedTx.TxIn) < 2 || len(ptx.Inputs) < 2 || ptx.Inputs[1].WitnessUtxo == nil {
-		return fmt.Errorf("proof is missing its first ownership input")
-	}
-	encodedMessage := request.EncodedMessage
-	if encodedMessage == "" {
-		return fmt.Errorf("missing encoded intent message")
-	}
-	firstInput := ptx.UnsignedTx.TxIn[1]
-	expected, err := arkintent.New(encodedMessage, []arkintent.Input{{
-		OutPoint:    &firstInput.PreviousOutPoint,
-		Sequence:    firstInput.Sequence,
-		WitnessUtxo: ptx.Inputs[1].WitnessUtxo,
-	}}, nil)
-	if err != nil {
-		return err
-	}
-	if !bytes.Equal(
-		ptx.UnsignedTx.TxIn[0].PreviousOutPoint.Hash[:],
-		expected.UnsignedTx.TxIn[0].PreviousOutPoint.Hash[:],
-	) || ptx.UnsignedTx.TxIn[0].PreviousOutPoint.Index != expected.UnsignedTx.TxIn[0].PreviousOutPoint.Index {
-		return fmt.Errorf("synthetic message input does not match the supplied message")
-	}
-	return nil
 }
 
 func (s *service) getTunnelSources(ctx context.Context, outpoints []wire.OutPoint) (map[wire.OutPoint]arkade.TunnelSource, error) {
@@ -192,13 +160,12 @@ func (s *service) getTunnelSources(ctx context.Context, outpoints []wire.OutPoin
 	return sources, nil
 }
 
-func (s *service) replayTunnelAuthorizations(ctx context.Context, request Intent, signedInputs map[wire.OutPoint]signedInputAssociation) error {
+func (s *service) replayTunnelAuthorizations(request Intent, signedInputs map[wire.OutPoint]signedInputAssociation) error {
 	packet, err := arkade.FindEmulatorPacket(request.Proof.UnsignedTx)
 	if err != nil {
 		return err
 	}
 	tunnelEntries := make([]arkade.EmulatorEntry, 0)
-	tunnelOutpoints := make([]wire.OutPoint, 0)
 	for _, entry := range packet {
 		inputIndex := int(entry.Vin)
 		if inputIndex <= 0 || inputIndex >= len(request.Proof.UnsignedTx.TxIn) {
@@ -214,7 +181,6 @@ func (s *service) replayTunnelAuthorizations(ctx context.Context, request Intent
 		}
 		if hasTunnel {
 			tunnelEntries = append(tunnelEntries, entry)
-			tunnelOutpoints = append(tunnelOutpoints, outpoint)
 		}
 	}
 	if len(tunnelEntries) == 0 {
@@ -225,20 +191,12 @@ func (s *service) replayTunnelAuthorizations(ctx context.Context, request Intent
 	if !ok {
 		return fmt.Errorf("tunnel authorization is not a register intent")
 	}
-	if err := validateIntentMessageCommitment(request); err != nil {
-		return err
-	}
-	sources, err := s.getTunnelSources(ctx, tunnelOutpoints)
-	if err != nil {
-		return err
-	}
 	prevOutFetcher, err := prevOutFetcherForIntent(&request.Proof.Packet)
 	if err != nil {
 		return err
 	}
 	tunnelContext := &arkade.TunnelContext{
 		Purpose:           arkade.TunnelPurposeFinalizationReplay,
-		Sources:           sources,
 		HasOnchainOutputs: len(message.OnchainOutputIndexes) > 0,
 	}
 	budget := arkade.NewComputeBudgetWithLimits(arkade.AggregateComputeLimits(s.computeLimits))
@@ -246,9 +204,6 @@ func (s *service) replayTunnelAuthorizations(ctx context.Context, request Intent
 		inputIndex := int(entry.Vin)
 		outpoint := request.Proof.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
 		association := signedInputs[outpoint]
-		if association.inputIndex != inputIndex {
-			return fmt.Errorf("signed input association index mismatch")
-		}
 		if err := association.script.Execute(
 			request.Proof.UnsignedTx,
 			prevOutFetcher,
@@ -259,7 +214,7 @@ func (s *service) replayTunnelAuthorizations(ctx context.Context, request Intent
 		); err != nil {
 			return fmt.Errorf("input %d: %w", inputIndex, err)
 		}
-		if _, tunneled := tunnelContext.MappingForInput(inputIndex); tunneled {
+		if tunnelContext.InputWasTunneled(inputIndex) {
 			association.tunneled = true
 			signedInputs[outpoint] = association
 		}

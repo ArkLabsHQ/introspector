@@ -164,6 +164,37 @@ func TestSubmitFinalizationRejectsUnknownCommitmentTx(t *testing.T) {
 	require.Empty(t, forfeit.Inputs[0].TaprootScriptSpendSig)
 }
 
+func TestSignedInputAssociationsRejectDuplicateOutpoint(t *testing.T) {
+	fix := newForfeitFixture(t)
+	ptx := &fix.intent.Proof.Packet
+	arkadeScript := []byte{txscript.OP_TRUE}
+
+	ptx.UnsignedTx.AddTxIn(&wire.TxIn{PreviousOutPoint: fix.vtxoOutpoint})
+	ptx.Inputs = append(ptx.Inputs, psbt.PInput{
+		WitnessUtxo:       fix.vtxoPrevout,
+		TaprootLeafScript: []*psbt.TaprootTapLeafScript{fix.leafScript},
+	})
+	packet, err := arkade.NewPacket(
+		arkade.EmulatorEntry{Vin: 1, Script: arkadeScript},
+		arkade.EmulatorEntry{Vin: 2, Script: arkadeScript},
+	)
+	require.NoError(t, err)
+	ptx.UnsignedTx.TxOut[0], err = (extension.Extension{packet}).TxOut()
+	require.NoError(t, err)
+
+	ptx.Inputs[1].TaprootScriptSpendSig = nil
+	prevoutFetcher, err := computePrevoutFetcher(ptx)
+	require.NoError(t, err)
+	for _, inputIndex := range []int{1, 2} {
+		require.NoError(t, (signer{fix.signerKey}).signInput(
+			ptx, inputIndex, arkade.ArkadeScriptHash(arkadeScript), prevoutFetcher,
+		))
+	}
+
+	_, err = getSignedInputAssociations(*ptx, signer{fix.signerKey}, nil)
+	require.ErrorContains(t, err, "duplicate signed outpoint")
+}
+
 func TestValidateForfeitOutputs(t *testing.T) {
 	vtxo := &wire.TxOut{Value: 100_000, PkScript: []byte{txscript.OP_TRUE}}
 	connector := &wire.TxOut{Value: 450, PkScript: []byte{txscript.OP_TRUE}}
@@ -486,7 +517,11 @@ func newForfeitFixture(t *testing.T) *forfeitFixture {
 	fix.connectorOutpoint = wire.OutPoint{Hash: connectorTx.TxHash(), Index: 0}
 	fix.connectorOutput = connectorTx.TxOut[0]
 
-	fix.intent = Intent{Proof: fix.newSignedIntentProof(t, arkadeScript, tapLeaf)}
+	fix.intent = Intent{
+		Proof:          fix.newSignedIntentProof(t, arkadeScript, tapLeaf),
+		Message:        &arkintent.RegisterMessage{},
+		EncodedMessage: testIntentMessage,
+	}
 
 	// a commitment tx with no input the signer owns, so the boarding branch of
 	// SubmitFinalization is reached but signs nothing
@@ -534,6 +569,13 @@ func (f *forfeitFixture) newSignedIntentProof(
 	}
 	ptx.Inputs[1].WitnessUtxo = f.vtxoPrevout
 	ptx.Inputs[1].TaprootLeafScript = []*psbt.TaprootTapLeafScript{f.leafScript}
+	expected, err := arkintent.New(testIntentMessage, []arkintent.Input{{
+		OutPoint:    &ptx.UnsignedTx.TxIn[1].PreviousOutPoint,
+		Sequence:    ptx.UnsignedTx.TxIn[1].Sequence,
+		WitnessUtxo: ptx.Inputs[1].WitnessUtxo,
+	}}, nil)
+	require.NoError(t, err)
+	ptx.UnsignedTx.TxIn[0].PreviousOutPoint = expected.UnsignedTx.TxIn[0].PreviousOutPoint
 
 	prevoutFetcher, err := computePrevoutFetcher(ptx)
 	require.NoError(t, err)
@@ -661,6 +703,13 @@ func signedFinalizationIntent(
 		ptx.Inputs[i].WitnessUtxo = prevout
 	}
 	ptx.Inputs[1].TaprootLeafScript = []*psbt.TaprootTapLeafScript{tapLeaf}
+	expected, err := arkintent.New(testIntentMessage, []arkintent.Input{{
+		OutPoint:    &ptx.UnsignedTx.TxIn[1].PreviousOutPoint,
+		Sequence:    ptx.UnsignedTx.TxIn[1].Sequence,
+		WitnessUtxo: ptx.Inputs[1].WitnessUtxo,
+	}}, nil)
+	require.NoError(t, err)
+	ptx.UnsignedTx.TxIn[0].PreviousOutPoint = expected.UnsignedTx.TxIn[0].PreviousOutPoint
 
 	packet, err := arkade.NewPacket(arkade.EmulatorEntry{Vin: 1, Script: arkadeScript})
 	require.NoError(t, err)
@@ -675,7 +724,11 @@ func signedFinalizationIntent(
 		ptx, 1, arkade.ArkadeScriptHash(arkadeScript), prevoutFetcher,
 	))
 
-	return Intent{Proof: arkintent.Proof{Packet: *ptx}}
+	return Intent{
+		Proof:          arkintent.Proof{Packet: *ptx},
+		Message:        &arkintent.RegisterMessage{},
+		EncodedMessage: testIntentMessage,
+	}
 }
 
 func finalizationCommitment(

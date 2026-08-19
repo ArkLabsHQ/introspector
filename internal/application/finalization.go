@@ -21,6 +21,9 @@ import (
 // proof contains a valid emulator signature. Tunnel-bearing scripts are replayed
 // after signature verification to recover their finalization restrictions.
 func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFinalization) (*SignedBatchFinalization, error) {
+	if err := validateIntentMessageCommitment(finalization.Intent); err != nil {
+		return nil, fmt.Errorf("intent message is not committed by the proof: %w", err)
+	}
 	// Sign nothing unless the commitment tx is an arkd-built artifact: a
 	// client-chosen commitment tx (e.g. an ark tx spending a pending
 	// checkpoint outpoint) would let a replayed proof bypass the arkade
@@ -58,7 +61,7 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 	if len(signedInputs) == 0 {
 		return nil, fmt.Errorf("no signed inputs found in intent proof")
 	}
-	if err := s.replayTunnelAuthorizations(ctx, finalization.Intent, signedInputs); err != nil {
+	if err := s.replayTunnelAuthorizations(finalization.Intent, signedInputs); err != nil {
 		return nil, fmt.Errorf("failed to replay tunnel authorization: %w", err)
 	}
 
@@ -166,11 +169,10 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 }
 
 type signedInputAssociation struct {
-	script     *arkade.ArkadeScript
-	signer     signer
-	prevout    wire.TxOut
-	inputIndex int
-	tunneled   bool
+	script   *arkade.ArkadeScript
+	signer   signer
+	prevout  wire.TxOut
+	tunneled bool
 }
 
 func (a signedInputAssociation) validateFinalizationInput(
@@ -281,10 +283,13 @@ func getSignedInputAssociations(
 					return nil, fmt.Errorf("invalid signature for input %d", inputIndex)
 				}
 
-				signedInputs[ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint] = signedInputAssociation{
-					script:     script,
-					signer:     candidate,
-					inputIndex: inputIndex,
+				outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
+				if _, exists := signedInputs[outpoint]; exists {
+					return nil, fmt.Errorf("duplicate signed outpoint %s", outpoint)
+				}
+				signedInputs[outpoint] = signedInputAssociation{
+					script: script,
+					signer: candidate,
 					prevout: wire.TxOut{
 						Value:    input.WitnessUtxo.Value,
 						PkScript: append([]byte(nil), input.WitnessUtxo.PkScript...),

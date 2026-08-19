@@ -17,7 +17,7 @@ import (
 // it must be used before registration of the intent
 func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet, error) {
 	evaluatedAt := time.Now()
-	if err := validateMessageAt(intent.Message, evaluatedAt); err != nil {
+	if err := validateMessage(intent.Message, evaluatedAt); err != nil {
 		return nil, fmt.Errorf("invalid message: %w", err)
 	}
 
@@ -26,6 +26,9 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 	prevOutFetcher, err := prevOutFetcherForIntent(ptx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create prevout fetcher: %w", err)
+	}
+	if err := validateIntentMessageCommitment(intent); err != nil {
+		return nil, fmt.Errorf("intent message is not committed by the proof: %w", err)
 	}
 
 	// Parse EmulatorPacket from the transaction's OP_RETURN output
@@ -112,12 +115,31 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 	return ptx, nil
 }
 
-// validateMessage checks intent admission policy and the proof's validity window.
-func validateMessage(message IntentMessage) error {
-	return validateMessageAt(message, time.Now())
+func validateIntentMessageCommitment(request Intent) error {
+	ptx := &request.Proof.Packet
+	if len(ptx.UnsignedTx.TxIn) < 2 || len(ptx.Inputs) < 2 || ptx.Inputs[1].WitnessUtxo == nil {
+		return fmt.Errorf("proof is missing its first ownership input")
+	}
+	if request.EncodedMessage == "" {
+		return fmt.Errorf("missing encoded intent message")
+	}
+	firstInput := ptx.UnsignedTx.TxIn[1]
+	expected, err := intent.New(request.EncodedMessage, []intent.Input{{
+		OutPoint:    &firstInput.PreviousOutPoint,
+		Sequence:    firstInput.Sequence,
+		WitnessUtxo: ptx.Inputs[1].WitnessUtxo,
+	}}, nil)
+	if err != nil {
+		return err
+	}
+	if ptx.UnsignedTx.TxIn[0].PreviousOutPoint != expected.UnsignedTx.TxIn[0].PreviousOutPoint {
+		return fmt.Errorf("synthetic message input does not match the supplied message")
+	}
+	return nil
 }
 
-func validateMessageAt(message IntentMessage, now time.Time) error {
+// validateMessage checks intent admission policy and the proof's validity window.
+func validateMessage(message IntentMessage, now time.Time) error {
 	var validAt, expireAt int64
 	switch m := message.(type) {
 	case *intent.RegisterMessage:

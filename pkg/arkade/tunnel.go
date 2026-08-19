@@ -3,7 +3,7 @@ package arkade
 import (
 	"bytes"
 	"fmt"
-	"math/bits"
+	"maps"
 	"time"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
@@ -30,30 +30,21 @@ type TunnelSource struct {
 	Unrolled        bool
 }
 
-type TunnelMapping struct {
-	InputIndex     int
-	SourceOutPoint wire.OutPoint
-	OutputIndex    int
-}
-
 type TunnelContext struct {
-	Purpose             TunnelPurpose
-	Sources             map[wire.OutPoint]TunnelSource
-	EvaluatedAt         time.Time
-	RenewalWindow       time.Duration
-	CompletionMargin    time.Duration
-	RegisterExpireAt    time.Time
-	HasOnchainOutputs   bool
-	claimedInputs       map[int]TunnelMapping
-	claimedOutputInputs map[int]int
+	Purpose           TunnelPurpose
+	Sources           map[wire.OutPoint]TunnelSource
+	EvaluatedAt       time.Time
+	RenewalWindow     time.Duration
+	CompletionMargin  time.Duration
+	RegisterExpireAt  time.Time
+	HasOnchainOutputs bool
+	tunneledInputs    map[int]struct{}
+	claimedOutputs    map[int]struct{}
 }
 
-func (c *TunnelContext) MappingForInput(inputIndex int) (TunnelMapping, bool) {
-	if c == nil {
-		return TunnelMapping{}, false
-	}
-	mapping, ok := c.claimedInputs[inputIndex]
-	return mapping, ok
+func (c *TunnelContext) InputWasTunneled(inputIndex int) bool {
+	_, ok := c.tunneledInputs[inputIndex]
+	return ok
 }
 
 func opcodeTunnel(op *opcode, data []byte, vm *Engine) error {
@@ -90,16 +81,16 @@ func (c *TunnelContext) authorize(vm *Engine, outputIndex int) error {
 		(c.RenewalWindow <= 0 || c.CompletionMargin <= 0 || c.CompletionMargin >= c.RenewalWindow) {
 		return fmt.Errorf("tunnel policy is disabled or invalid")
 	}
-	if c.claimedInputs == nil {
-		c.claimedInputs = make(map[int]TunnelMapping)
+	if c.tunneledInputs == nil {
+		c.tunneledInputs = make(map[int]struct{})
 	}
-	if c.claimedOutputInputs == nil {
-		c.claimedOutputInputs = make(map[int]int)
+	if c.claimedOutputs == nil {
+		c.claimedOutputs = make(map[int]struct{})
 	}
-	if _, exists := c.claimedInputs[vm.txIdx]; exists {
+	if _, exists := c.tunneledInputs[vm.txIdx]; exists {
 		return fmt.Errorf("input already tunneled")
 	}
-	if _, exists := c.claimedOutputInputs[outputIndex]; exists {
+	if _, exists := c.claimedOutputs[outputIndex]; exists {
 		return fmt.Errorf("output already claimed")
 	}
 
@@ -121,49 +112,53 @@ func (c *TunnelContext) authorize(vm *Engine, outputIndex int) error {
 	}
 
 	outpoint := vm.tx.TxIn[vm.txIdx].PreviousOutPoint
-	source, ok := c.Sources[outpoint]
-	if !ok {
-		return fmt.Errorf("source is not an indexed VTXO")
-	}
-	if c.Purpose == TunnelPurposeRegisterIntent {
-		if err := c.validateAdmission(source); err != nil {
-			return err
-		}
-	}
-
 	if vm.prevOutFetcher == nil {
 		return fmt.Errorf("missing prevout fetcher")
 	}
 	prevout := vm.prevOutFetcher.FetchPrevOutput(outpoint)
-	if prevout == nil || prevout.Value != source.Value {
-		return fmt.Errorf("source value does not match prevout")
+	if prevout == nil {
+		return fmt.Errorf("source prevout is missing")
 	}
-	if !bytes.Equal(vm.prevOutFetcher.FetchVtxoPrevOutPkScript(outpoint), source.ScriptPubKey) {
-		return fmt.Errorf("source script does not match prevout")
-	}
+	vtxoScript := vm.prevOutFetcher.FetchVtxoPrevOutPkScript(outpoint)
 	output := vm.tx.TxOut[outputIndex]
-	if output.Value != source.Value || !bytes.Equal(output.PkScript, source.ScriptPubKey) {
-		return fmt.Errorf("selected output does not preserve source")
-	}
-
 	inputAssets, outputAssets, err := tunnelAssetMaps(vm.assetPacket, vm.txIdx, outputIndex, len(vm.tx.TxIn), len(vm.tx.TxOut))
 	if err != nil {
 		return err
 	}
-	if !equalAssetMaps(inputAssets, source.Assets) {
-		return fmt.Errorf("source assets do not match packet input")
-	}
-	if !equalAssetMaps(outputAssets, source.Assets) {
-		return fmt.Errorf("selected output does not preserve source assets")
+	if c.Purpose == TunnelPurposeRegisterIntent {
+		source, ok := c.Sources[outpoint]
+		if !ok {
+			return fmt.Errorf("source is not an indexed VTXO")
+		}
+		if err := c.validateAdmission(source); err != nil {
+			return err
+		}
+		if prevout.Value != source.Value {
+			return fmt.Errorf("source value does not match prevout")
+		}
+		if !bytes.Equal(vtxoScript, source.ScriptPubKey) {
+			return fmt.Errorf("source script does not match prevout")
+		}
+		if output.Value != source.Value || !bytes.Equal(output.PkScript, source.ScriptPubKey) {
+			return fmt.Errorf("selected output does not preserve source")
+		}
+		if !maps.Equal(inputAssets, source.Assets) {
+			return fmt.Errorf("source assets do not match packet input")
+		}
+		if !maps.Equal(outputAssets, source.Assets) {
+			return fmt.Errorf("selected output does not preserve source assets")
+		}
+	} else {
+		if output.Value != prevout.Value || !bytes.Equal(output.PkScript, vtxoScript) {
+			return fmt.Errorf("selected output does not preserve source")
+		}
+		if !maps.Equal(inputAssets, outputAssets) {
+			return fmt.Errorf("selected output does not preserve source assets")
+		}
 	}
 
-	mapping := TunnelMapping{
-		InputIndex:     vm.txIdx,
-		SourceOutPoint: outpoint,
-		OutputIndex:    outputIndex,
-	}
-	c.claimedInputs[vm.txIdx] = mapping
-	c.claimedOutputInputs[outputIndex] = vm.txIdx
+	c.tunneledInputs[vm.txIdx] = struct{}{}
+	c.claimedOutputs[outputIndex] = struct{}{}
 	return nil
 }
 
@@ -186,71 +181,40 @@ func (c *TunnelContext) validateAdmission(source TunnelSource) error {
 func tunnelAssetMaps(packet asset.Packet, inputIndex, outputIndex, inputCount, outputCount int) (map[asset.AssetId]uint64, map[asset.AssetId]uint64, error) {
 	inputAssets := make(map[asset.AssetId]uint64)
 	outputAssets := make(map[asset.AssetId]uint64)
-	seen := make(map[asset.AssetId]struct{}, len(packet))
+	if len(packet) == 0 {
+		return inputAssets, outputAssets, nil
+	}
+	if _, err := asset.NewPacket([]asset.AssetGroup(packet)); err != nil {
+		return nil, nil, fmt.Errorf("invalid asset packet: %w", err)
+	}
 
 	for _, group := range packet {
 		if group.AssetId == nil || group.ControlAsset != nil || len(group.Metadata) > 0 {
 			return nil, nil, fmt.Errorf("asset packet is not a pure transfer")
 		}
 		id := *group.AssetId
-		if _, exists := seen[id]; exists {
-			return nil, nil, fmt.Errorf("asset packet contains duplicate asset groups")
+		if safeSumInputs(group.Inputs).Cmp(safeSumOutputs(group.Outputs)) != 0 {
+			return nil, nil, fmt.Errorf("asset packet does not conserve amounts")
 		}
-		seen[id] = struct{}{}
-
-		var inputSum, outputSum uint64
 		for _, input := range group.Inputs {
 			if input.Type != asset.AssetInputTypeLocal || int(input.Vin) >= inputCount {
 				return nil, nil, fmt.Errorf("asset packet contains a non-local or invalid input")
 			}
-			var carry uint64
-			inputSum, carry = bits.Add64(inputSum, input.Amount, 0)
-			if carry != 0 {
-				return nil, nil, fmt.Errorf("asset input amount overflow")
-			}
 			if int(input.Vin) == inputIndex {
-				amount, carry := bits.Add64(inputAssets[id], input.Amount, 0)
-				if carry != 0 {
-					return nil, nil, fmt.Errorf("source asset amount overflow")
-				}
-				inputAssets[id] = amount
+				inputAssets[id] = input.Amount
 			}
 		}
 		for _, output := range group.Outputs {
 			if output.Type != asset.AssetOutputTypeLocal || int(output.Vout) >= outputCount {
 				return nil, nil, fmt.Errorf("asset packet contains a non-local or invalid output")
 			}
-			var carry uint64
-			outputSum, carry = bits.Add64(outputSum, output.Amount, 0)
-			if carry != 0 {
-				return nil, nil, fmt.Errorf("asset output amount overflow")
-			}
 			if int(output.Vout) == outputIndex {
-				amount, carry := bits.Add64(outputAssets[id], output.Amount, 0)
-				if carry != 0 {
-					return nil, nil, fmt.Errorf("successor asset amount overflow")
-				}
-				outputAssets[id] = amount
+				outputAssets[id] = output.Amount
 			}
-		}
-		if inputSum != outputSum {
-			return nil, nil, fmt.Errorf("asset packet does not conserve amounts")
 		}
 	}
 
 	return inputAssets, outputAssets, nil
-}
-
-func equalAssetMaps(a, b map[asset.AssetId]uint64) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for id, amount := range a {
-		if b[id] != amount {
-			return false
-		}
-	}
-	return true
 }
 
 func tunnelError(description string) error {
