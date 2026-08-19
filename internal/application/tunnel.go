@@ -191,3 +191,78 @@ func (s *service) getTunnelSources(ctx context.Context, outpoints []wire.OutPoin
 	}
 	return sources, nil
 }
+
+func (s *service) replayTunnelAuthorizations(ctx context.Context, request Intent, signedInputs map[wire.OutPoint]signedInputAssociation) error {
+	packet, err := arkade.FindEmulatorPacket(request.Proof.UnsignedTx)
+	if err != nil {
+		return err
+	}
+	tunnelEntries := make([]arkade.EmulatorEntry, 0)
+	tunnelOutpoints := make([]wire.OutPoint, 0)
+	for _, entry := range packet {
+		inputIndex := int(entry.Vin)
+		if inputIndex <= 0 || inputIndex >= len(request.Proof.UnsignedTx.TxIn) {
+			continue
+		}
+		outpoint := request.Proof.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
+		if _, signed := signedInputs[outpoint]; !signed {
+			continue
+		}
+		hasTunnel, err := scriptHasTunnel(entry.Script)
+		if err != nil {
+			return err
+		}
+		if hasTunnel {
+			tunnelEntries = append(tunnelEntries, entry)
+			tunnelOutpoints = append(tunnelOutpoints, outpoint)
+		}
+	}
+	if len(tunnelEntries) == 0 {
+		return nil
+	}
+
+	message, ok := request.Message.(*arkintent.RegisterMessage)
+	if !ok {
+		return fmt.Errorf("tunnel authorization is not a register intent")
+	}
+	if err := validateIntentMessageCommitment(request); err != nil {
+		return err
+	}
+	sources, err := s.getTunnelSources(ctx, tunnelOutpoints)
+	if err != nil {
+		return err
+	}
+	prevOutFetcher, err := prevOutFetcherForIntent(&request.Proof.Packet)
+	if err != nil {
+		return err
+	}
+	tunnelContext := &arkade.TunnelContext{
+		Purpose:           arkade.TunnelPurposeFinalizationReplay,
+		Sources:           sources,
+		HasOnchainOutputs: len(message.OnchainOutputIndexes) > 0,
+	}
+	budget := arkade.NewComputeBudgetWithLimits(arkade.AggregateComputeLimits(s.computeLimits))
+	for _, entry := range tunnelEntries {
+		inputIndex := int(entry.Vin)
+		outpoint := request.Proof.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
+		association := signedInputs[outpoint]
+		if association.inputIndex != inputIndex {
+			return fmt.Errorf("signed input association index mismatch")
+		}
+		if err := association.script.Execute(
+			request.Proof.UnsignedTx,
+			prevOutFetcher,
+			inputIndex,
+			arkade.WithExactComputeLimits(s.computeLimits),
+			arkade.WithComputeBudget(budget),
+			arkade.WithTunnelContext(tunnelContext),
+		); err != nil {
+			return fmt.Errorf("input %d: %w", inputIndex, err)
+		}
+		if _, tunneled := tunnelContext.MappingForInput(inputIndex); tunneled {
+			association.tunneled = true
+			signedInputs[outpoint] = association
+		}
+	}
+	return nil
+}

@@ -11,6 +11,7 @@ import (
 	sdkclient "github.com/arkade-os/go-sdk/client"
 	"github.com/arkade-os/go-sdk/indexer"
 	"github.com/arkade-os/go-sdk/types"
+	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
@@ -122,14 +123,37 @@ func TestSubmitIntentExecutesTunnelWithIndexedSource(t *testing.T) {
 			CompletionMargin: 30 * time.Minute,
 		},
 	}
-	signed, err := svc.SubmitIntent(t.Context(), Intent{
+	request := Intent{
 		Proof:          intent.Proof{Packet: *ptx},
 		Message:        message,
 		EncodedMessage: encodedMessage,
-	})
+	}
+	signed, err := svc.SubmitIntent(t.Context(), request)
 	require.NoError(t, err)
 	require.NotEmpty(t, signed.Inputs[1].TaprootScriptSpendSig)
 	require.Equal(t, 1, indexerClient.calls)
+
+	request.Proof = intent.Proof{Packet: *signed}
+	associations, err := getSignedInputAssociations(request.Proof.Packet, signer{signerKey}, nil)
+	require.NoError(t, err)
+	require.NoError(t, svc.replayTunnelAuthorizations(t.Context(), request, associations))
+	require.True(t, associations[firstInput.PreviousOutPoint].tunneled)
+
+	commitmentTx := wire.NewMsgTx(3)
+	commitmentTx.AddTxIn(wire.NewTxIn(&firstInput.PreviousOutPoint, nil, nil))
+	commitmentTx.AddTxOut(wire.NewTxOut(1_000, []byte{txscript.OP_TRUE}))
+	commitment, err := psbt.NewFromUnsignedTx(commitmentTx)
+	require.NoError(t, err)
+	commitment.Inputs[0].WitnessUtxo = signed.Inputs[1].WitnessUtxo
+	commitment.Inputs[0].TaprootLeafScript = signed.Inputs[1].TaprootLeafScript
+
+	finalized, err := svc.SubmitFinalization(t.Context(), BatchFinalization{
+		Intent:       request,
+		CommitmentTx: commitment,
+	})
+	require.ErrorContains(t, err, "cannot sign a commitment transaction")
+	require.Nil(t, finalized)
+	require.Empty(t, commitment.Inputs[0].TaprootScriptSpendSig)
 }
 
 type tunnelIndexer struct {
@@ -141,4 +165,8 @@ type tunnelIndexer struct {
 func (m *tunnelIndexer) GetVtxos(context.Context, ...indexer.GetVtxosRequestOption) (*indexer.VtxosResponse, error) {
 	m.calls++
 	return &indexer.VtxosResponse{Vtxos: m.vtxos}, nil
+}
+
+func (m *tunnelIndexer) GetCommitmentTx(context.Context, string) (*indexer.CommitmentTx, error) {
+	return &indexer.CommitmentTx{}, nil
 }

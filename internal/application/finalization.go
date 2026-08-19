@@ -17,9 +17,9 @@ import (
 	"github.com/btcsuite/btcd/wire"
 )
 
-// SubmitFinalization doesn't execute arkade scripts, it only signs the forfeits and the commitment tx
-// if and only if the intent proof contains the signer's signature (it means we executed the arkade script in the past)
-// before signing the forfeits, we also verify that is it part of the commitment tx
+// SubmitFinalization signs forfeits and boarding inputs only when the intent
+// proof contains a valid emulator signature. Tunnel-bearing scripts are replayed
+// after signature verification to recover their finalization restrictions.
 func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFinalization) (*SignedBatchFinalization, error) {
 	// Sign nothing unless the commitment tx is an arkd-built artifact: a
 	// client-chosen commitment tx (e.g. an ark tx spending a pending
@@ -57,6 +57,9 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 
 	if len(signedInputs) == 0 {
 		return nil, fmt.Errorf("no signed inputs found in intent proof")
+	}
+	if err := s.replayTunnelAuthorizations(ctx, finalization.Intent, signedInputs); err != nil {
+		return nil, fmt.Errorf("failed to replay tunnel authorization: %w", err)
 	}
 
 	signedForfeits := make([]*psbt.Packet, 0, len(finalization.Forfeits))
@@ -138,6 +141,9 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 		if !ok {
 			continue
 		}
+		if association.tunneled {
+			return nil, fmt.Errorf("tunnel-authorized input %s cannot sign a commitment transaction", input.PreviousOutPoint)
+		}
 		if err := association.validateFinalizationInput(
 			finalization.CommitmentTx, inputIndex, s.arkdPubKey,
 		); err != nil {
@@ -160,9 +166,11 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 }
 
 type signedInputAssociation struct {
-	script  *arkade.ArkadeScript
-	signer  signer
-	prevout wire.TxOut
+	script     *arkade.ArkadeScript
+	signer     signer
+	prevout    wire.TxOut
+	inputIndex int
+	tunneled   bool
 }
 
 func (a signedInputAssociation) validateFinalizationInput(
@@ -274,8 +282,9 @@ func getSignedInputAssociations(
 				}
 
 				signedInputs[ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint] = signedInputAssociation{
-					script: script,
-					signer: candidate,
+					script:     script,
+					signer:     candidate,
+					inputIndex: inputIndex,
 					prevout: wire.TxOut{
 						Value:    input.WitnessUtxo.Value,
 						PkScript: append([]byte(nil), input.WitnessUtxo.PkScript...),
