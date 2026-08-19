@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
@@ -36,11 +37,19 @@ func (h *handler) GetInfo(
 	if err != nil {
 		return nil, err
 	}
+	var tunnelPolicy *emulatorv1.TunnelPolicy
+	if info.TunnelPolicy != nil {
+		tunnelPolicy = &emulatorv1.TunnelPolicy{
+			RenewalWindowSeconds:    int64(info.TunnelPolicy.RenewalWindow / time.Second),
+			CompletionMarginSeconds: int64(info.TunnelPolicy.CompletionMargin / time.Second),
+		}
+	}
 
 	return &emulatorv1.GetInfoResponse{
 		SignerPubkey:            info.SignerPublicKey,
 		DeprecatedSignerPubkeys: append([]string(nil), info.DeprecatedSignerPublicKeys...),
 		Version:                 h.version,
+		TunnelPolicy:            tunnelPolicy,
 	}, nil
 }
 

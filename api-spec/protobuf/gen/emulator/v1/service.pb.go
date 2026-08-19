@@ -65,8 +65,10 @@ type GetInfoResponse struct {
 	SignerPubkey string `protobuf:"bytes,2,opt,name=signer_pubkey,json=signerPubkey,proto3" json:"signer_pubkey,omitempty"`
 	// hex-encoded compressed public keys of deprecated signers accepted for signing.
 	DeprecatedSignerPubkeys []string `protobuf:"bytes,3,rep,name=deprecated_signer_pubkeys,json=deprecatedSignerPubkeys,proto3" json:"deprecated_signer_pubkeys,omitempty"`
-	unknownFields           protoimpl.UnknownFields
-	sizeCache               protoimpl.SizeCache
+	// delegated renewal policy; absent when OP_TUNNEL authorization is disabled.
+	TunnelPolicy  *TunnelPolicy `protobuf:"bytes,4,opt,name=tunnel_policy,json=tunnelPolicy,proto3" json:"tunnel_policy,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *GetInfoResponse) Reset() {
@@ -120,6 +122,65 @@ func (x *GetInfoResponse) GetDeprecatedSignerPubkeys() []string {
 	return nil
 }
 
+func (x *GetInfoResponse) GetTunnelPolicy() *TunnelPolicy {
+	if x != nil {
+		return x.TunnelPolicy
+	}
+	return nil
+}
+
+type TunnelPolicy struct {
+	state                   protoimpl.MessageState `protogen:"open.v1"`
+	RenewalWindowSeconds    int64                  `protobuf:"varint,1,opt,name=renewal_window_seconds,json=renewalWindowSeconds,proto3" json:"renewal_window_seconds,omitempty"`
+	CompletionMarginSeconds int64                  `protobuf:"varint,2,opt,name=completion_margin_seconds,json=completionMarginSeconds,proto3" json:"completion_margin_seconds,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
+}
+
+func (x *TunnelPolicy) Reset() {
+	*x = TunnelPolicy{}
+	mi := &file_emulator_v1_service_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TunnelPolicy) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TunnelPolicy) ProtoMessage() {}
+
+func (x *TunnelPolicy) ProtoReflect() protoreflect.Message {
+	mi := &file_emulator_v1_service_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TunnelPolicy.ProtoReflect.Descriptor instead.
+func (*TunnelPolicy) Descriptor() ([]byte, []int) {
+	return file_emulator_v1_service_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *TunnelPolicy) GetRenewalWindowSeconds() int64 {
+	if x != nil {
+		return x.RenewalWindowSeconds
+	}
+	return 0
+}
+
+func (x *TunnelPolicy) GetCompletionMarginSeconds() int64 {
+	if x != nil {
+		return x.CompletionMarginSeconds
+	}
+	return 0
+}
+
 type SubmitTxRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// base64 psbt
@@ -132,7 +193,7 @@ type SubmitTxRequest struct {
 
 func (x *SubmitTxRequest) Reset() {
 	*x = SubmitTxRequest{}
-	mi := &file_emulator_v1_service_proto_msgTypes[2]
+	mi := &file_emulator_v1_service_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -144,7 +205,7 @@ func (x *SubmitTxRequest) String() string {
 func (*SubmitTxRequest) ProtoMessage() {}
 
 func (x *SubmitTxRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_emulator_v1_service_proto_msgTypes[2]
+	mi := &file_emulator_v1_service_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -157,7 +218,7 @@ func (x *SubmitTxRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubmitTxRequest.ProtoReflect.Descriptor instead.
 func (*SubmitTxRequest) Descriptor() ([]byte, []int) {
-	return file_emulator_v1_service_proto_rawDescGZIP(), []int{2}
+	return file_emulator_v1_service_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *SubmitTxRequest) GetArkTx() string {
@@ -184,7 +245,7 @@ type SubmitTxResponse struct {
 
 func (x *SubmitTxResponse) Reset() {
 	*x = SubmitTxResponse{}
-	mi := &file_emulator_v1_service_proto_msgTypes[3]
+	mi := &file_emulator_v1_service_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -196,7 +257,7 @@ func (x *SubmitTxResponse) String() string {
 func (*SubmitTxResponse) ProtoMessage() {}
 
 func (x *SubmitTxResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_emulator_v1_service_proto_msgTypes[3]
+	mi := &file_emulator_v1_service_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -209,7 +270,7 @@ func (x *SubmitTxResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubmitTxResponse.ProtoReflect.Descriptor instead.
 func (*SubmitTxResponse) Descriptor() ([]byte, []int) {
-	return file_emulator_v1_service_proto_rawDescGZIP(), []int{3}
+	return file_emulator_v1_service_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *SubmitTxResponse) GetSignedArkTx() string {
@@ -235,7 +296,7 @@ type SubmitIntentRequest struct {
 
 func (x *SubmitIntentRequest) Reset() {
 	*x = SubmitIntentRequest{}
-	mi := &file_emulator_v1_service_proto_msgTypes[4]
+	mi := &file_emulator_v1_service_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -247,7 +308,7 @@ func (x *SubmitIntentRequest) String() string {
 func (*SubmitIntentRequest) ProtoMessage() {}
 
 func (x *SubmitIntentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_emulator_v1_service_proto_msgTypes[4]
+	mi := &file_emulator_v1_service_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -260,7 +321,7 @@ func (x *SubmitIntentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubmitIntentRequest.ProtoReflect.Descriptor instead.
 func (*SubmitIntentRequest) Descriptor() ([]byte, []int) {
-	return file_emulator_v1_service_proto_rawDescGZIP(), []int{4}
+	return file_emulator_v1_service_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *SubmitIntentRequest) GetIntent() *Intent {
@@ -279,7 +340,7 @@ type SubmitIntentResponse struct {
 
 func (x *SubmitIntentResponse) Reset() {
 	*x = SubmitIntentResponse{}
-	mi := &file_emulator_v1_service_proto_msgTypes[5]
+	mi := &file_emulator_v1_service_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -291,7 +352,7 @@ func (x *SubmitIntentResponse) String() string {
 func (*SubmitIntentResponse) ProtoMessage() {}
 
 func (x *SubmitIntentResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_emulator_v1_service_proto_msgTypes[5]
+	mi := &file_emulator_v1_service_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -304,7 +365,7 @@ func (x *SubmitIntentResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubmitIntentResponse.ProtoReflect.Descriptor instead.
 func (*SubmitIntentResponse) Descriptor() ([]byte, []int) {
-	return file_emulator_v1_service_proto_rawDescGZIP(), []int{5}
+	return file_emulator_v1_service_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *SubmitIntentResponse) GetSignedProof() string {
@@ -326,7 +387,7 @@ type SubmitFinalizationRequest struct {
 
 func (x *SubmitFinalizationRequest) Reset() {
 	*x = SubmitFinalizationRequest{}
-	mi := &file_emulator_v1_service_proto_msgTypes[6]
+	mi := &file_emulator_v1_service_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -338,7 +399,7 @@ func (x *SubmitFinalizationRequest) String() string {
 func (*SubmitFinalizationRequest) ProtoMessage() {}
 
 func (x *SubmitFinalizationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_emulator_v1_service_proto_msgTypes[6]
+	mi := &file_emulator_v1_service_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -351,7 +412,7 @@ func (x *SubmitFinalizationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubmitFinalizationRequest.ProtoReflect.Descriptor instead.
 func (*SubmitFinalizationRequest) Descriptor() ([]byte, []int) {
-	return file_emulator_v1_service_proto_rawDescGZIP(), []int{6}
+	return file_emulator_v1_service_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *SubmitFinalizationRequest) GetSignedIntent() *Intent {
@@ -392,7 +453,7 @@ type SubmitFinalizationResponse struct {
 
 func (x *SubmitFinalizationResponse) Reset() {
 	*x = SubmitFinalizationResponse{}
-	mi := &file_emulator_v1_service_proto_msgTypes[7]
+	mi := &file_emulator_v1_service_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -404,7 +465,7 @@ func (x *SubmitFinalizationResponse) String() string {
 func (*SubmitFinalizationResponse) ProtoMessage() {}
 
 func (x *SubmitFinalizationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_emulator_v1_service_proto_msgTypes[7]
+	mi := &file_emulator_v1_service_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -417,7 +478,7 @@ func (x *SubmitFinalizationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubmitFinalizationResponse.ProtoReflect.Descriptor instead.
 func (*SubmitFinalizationResponse) Descriptor() ([]byte, []int) {
-	return file_emulator_v1_service_proto_rawDescGZIP(), []int{7}
+	return file_emulator_v1_service_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *SubmitFinalizationResponse) GetSignedForfeits() []string {
@@ -445,7 +506,7 @@ type TxTreeNode struct {
 
 func (x *TxTreeNode) Reset() {
 	*x = TxTreeNode{}
-	mi := &file_emulator_v1_service_proto_msgTypes[8]
+	mi := &file_emulator_v1_service_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -457,7 +518,7 @@ func (x *TxTreeNode) String() string {
 func (*TxTreeNode) ProtoMessage() {}
 
 func (x *TxTreeNode) ProtoReflect() protoreflect.Message {
-	mi := &file_emulator_v1_service_proto_msgTypes[8]
+	mi := &file_emulator_v1_service_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -470,7 +531,7 @@ func (x *TxTreeNode) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TxTreeNode.ProtoReflect.Descriptor instead.
 func (*TxTreeNode) Descriptor() ([]byte, []int) {
-	return file_emulator_v1_service_proto_rawDescGZIP(), []int{8}
+	return file_emulator_v1_service_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *TxTreeNode) GetTxid() string {
@@ -504,7 +565,7 @@ type Intent struct {
 
 func (x *Intent) Reset() {
 	*x = Intent{}
-	mi := &file_emulator_v1_service_proto_msgTypes[9]
+	mi := &file_emulator_v1_service_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -516,7 +577,7 @@ func (x *Intent) String() string {
 func (*Intent) ProtoMessage() {}
 
 func (x *Intent) ProtoReflect() protoreflect.Message {
-	mi := &file_emulator_v1_service_proto_msgTypes[9]
+	mi := &file_emulator_v1_service_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -529,7 +590,7 @@ func (x *Intent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Intent.ProtoReflect.Descriptor instead.
 func (*Intent) Descriptor() ([]byte, []int) {
-	return file_emulator_v1_service_proto_rawDescGZIP(), []int{9}
+	return file_emulator_v1_service_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *Intent) GetProof() string {
@@ -556,7 +617,7 @@ type SubmitOnchainTxRequest struct {
 
 func (x *SubmitOnchainTxRequest) Reset() {
 	*x = SubmitOnchainTxRequest{}
-	mi := &file_emulator_v1_service_proto_msgTypes[10]
+	mi := &file_emulator_v1_service_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -568,7 +629,7 @@ func (x *SubmitOnchainTxRequest) String() string {
 func (*SubmitOnchainTxRequest) ProtoMessage() {}
 
 func (x *SubmitOnchainTxRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_emulator_v1_service_proto_msgTypes[10]
+	mi := &file_emulator_v1_service_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -581,7 +642,7 @@ func (x *SubmitOnchainTxRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubmitOnchainTxRequest.ProtoReflect.Descriptor instead.
 func (*SubmitOnchainTxRequest) Descriptor() ([]byte, []int) {
-	return file_emulator_v1_service_proto_rawDescGZIP(), []int{10}
+	return file_emulator_v1_service_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *SubmitOnchainTxRequest) GetTx() string {
@@ -600,7 +661,7 @@ type SubmitOnchainTxResponse struct {
 
 func (x *SubmitOnchainTxResponse) Reset() {
 	*x = SubmitOnchainTxResponse{}
-	mi := &file_emulator_v1_service_proto_msgTypes[11]
+	mi := &file_emulator_v1_service_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -612,7 +673,7 @@ func (x *SubmitOnchainTxResponse) String() string {
 func (*SubmitOnchainTxResponse) ProtoMessage() {}
 
 func (x *SubmitOnchainTxResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_emulator_v1_service_proto_msgTypes[11]
+	mi := &file_emulator_v1_service_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -625,7 +686,7 @@ func (x *SubmitOnchainTxResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubmitOnchainTxResponse.ProtoReflect.Descriptor instead.
 func (*SubmitOnchainTxResponse) Descriptor() ([]byte, []int) {
-	return file_emulator_v1_service_proto_rawDescGZIP(), []int{11}
+	return file_emulator_v1_service_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *SubmitOnchainTxResponse) GetSignedTx() string {
@@ -640,11 +701,15 @@ var File_emulator_v1_service_proto protoreflect.FileDescriptor
 const file_emulator_v1_service_proto_rawDesc = "" +
 	"\n" +
 	"\x19emulator/v1/service.proto\x12\vemulator.v1\x1a!meshapi/gateway/annotations.proto\"\x10\n" +
-	"\x0eGetInfoRequest\"\x8c\x01\n" +
+	"\x0eGetInfoRequest\"\xcc\x01\n" +
 	"\x0fGetInfoResponse\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12#\n" +
 	"\rsigner_pubkey\x18\x02 \x01(\tR\fsignerPubkey\x12:\n" +
-	"\x19deprecated_signer_pubkeys\x18\x03 \x03(\tR\x17deprecatedSignerPubkeys\"O\n" +
+	"\x19deprecated_signer_pubkeys\x18\x03 \x03(\tR\x17deprecatedSignerPubkeys\x12>\n" +
+	"\rtunnel_policy\x18\x04 \x01(\v2\x19.emulator.v1.TunnelPolicyR\ftunnelPolicy\"\x80\x01\n" +
+	"\fTunnelPolicy\x124\n" +
+	"\x16renewal_window_seconds\x18\x01 \x01(\x03R\x14renewalWindowSeconds\x12:\n" +
+	"\x19completion_margin_seconds\x18\x02 \x01(\x03R\x17completionMarginSeconds\"O\n" +
 	"\x0fSubmitTxRequest\x12\x15\n" +
 	"\x06ark_tx\x18\x01 \x01(\tR\x05arkTx\x12%\n" +
 	"\x0echeckpoint_txs\x18\x02 \x03(\tR\rcheckpointTxs\"j\n" +
@@ -700,42 +765,44 @@ func file_emulator_v1_service_proto_rawDescGZIP() []byte {
 	return file_emulator_v1_service_proto_rawDescData
 }
 
-var file_emulator_v1_service_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_emulator_v1_service_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_emulator_v1_service_proto_goTypes = []any{
 	(*GetInfoRequest)(nil),             // 0: emulator.v1.GetInfoRequest
 	(*GetInfoResponse)(nil),            // 1: emulator.v1.GetInfoResponse
-	(*SubmitTxRequest)(nil),            // 2: emulator.v1.SubmitTxRequest
-	(*SubmitTxResponse)(nil),           // 3: emulator.v1.SubmitTxResponse
-	(*SubmitIntentRequest)(nil),        // 4: emulator.v1.SubmitIntentRequest
-	(*SubmitIntentResponse)(nil),       // 5: emulator.v1.SubmitIntentResponse
-	(*SubmitFinalizationRequest)(nil),  // 6: emulator.v1.SubmitFinalizationRequest
-	(*SubmitFinalizationResponse)(nil), // 7: emulator.v1.SubmitFinalizationResponse
-	(*TxTreeNode)(nil),                 // 8: emulator.v1.TxTreeNode
-	(*Intent)(nil),                     // 9: emulator.v1.Intent
-	(*SubmitOnchainTxRequest)(nil),     // 10: emulator.v1.SubmitOnchainTxRequest
-	(*SubmitOnchainTxResponse)(nil),    // 11: emulator.v1.SubmitOnchainTxResponse
-	nil,                                // 12: emulator.v1.TxTreeNode.ChildrenEntry
+	(*TunnelPolicy)(nil),               // 2: emulator.v1.TunnelPolicy
+	(*SubmitTxRequest)(nil),            // 3: emulator.v1.SubmitTxRequest
+	(*SubmitTxResponse)(nil),           // 4: emulator.v1.SubmitTxResponse
+	(*SubmitIntentRequest)(nil),        // 5: emulator.v1.SubmitIntentRequest
+	(*SubmitIntentResponse)(nil),       // 6: emulator.v1.SubmitIntentResponse
+	(*SubmitFinalizationRequest)(nil),  // 7: emulator.v1.SubmitFinalizationRequest
+	(*SubmitFinalizationResponse)(nil), // 8: emulator.v1.SubmitFinalizationResponse
+	(*TxTreeNode)(nil),                 // 9: emulator.v1.TxTreeNode
+	(*Intent)(nil),                     // 10: emulator.v1.Intent
+	(*SubmitOnchainTxRequest)(nil),     // 11: emulator.v1.SubmitOnchainTxRequest
+	(*SubmitOnchainTxResponse)(nil),    // 12: emulator.v1.SubmitOnchainTxResponse
+	nil,                                // 13: emulator.v1.TxTreeNode.ChildrenEntry
 }
 var file_emulator_v1_service_proto_depIdxs = []int32{
-	9,  // 0: emulator.v1.SubmitIntentRequest.intent:type_name -> emulator.v1.Intent
-	9,  // 1: emulator.v1.SubmitFinalizationRequest.signed_intent:type_name -> emulator.v1.Intent
-	8,  // 2: emulator.v1.SubmitFinalizationRequest.connector_tree:type_name -> emulator.v1.TxTreeNode
-	12, // 3: emulator.v1.TxTreeNode.children:type_name -> emulator.v1.TxTreeNode.ChildrenEntry
-	0,  // 4: emulator.v1.EmulatorService.GetInfo:input_type -> emulator.v1.GetInfoRequest
-	2,  // 5: emulator.v1.EmulatorService.SubmitTx:input_type -> emulator.v1.SubmitTxRequest
-	4,  // 6: emulator.v1.EmulatorService.SubmitIntent:input_type -> emulator.v1.SubmitIntentRequest
-	6,  // 7: emulator.v1.EmulatorService.SubmitFinalization:input_type -> emulator.v1.SubmitFinalizationRequest
-	10, // 8: emulator.v1.EmulatorService.SubmitOnchainTx:input_type -> emulator.v1.SubmitOnchainTxRequest
-	1,  // 9: emulator.v1.EmulatorService.GetInfo:output_type -> emulator.v1.GetInfoResponse
-	3,  // 10: emulator.v1.EmulatorService.SubmitTx:output_type -> emulator.v1.SubmitTxResponse
-	5,  // 11: emulator.v1.EmulatorService.SubmitIntent:output_type -> emulator.v1.SubmitIntentResponse
-	7,  // 12: emulator.v1.EmulatorService.SubmitFinalization:output_type -> emulator.v1.SubmitFinalizationResponse
-	11, // 13: emulator.v1.EmulatorService.SubmitOnchainTx:output_type -> emulator.v1.SubmitOnchainTxResponse
-	9,  // [9:14] is the sub-list for method output_type
-	4,  // [4:9] is the sub-list for method input_type
-	4,  // [4:4] is the sub-list for extension type_name
-	4,  // [4:4] is the sub-list for extension extendee
-	0,  // [0:4] is the sub-list for field type_name
+	2,  // 0: emulator.v1.GetInfoResponse.tunnel_policy:type_name -> emulator.v1.TunnelPolicy
+	10, // 1: emulator.v1.SubmitIntentRequest.intent:type_name -> emulator.v1.Intent
+	10, // 2: emulator.v1.SubmitFinalizationRequest.signed_intent:type_name -> emulator.v1.Intent
+	9,  // 3: emulator.v1.SubmitFinalizationRequest.connector_tree:type_name -> emulator.v1.TxTreeNode
+	13, // 4: emulator.v1.TxTreeNode.children:type_name -> emulator.v1.TxTreeNode.ChildrenEntry
+	0,  // 5: emulator.v1.EmulatorService.GetInfo:input_type -> emulator.v1.GetInfoRequest
+	3,  // 6: emulator.v1.EmulatorService.SubmitTx:input_type -> emulator.v1.SubmitTxRequest
+	5,  // 7: emulator.v1.EmulatorService.SubmitIntent:input_type -> emulator.v1.SubmitIntentRequest
+	7,  // 8: emulator.v1.EmulatorService.SubmitFinalization:input_type -> emulator.v1.SubmitFinalizationRequest
+	11, // 9: emulator.v1.EmulatorService.SubmitOnchainTx:input_type -> emulator.v1.SubmitOnchainTxRequest
+	1,  // 10: emulator.v1.EmulatorService.GetInfo:output_type -> emulator.v1.GetInfoResponse
+	4,  // 11: emulator.v1.EmulatorService.SubmitTx:output_type -> emulator.v1.SubmitTxResponse
+	6,  // 12: emulator.v1.EmulatorService.SubmitIntent:output_type -> emulator.v1.SubmitIntentResponse
+	8,  // 13: emulator.v1.EmulatorService.SubmitFinalization:output_type -> emulator.v1.SubmitFinalizationResponse
+	12, // 14: emulator.v1.EmulatorService.SubmitOnchainTx:output_type -> emulator.v1.SubmitOnchainTxResponse
+	10, // [10:15] is the sub-list for method output_type
+	5,  // [5:10] is the sub-list for method input_type
+	5,  // [5:5] is the sub-list for extension type_name
+	5,  // [5:5] is the sub-list for extension extendee
+	0,  // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_emulator_v1_service_proto_init() }
@@ -749,7 +816,7 @@ func file_emulator_v1_service_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_emulator_v1_service_proto_rawDesc), len(file_emulator_v1_service_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   13,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

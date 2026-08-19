@@ -37,8 +37,8 @@ type EmulatorServiceClient interface {
 	// transactions by executing Arkade scripts on each input.
 	// the script is executed only on the ark transaction, not on checkpoints.
 	SubmitTx(ctx context.Context, in *SubmitTxRequest, opts ...grpc.CallOption) (*SubmitTxResponse, error)
-	// SubmitIntent signs an intent proof after validating the register message
-	// and executing Arkade Script on the intent proof transaction.
+	// SubmitIntent signs an intent proof (any arkd intent message type) after
+	// validating the message and executing Arkade Script on the proof transaction.
 	SubmitIntent(ctx context.Context, in *SubmitIntentRequest, opts ...grpc.CallOption) (*SubmitIntentResponse, error)
 	// SubmitFinalization conditionally signs forfeit and/or boarding inputs.
 	// It only signs if the signer's signature is found in the intent proof.
@@ -121,8 +121,8 @@ type EmulatorServiceServer interface {
 	// transactions by executing Arkade scripts on each input.
 	// the script is executed only on the ark transaction, not on checkpoints.
 	SubmitTx(context.Context, *SubmitTxRequest) (*SubmitTxResponse, error)
-	// SubmitIntent signs an intent proof after validating the register message
-	// and executing Arkade Script on the intent proof transaction.
+	// SubmitIntent signs an intent proof (any arkd intent message type) after
+	// validating the message and executing Arkade Script on the proof transaction.
 	SubmitIntent(context.Context, *SubmitIntentRequest) (*SubmitIntentResponse, error)
 	// SubmitFinalization conditionally signs forfeit and/or boarding inputs.
 	// It only signs if the signer's signature is found in the intent proof.

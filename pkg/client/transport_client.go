@@ -2,9 +2,10 @@ package client
 
 import (
 	"context"
+	"time"
 
-	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
+	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
 	"google.golang.org/grpc"
 )
 
@@ -12,6 +13,12 @@ type Info struct {
 	Version                    string
 	SignerPublicKey            string
 	DeprecatedSignerPublicKeys []string
+	TunnelPolicy               *TunnelPolicy
+}
+
+type TunnelPolicy struct {
+	RenewalWindow    time.Duration
+	CompletionMargin time.Duration
 }
 
 type Intent struct {
@@ -52,11 +59,19 @@ func (c *grpcClient) GetInfo(ctx context.Context) (*Info, error) {
 	if err != nil {
 		return nil, err
 	}
+	var tunnelPolicy *TunnelPolicy
+	if policy := resp.GetTunnelPolicy(); policy != nil {
+		tunnelPolicy = &TunnelPolicy{
+			RenewalWindow:    time.Duration(policy.GetRenewalWindowSeconds()) * time.Second,
+			CompletionMargin: time.Duration(policy.GetCompletionMarginSeconds()) * time.Second,
+		}
+	}
 
 	return &Info{
 		Version:                    resp.GetVersion(),
 		SignerPublicKey:            resp.GetSignerPubkey(),
 		DeprecatedSignerPublicKeys: append([]string(nil), resp.GetDeprecatedSignerPubkeys()...),
+		TunnelPolicy:               tunnelPolicy,
 	}, nil
 }
 

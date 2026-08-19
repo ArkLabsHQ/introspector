@@ -82,7 +82,7 @@
         "tags": [
           "EmulatorService"
         ],
-        "description": "SubmitIntent signs an intent proof after validating the register message\nand executing Arkade Script on the intent proof transaction.",
+        "description": "SubmitIntent signs an intent proof (any arkd intent message type) after\nvalidating the message and executing Arkade Script on the proof transaction.",
         "operationId": "EmulatorService_SubmitIntent",
         "requestBody": {
           "content": {
@@ -232,6 +232,10 @@
             "type": "string",
             "description": "hex-encoded compressed public key of the signer."
           },
+          "tunnelPolicy": {
+            "$ref": "#/components/schemas/TunnelPolicy",
+            "description": "delegated renewal policy; absent when OP_TUNNEL authorization is disabled."
+          },
           "version": {
             "type": "string"
           }
@@ -373,6 +377,20 @@
             "items": {
               "type": "string"
             }
+          }
+        }
+      },
+      "TunnelPolicy": {
+        "title": "TunnelPolicy",
+        "type": "object",
+        "properties": {
+          "completionMarginSeconds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "renewalWindowSeconds": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },

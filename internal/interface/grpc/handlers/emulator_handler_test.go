@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
@@ -50,6 +51,26 @@ func (failingService) SubmitOnchainTx(
 }
 
 func (failingService) Close() {}
+
+type infoService struct{ failingService }
+
+func (infoService) GetInfo(context.Context) (*application.Info, error) {
+	return &application.Info{
+		SignerPublicKey:            "signer",
+		DeprecatedSignerPublicKeys: []string{"old"},
+		TunnelPolicy: &application.TunnelPolicy{
+			RenewalWindow:    24 * time.Hour,
+			CompletionMargin: 30 * time.Minute,
+		},
+	}, nil
+}
+
+func TestGetInfoExposesTunnelPolicy(t *testing.T) {
+	response, err := New("test", infoService{}).GetInfo(t.Context(), &emulatorv1.GetInfoRequest{})
+	require.NoError(t, err)
+	require.Equal(t, int64(24*60*60), response.GetTunnelPolicy().GetRenewalWindowSeconds())
+	require.Equal(t, int64(30*60), response.GetTunnelPolicy().GetCompletionMarginSeconds())
+}
 
 // requireGenericInternal asserts the caller got a generic Internal error with no
 // trace of the underlying detail.
