@@ -33,11 +33,7 @@ func opcodeTunnel(op *opcode, data []byte, vm *Engine) error {
 		if err != nil {
 			return err
 		}
-		id := asset.AssetId{Txid: txid, Index: index}
-		if _, exists := exceptions[id]; exists {
-			return tunnelError("duplicate asset exception")
-		}
-		exceptions[id] = struct{}{}
+		exceptions[asset.AssetId{Txid: txid, Index: index}] = struct{}{}
 	}
 
 	flags, err := vm.dstack.PopInt()
@@ -61,7 +57,7 @@ func opcodeTunnel(op *opcode, data []byte, vm *Engine) error {
 	if vm.txIdx < 0 || vm.txIdx >= len(vm.tx.TxIn) {
 		return tunnelError("input index out of range")
 	}
-	if vm.prevOutFetcher == nil {
+	if flags&(TunnelScriptPubKey|TunnelValue) != 0 && vm.prevOutFetcher == nil {
 		return tunnelError("missing prevout fetcher")
 	}
 
@@ -91,14 +87,10 @@ func opcodeTunnel(op *opcode, data []byte, vm *Engine) error {
 		}
 	}
 	if flags&TunnelAssets != 0 {
-		inputAssets, outputAssets, err := tunnelAssetMaps(
+		if err := tunnelAssets(
 			vm.tx.TxHash(), vm.assetPacket, vm.txIdx, int(outputIndex), exceptions,
-		)
-		if err != nil {
+		); err != nil {
 			return err
-		}
-		if !maps.Equal(inputAssets, outputAssets) {
-			return tunnelError("selected output does not preserve source assets")
 		}
 	}
 
@@ -106,20 +98,14 @@ func opcodeTunnel(op *opcode, data []byte, vm *Engine) error {
 	return nil
 }
 
-func tunnelAssetMaps(txHash chainhash.Hash, packet asset.Packet, inputIndex, outputIndex int, exceptions map[asset.AssetId]struct{}) (map[asset.AssetId]uint64, map[asset.AssetId]uint64, error) {
+func tunnelAssets(txHash chainhash.Hash, packet asset.Packet, inputIndex, outputIndex int, exceptions map[asset.AssetId]struct{}) error {
 	inputAssets := make(map[asset.AssetId]uint64)
 	outputAssets := make(map[asset.AssetId]uint64)
-	if len(packet) == 0 {
-		return inputAssets, outputAssets, nil
-	}
-	if _, err := asset.NewPacket([]asset.AssetGroup(packet)); err != nil {
-		return nil, nil, tunnelError("invalid asset packet: " + err.Error())
-	}
 
 	for groupIndex, group := range packet {
 		id, err := resolveAssetID(txHash, groupIndex, group)
 		if err != nil {
-			return nil, nil, err
+			return err
 		}
 		if _, excluded := exceptions[id]; excluded {
 			continue
@@ -136,7 +122,10 @@ func tunnelAssetMaps(txHash chainhash.Hash, packet asset.Packet, inputIndex, out
 		}
 	}
 
-	return inputAssets, outputAssets, nil
+	if !maps.Equal(inputAssets, outputAssets) {
+		return tunnelError("selected output does not preserve source assets")
+	}
+	return nil
 }
 
 func tunnelError(description string) error {

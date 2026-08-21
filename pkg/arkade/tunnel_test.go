@@ -159,12 +159,12 @@ func TestTunnelAssetExceptions(t *testing.T) {
 
 	vm = tunnelTestVM(t)
 	vm.assetPacket = packet
-	vm.SetStack(tunnelStack(0, TunnelValue, idA))
+	vm.SetStack(tunnelStack(0, TunnelAssets, idA))
 	requireScriptErrorCode(t, invokeOpcodeWithData(OP_TUNNEL, nil, vm), txscript.ErrInvalidStackOperation)
 
 	vm = tunnelTestVM(t)
 	vm.assetPacket = packet
-	vm.SetStack(tunnelStack(0, TunnelAssets, idA, idA))
+	vm.SetStack(tunnelStack(0, TunnelValue, idA))
 	requireScriptErrorCode(t, invokeOpcodeWithData(OP_TUNNEL, nil, vm), txscript.ErrInvalidStackOperation)
 }
 
@@ -172,6 +172,7 @@ func TestTunnelTreatsMissingAssetPacketAsEmpty(t *testing.T) {
 	t.Parallel()
 
 	vm := tunnelTestVM(t)
+	vm.prevOutFetcher = nil
 	vm.SetStack(tunnelStack(0, TunnelAssets))
 	require.NoError(t, invokeOpcodeWithData(OP_TUNNEL, nil, vm))
 }
