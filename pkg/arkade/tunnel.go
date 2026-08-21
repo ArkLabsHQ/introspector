@@ -70,7 +70,12 @@ func opcodeTunnel(op *opcode, data []byte, vm *Engine) error {
 	if flags&TunnelScriptPubKey != 0 {
 		script := vm.prevOutFetcher.FetchVtxoPrevOutPkScript(outpoint)
 		if script == nil {
-			return tunnelError("source script is missing")
+			if prevout := vm.prevOutFetcher.FetchPrevOutput(outpoint); prevout != nil {
+				script = prevout.PkScript
+			}
+			if script == nil {
+				return tunnelError("source script is missing")
+			}
 		}
 		if !bytes.Equal(script, output.PkScript) {
 			return tunnelError("selected output does not preserve source script")

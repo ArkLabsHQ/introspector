@@ -70,6 +70,18 @@ func TestTunnelRejectsInvalidPolicy(t *testing.T) {
 	}
 }
 
+func TestTunnelUsesDirectPrevoutScript(t *testing.T) {
+	t.Parallel()
+
+	vm := tunnelTestVM(t)
+	outpoint := vm.tx.TxIn[0].PreviousOutPoint
+	base := vm.prevOutFetcher.(*testArkPrevOutFetcher).PrevOutputFetcher
+	vm.prevOutFetcher = newTestArkPrevOutFetcher(base, nil, nil)
+	vm.tx.TxOut[0].PkScript = base.FetchPrevOutput(outpoint).PkScript
+	vm.SetStack(tunnelStack(0, TunnelScriptPubKey))
+	require.NoError(t, invokeOpcodeWithData(OP_TUNNEL, nil, vm))
+}
+
 func TestTunnelPreservesInputLocalAssets(t *testing.T) {
 	t.Parallel()
 
