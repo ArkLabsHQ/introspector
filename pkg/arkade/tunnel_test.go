@@ -3,6 +3,7 @@ package arkade
 import (
 	"testing"
 
+	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
@@ -52,10 +53,10 @@ func TestTunnelRejectsInvalidPolicy(t *testing.T) {
 		stack [][]byte
 	}{
 		{name: "zero flags", stack: tunnelStack(0, 0)},
-		{name: "unknown flags", stack: tunnelStack(0, 4)},
+		{name: "unknown flags", stack: tunnelStack(0, 8)},
 		{name: "negative output", stack: tunnelStack(-1, TunnelValue)},
 		{name: "output out of range", stack: tunnelStack(1, TunnelValue)},
-		{name: "asset exceptions", stack: [][]byte{nil, scriptNum(TunnelValue).Bytes(), {1}}},
+		{name: "missing exception items", stack: [][]byte{nil, scriptNum(TunnelValue).Bytes(), {1}}},
 		{name: "underflow"},
 	}
 
@@ -67,6 +68,100 @@ func TestTunnelRejectsInvalidPolicy(t *testing.T) {
 			requireScriptErrorCode(t, invokeOpcodeWithData(OP_TUNNEL, nil, vm), txscript.ErrInvalidStackOperation)
 		})
 	}
+}
+
+func TestTunnelPreservesInputLocalAssets(t *testing.T) {
+	t.Parallel()
+
+	id := asset.AssetId{Txid: chainhash.Hash{2}, Index: 3}
+	packet := asset.Packet{
+		{
+			AssetId: &id,
+			Inputs: []asset.AssetInput{
+				{Type: asset.AssetInputTypeLocal, Vin: 0, Amount: 7},
+				{Type: asset.AssetInputTypeLocal, Vin: 1, Amount: 3},
+			},
+			Outputs: []asset.AssetOutput{
+				{Type: asset.AssetOutputTypeLocal, Vout: 0, Amount: 7},
+				{Type: asset.AssetOutputTypeLocal, Vout: 1, Amount: 8},
+			},
+		},
+		{
+			Outputs: []asset.AssetOutput{{Type: asset.AssetOutputTypeLocal, Vout: 1, Amount: 5}},
+		},
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(asset.Packet)
+		ok     bool
+	}{
+		{name: "ignores reissuance and issuance elsewhere", ok: true},
+		{name: "missing asset", mutate: func(packet asset.Packet) { packet[0].Outputs[0].Vout = 1 }},
+		{name: "changed amount", mutate: func(packet asset.Packet) { packet[0].Outputs[0].Amount++ }},
+		{name: "asset added to selected output", mutate: func(packet asset.Packet) { packet[1].Outputs[0].Vout = 0 }},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			vm := tunnelTestVM(t)
+			vm.tx.TxIn = append(vm.tx.TxIn, wire.NewTxIn(&wire.OutPoint{Hash: chainhash.Hash{3}}, nil, nil))
+			vm.tx.TxOut = append(vm.tx.TxOut, wire.NewTxOut(1, []byte{OP_TRUE}))
+			vm.assetPacket = cloneTunnelPacket(packet)
+			if test.mutate != nil {
+				test.mutate(vm.assetPacket)
+			}
+			vm.SetStack(tunnelStack(0, TunnelAssets))
+			err := invokeOpcodeWithData(OP_TUNNEL, nil, vm)
+			if test.ok {
+				require.NoError(t, err)
+				return
+			}
+			requireScriptErrorCode(t, err, txscript.ErrInvalidStackOperation)
+		})
+	}
+}
+
+func TestTunnelAssetExceptions(t *testing.T) {
+	t.Parallel()
+
+	idA := asset.AssetId{Txid: chainhash.Hash{4}, Index: 1}
+	idB := asset.AssetId{Txid: chainhash.Hash{5}, Index: 2}
+	packet := asset.Packet{
+		{
+			AssetId: &idA,
+			Inputs:  []asset.AssetInput{{Type: asset.AssetInputTypeLocal, Vin: 0, Amount: 7}},
+			Outputs: []asset.AssetOutput{{Type: asset.AssetOutputTypeLocal, Vout: 1, Amount: 7}},
+		},
+		{
+			AssetId: &idB,
+			Outputs: []asset.AssetOutput{{Type: asset.AssetOutputTypeLocal, Vout: 0, Amount: 9}},
+		},
+	}
+
+	vm := tunnelTestVM(t)
+	vm.assetPacket = packet
+	vm.SetStack(tunnelStack(0, TunnelAssets, idA, idB))
+	require.NoError(t, invokeOpcodeWithData(OP_TUNNEL, nil, vm))
+
+	vm = tunnelTestVM(t)
+	vm.assetPacket = packet
+	vm.SetStack(tunnelStack(0, TunnelValue, idA))
+	requireScriptErrorCode(t, invokeOpcodeWithData(OP_TUNNEL, nil, vm), txscript.ErrInvalidStackOperation)
+
+	vm = tunnelTestVM(t)
+	vm.assetPacket = packet
+	vm.SetStack(tunnelStack(0, TunnelAssets, idA, idA))
+	requireScriptErrorCode(t, invokeOpcodeWithData(OP_TUNNEL, nil, vm), txscript.ErrInvalidStackOperation)
+}
+
+func TestTunnelTreatsMissingAssetPacketAsEmpty(t *testing.T) {
+	t.Parallel()
+
+	vm := tunnelTestVM(t)
+	vm.SetStack(tunnelStack(0, TunnelAssets))
+	require.NoError(t, invokeOpcodeWithData(OP_TUNNEL, nil, vm))
 }
 
 func tunnelSpec() *opcodeSpec {
@@ -114,6 +209,20 @@ func tunnelTestVM(t *testing.T) *Engine {
 	}
 }
 
-func tunnelStack(outputIndex, flags int64) [][]byte {
-	return [][]byte{scriptNum(outputIndex).Bytes(), scriptNum(flags).Bytes(), nil}
+func tunnelStack(outputIndex, flags int64, exceptions ...asset.AssetId) [][]byte {
+	stack := [][]byte{scriptNum(outputIndex).Bytes(), scriptNum(flags).Bytes()}
+	for _, id := range exceptions {
+		stack = append(stack, append([]byte(nil), id.Txid[:]...), scriptNum(id.Index).Bytes())
+	}
+	return append(stack, scriptNum(len(exceptions)).Bytes())
+}
+
+func cloneTunnelPacket(packet asset.Packet) asset.Packet {
+	clone := make(asset.Packet, len(packet))
+	for i, group := range packet {
+		clone[i] = group
+		clone[i].Inputs = append([]asset.AssetInput(nil), group.Inputs...)
+		clone[i].Outputs = append([]asset.AssetOutput(nil), group.Outputs...)
+	}
+	return clone
 }
