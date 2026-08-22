@@ -14,67 +14,25 @@ Bitcoin already has a virtual machine: **Bitcoin Script** operating over **UTXOs
 - **Assets** — native fungible and non-fungible tokens with conservation enforced by script
 - **Arkade Script** — ~50 additional opcodes for transaction introspection, asset flows, cryptography, and off-chain time
 
-Smart contracts written in [Arkade Language](https://github.com/arkade-os/compiler) compile down to Arkade Script. The Emulator executes those scripts and co-signs only when they pass — making covenants on Bitcoin possible today, without any consensus change.
-
 ---
 
 ## What the Arkade VM enables
 
-The combination of Bitcoin Script + UTXO and Arkade Script + VTXO + Assets makes a wide class of financial applications possible natively on Bitcoin. What follows is a non-exhaustive map drawn from the [compiler examples](https://github.com/arkade-os/compiler/tree/main/examples).
+The combination of Bitcoin Script + UTXO and Arkade Script + VTXO + Assets makes a broad class of financial applications possible natively on Bitcoin, without a bridge or an issuer.
 
-### Stablecoins and collateralized positions
+*Collateralized positions and stablecoins* — BTC-collateralized USD claims with per-second oracle-attested funding, non-interactive offer/take flows, and a unilateral L1 exit at any time.
 
-A **StabilityVault** holds BTC collateral against a USD-denominated claim. An oracle attests a BTC/USD price via `OP_CHECKSIGFROMSTACK`; the covenant clamps the USD-seeking leg's payout into `[0, totalCollateral]`. Funding accrues per-second using wall-clock time from the TEE (`tx.offchainTime`) rather than block height — enabling sub-hour billing cycles. The seeker's VTXO looks and behaves like a dollar account; the BTC mechanics are invisible. No bridge, no issuer, no exchange counterparty.
+*Options and structured products* — physically-settled calls and puts, pooled covered-call writing vaults where LP shares accrue premium per epoch, capped synthetics with margin (not full notional) so the position can never go underwater, and range vaults for hedging mining revenue.
 
-**StabilityOffer** lets a provider pre-commit collateral; any seeker can take the position without the provider being online.
+*Fixed income and lending* — fixed-rate fixed-maturity bonds self-issued as credit/debit token pairs and traded on an order book; variable-rate lending pools with continuous per-second accrual; covenant-guaranteed health floors that make credit tokens genuinely fungible regardless of which vault backs them.
 
-### Options
+*Perpetual derivatives* — order-book-style perpetual DEX with partial order fills, per-second funding settlement, and permissionless liquidation.
 
-**CoveredCall / CashSecuredPut** — physically-settled European options. Seller locks collateral; buyer exercises voluntarily when in-the-money; a grace window handles clock skew; seller reclaims if the buyer ghosts. Capital-efficient: a market maker can write many options against the same float because most expire out-of-the-money.
+*Payments* — credit-card-style authorize-and-capture with covenant-enforced fee splits, and subscription pull payments where the coin stays customer-spendable at all times while the covenant carves out a bounded periodic merchant allowance.
 
-**OptionsVault** — a pooled covered-call writing vault (Ribbon/Thetavault-style). LP shares accrue premium monotonically per epoch; oracle-driven settlement at expiry via `OP_CLTV` + `OP_CHECKSIGFROMSTACK`.
+*Cross-chain bridging* — attested k-of-n quorum mints, and trustless SPV bridging that verifies a Bitcoin deposit entirely on-chain via Merkle proof and PoW header chain before minting — no custodian quorum needed.
 
-**Hashprice Miner Options** — UP/DOWN token pairs for miners hedging sats-per-terahash revenue. Two oracle attestations (hashprice + BTC/USD) settle capped collateral pairs.
-
-**CappedSynth** — margined, capped, perpetual CFD. Both sides post margin (not full notional); the collateral cap means the position can never go underwater. Cooperative settlement is the primary path; oracle fallback charges an adverse-selection fee.
-
-### Fixed income and credit
-
-A UTXO-native **bond market**: borrowers self-issue 1:1 credit+debit tokens. Selling credit on the order book via `NonInteractiveSwap` is the loan. A `RepaymentPool` covenant enforces that every vault in the pool stays above a health floor at every block — which is what makes credit tokens genuinely fungible: a lender doesn't need to know which vault backs the credit they bought because the covenant guarantees it.
-
-Settlement paths: voluntary repay, permissionless liquidation, post-maturity auction, and a single-transaction loan roll to the next maturity with no USDT fronted.
-
-**VariableDividendPreferred** — perpetual preferred shares with continuously re-pegged variable USD-cent dividends, paid in BTC at oracle price. Arrears protection, permissionless `pokeArrears`, callable at par.
-
-### Perpetual DEX
-
-A HyperLiquid-style **PerpPosition** + **PerpOffer** pair. Offers support partial fills (a smaller `PerpOffer` VTXO is left behind after each fill, enabling order-book-style incremental matching). Positions support `addMargin`, `transferPosition`, `fundingSettle`, and permissionless `liquidate` with a liquidation fee reward. Per-second funding follows the StabilityVault model.
-
-### Payments
-
-**PaymentAuthorization** — credit-card-style authorize-and-capture. Customer locks funds; merchant captures with a signature; the covenant enforces the exact split (merchant amount minus basis-point processor fee, change back to customer).
-
-**Subscription pull payments** — instead of locking the customer's funds in escrow, the coin stays customer-spendable at all times. The covenant carves out a bounded merchant allowance of exactly `pullAmount` once per `interval` (wall-clock seconds). Missed periods accrue; cancel settles already-due periods to the merchant first.
-
-### Cross-chain bridging
-
-**Attested Bridge** — k-of-n custodian quorum mints wrapped assets on deposit attestation.
-
-**Trustless SPV Bridge** — no custodian quorum needed. A Merkle fold using `OP_HASH256` + `OP_CAT`, a single-header PoW check as a 256-bit BigNum comparison, and confirmation-depth header chaining verify a Bitcoin deposit entirely on-chain before minting.
-
-**LayerZero / USDT0** — four contracts implementing the full LayerZero inbound/outbound packet flow. DVN 2-of-2 attestation via `OP_CHECKSIGFROMSTACK`, USDT0 delta enforcement via `OP_INSPECTASSETGROUPSUM`, marker mint/burn (exactly 1 unit) via asset group checks, GUID binding via `sha256(substr(invocation))`.
-
-**Fast-transfer HTLC swap** — one SHA256 preimage chains Lightning → Arkade → EVM. Introspection pins the payout, making completion permissionless.
-
-### Asset primitives
-
-**ControlledMint** — authority-gated fungible token issuance. `mint` requires the control asset; `lockSupply` burns it permanently.
-
-**NFTMint** — non-fungible asset with collection-controlled minting, transfer, and burn.
-
-**ArkadeKitties** — NFT collectible breeding game. Parent Kitty authenticity verified via `group.controlIs(speciesCtrlId)`; child genome mixed deterministically from parent genomes; metadata committed as a 2-leaf Merkle root in `group.metadataHash`.
-
-**ThresholdOracle** — N-of-M oracle quorum gates token minting on an attested message hash.
+*Asset primitives* — authority-gated fungible token issuance with lockable supply, non-fungible assets with collection-controlled mint/transfer/burn, and N-of-M oracle-quorum token minting.
 
 ---
 
