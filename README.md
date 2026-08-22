@@ -12,10 +12,10 @@ The Emulator is a programmable signing service for the [Arkade](https://docs.ark
 
 ## Why this exists
 
-Ark keeps Bitcoin payments scalable and private by batching VTXO state off-chain. But vanilla Ark VTXOs are passive: every spend or renewal needs the owner's signature. This creates two hard problems for application developers:
+Arkade keeps Bitcoin payments scalable and private by batching VTXO state off-chain. But vanilla Arkade VTXOs are passive: every spend or renewal needs the owner's signature. This creates two hard problems for application developers:
 
 1. **Liveness requirement.** A VTXO that expires before its owner returns online is lost to a unilateral exit or an unwanted on-chain landing. Long-lived contracts (escrows, subscriptions, delegated payments) need renewal to happen automatically.
-2. **Covenant expressiveness.** Bitcoin Script alone cannot enforce destination, amount, or asset preservation across transaction boundaries. Building HTLC-style atomic swaps or covenant chains on Ark requires a layer that can *introspect* the transaction being signed before committing its signature.
+2. **Covenant expressiveness.** Bitcoin Script alone cannot enforce destination, amount, or asset preservation across transaction boundaries. Building HTLC-style atomic swaps or covenant chains on Arkade requires a layer that can *introspect* the transaction being signed before committing its signature.
 
 The Emulator solves both:
 
@@ -60,7 +60,7 @@ When the emulator receives a transaction, it:
 
 ### Delegated renewal and OP_TUNNEL
 
-Permanent delegation — renewing a VTXO in every Ark batch without the owner — is the central use case being developed. The current approach uses a **self-send covenant**: an Arkade Script on the delegate VTXO that enforces output 0 preserves the input's `scriptPubKey` and value, and restricts the spend to intent-proof transactions (version 2) to prevent off-chain self-send loops.
+Permanent delegation — renewing a VTXO in every Arkade batch without the owner — is the central use case being developed. The current approach uses a **self-send covenant**: an Arkade Script on the delegate VTXO that enforces output 0 preserves the input's `scriptPubKey` and value, and restricts the spend to intent-proof transactions (version 2) to prevent off-chain self-send loops.
 
 The next evolution, tracked in [issue #139](https://github.com/arkade-os/emulator/issues/139) and [PR #140](https://github.com/arkade-os/emulator/pull/140), introduces `OP_TUNNEL` — an explicit covenant opcode for one-to-one VTXO continuation:
 
