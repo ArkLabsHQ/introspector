@@ -6,83 +6,119 @@
 
 > **Alpha — available on testnet.** The Emulator is production-ready for experimentation and integration testing; protocol details may still change before mainnet.
 
-The Emulator is a programmable signing service for the [Arkade](https://docs.arkadeos.com/) protocol. It enforces **Arkade Script** — a covenant language built on an extended Bitcoin Script VM — so that VTXOs can spend themselves, renew themselves, and participate in arbitrary application logic without requiring their owner to be online.
+The Emulator is the signing service that powers the **Arkade VM** — the programmable layer that extends Bitcoin into a full financial application platform.
+
+Bitcoin already has a virtual machine: **Bitcoin Script** operating over **UTXOs**. What it lacks is the ability to introspect transactions, enforce output constraints, reason about assets, or read off-chain attested facts. The Emulator fills that gap by running **Arkade Script** — an extended covenant language — before co-signing every spend. The result is a second VM layer that shares Bitcoin's security model and UTXO graph but adds:
+
+- **VTXOs** — Virtual Transaction Outputs: off-chain UTXOs that batch-settle on Bitcoin L1
+- **Assets** — native fungible and non-fungible tokens with conservation enforced by script
+- **Arkade Script** — ~50 additional opcodes for transaction introspection, asset flows, cryptography, and off-chain time
+
+Smart contracts written in [Arkade Language](https://github.com/arkade-os/compiler) compile down to Arkade Script. The Emulator executes those scripts and co-signs only when they pass — making covenants on Bitcoin possible today, without any consensus change.
 
 ---
 
-## Why this exists
+## What the Arkade VM enables
 
-Arkade keeps Bitcoin payments scalable and private by batching VTXO state off-chain. But vanilla Arkade VTXOs are passive: every spend or renewal needs the owner's signature. This creates two hard problems for application developers:
+The combination of Bitcoin Script + UTXO and Arkade Script + VTXO + Assets makes a wide class of financial applications possible natively on Bitcoin. What follows is a non-exhaustive map drawn from the [compiler examples](https://github.com/arkade-os/compiler/tree/main/examples).
 
-1. **Liveness requirement.** A VTXO that expires before its owner returns online is lost to a unilateral exit or an unwanted on-chain landing. Long-lived contracts (escrows, subscriptions, delegated payments) need renewal to happen automatically.
-2. **Covenant expressiveness.** Bitcoin Script alone cannot enforce destination, amount, or asset preservation across transaction boundaries. Building HTLC-style atomic swaps or covenant chains on Arkade requires a layer that can *introspect* the transaction being signed before committing its signature.
+### Stablecoins and collateralized positions
 
-The Emulator solves both:
+A **StabilityVault** holds BTC collateral against a USD-denominated claim. An oracle attests a BTC/USD price via `OP_CHECKSIGFROMSTACK`; the covenant clamps the USD-seeking leg's payout into `[0, totalCollateral]`. Funding accrues per-second using wall-clock time from the TEE (`tx.offchainTime`) rather than block height — enabling sub-hour billing cycles. The seeker's VTXO looks and behaves like a dollar account; the BTC mechanics are invisible. No bridge, no issuer, no exchange counterparty.
 
-- It holds a signing key that is **tweaked by the hash of an Arkade Script**. The resulting public key (`emulator_key + hash(arkade_script) * G`) is only useful if the spender can supply a script that, when executed, succeeds. This means the emulator's signature is gated on arbitrary covenant logic.
-- The covenant executes entirely off-chain inside the Emulator's extended VM, keeping Bitcoin script limits irrelevant and fees low.
-- Because the emulator is a network service, it can be called by **solvers** — third parties who drive batch settlement on behalf of users — enabling non-interactive VTXO renewal and intent-based programmable payments.
+**StabilityOffer** lets a provider pre-commit collateral; any seeker can take the position without the provider being online.
 
----
+### Options
 
-## What it enables
+**CoveredCall / CashSecuredPut** — physically-settled European options. Seller locks collateral; buyer exercises voluntarily when in-the-money; a grace window handles clock skew; seller reclaims if the buyer ghosts. Capital-efficient: a market maker can write many options against the same float because most expire out-of-the-money.
 
-| Capability | How |
-|---|---|
-| **Non-interactive HTLC** | A 2-of-2 (`arkd` + emulator-tweaked) VTXO whose claim/refund paths are enforced by a covenant, not by the sender or receiver's live signature. |
-| **Delegated VTXO renewal** | A VTXO that refreshes itself through batch settlement without the owner signing, using a self-send covenant that preserves script and value. |
-| **Arkade Intents** | Any VTXO covenant can authenticate every arkd intent operation (register, delete, estimate fee, etc.) by calling `SubmitIntent`. The emulator signs the intent proof after running the Arkade Script. |
-| **On-chain covenant exits** | When a covenant VTXO is unrolled on-chain, `SubmitOnchainTx` signs plain Bitcoin transactions whose tapscripts contain the emulator's tweaked key. |
-| **Programmable assets** | Asset introspection opcodes let covenants enforce mint/transfer/burn rules, cross-asset conservation, and control-asset policies. |
+**OptionsVault** — a pooled covered-call writing vault (Ribbon/Thetavault-style). LP shares accrue premium monotonically per epoch; oracle-driven settlement at expiry via `OP_CLTV` + `OP_CHECKSIGFROMSTACK`.
+
+**Hashprice Miner Options** — UP/DOWN token pairs for miners hedging sats-per-terahash revenue. Two oracle attestations (hashprice + BTC/USD) settle capped collateral pairs.
+
+**CappedSynth** — margined, capped, perpetual CFD. Both sides post margin (not full notional); the collateral cap means the position can never go underwater. Cooperative settlement is the primary path; oracle fallback charges an adverse-selection fee.
+
+### Fixed income and credit
+
+A UTXO-native **bond market**: borrowers self-issue 1:1 credit+debit tokens. Selling credit on the order book via `NonInteractiveSwap` is the loan. A `RepaymentPool` covenant enforces that every vault in the pool stays above a health floor at every block — which is what makes credit tokens genuinely fungible: a lender doesn't need to know which vault backs the credit they bought because the covenant guarantees it.
+
+Settlement paths: voluntary repay, permissionless liquidation, post-maturity auction, and a single-transaction loan roll to the next maturity with no USDT fronted.
+
+**VariableDividendPreferred** — perpetual preferred shares with continuously re-pegged variable USD-cent dividends, paid in BTC at oracle price. Arrears protection, permissionless `pokeArrears`, callable at par.
+
+### Perpetual DEX
+
+A HyperLiquid-style **PerpPosition** + **PerpOffer** pair. Offers support partial fills (a smaller `PerpOffer` VTXO is left behind after each fill, enabling order-book-style incremental matching). Positions support `addMargin`, `transferPosition`, `fundingSettle`, and permissionless `liquidate` with a liquidation fee reward. Per-second funding follows the StabilityVault model.
+
+### Payments
+
+**PaymentAuthorization** — credit-card-style authorize-and-capture. Customer locks funds; merchant captures with a signature; the covenant enforces the exact split (merchant amount minus basis-point processor fee, change back to customer).
+
+**Subscription pull payments** — instead of locking the customer's funds in escrow, the coin stays customer-spendable at all times. The covenant carves out a bounded merchant allowance of exactly `pullAmount` once per `interval` (wall-clock seconds). Missed periods accrue; cancel settles already-due periods to the merchant first.
+
+### Cross-chain bridging
+
+**Attested Bridge** — k-of-n custodian quorum mints wrapped assets on deposit attestation.
+
+**Trustless SPV Bridge** — no custodian quorum needed. A Merkle fold using `OP_HASH256` + `OP_CAT`, a single-header PoW check as a 256-bit BigNum comparison, and confirmation-depth header chaining verify a Bitcoin deposit entirely on-chain before minting.
+
+**LayerZero / USDT0** — four contracts implementing the full LayerZero inbound/outbound packet flow. DVN 2-of-2 attestation via `OP_CHECKSIGFROMSTACK`, USDT0 delta enforcement via `OP_INSPECTASSETGROUPSUM`, marker mint/burn (exactly 1 unit) via asset group checks, GUID binding via `sha256(substr(invocation))`.
+
+**Fast-transfer HTLC swap** — one SHA256 preimage chains Lightning → Arkade → EVM. Introspection pins the payout, making completion permissionless.
+
+### Asset primitives
+
+**ControlledMint** — authority-gated fungible token issuance. `mint` requires the control asset; `lockSupply` burns it permanently.
+
+**NFTMint** — non-fungible asset with collection-controlled minting, transfer, and burn.
+
+**ArkadeKitties** — NFT collectible breeding game. Parent Kitty authenticity verified via `group.controlIs(speciesCtrlId)`; child genome mixed deterministically from parent genomes; metadata committed as a 2-leaf Merkle root in `group.metadataHash`.
+
+**ThresholdOracle** — N-of-M oracle quorum gates token minting on an attested message hash.
 
 ---
 
 ## How it works
 
+### The dual VM model
+
+Every Arkade VTXO is a Taproot output. Its tapscript tree contains two kinds of leaves:
+
+- **Tapscript leaves** — standard Bitcoin Script, executable by miners on L1. This includes the unilateral exit leaf (CSV) that every contract carries: users can always exit to L1 without the Emulator's cooperation.
+- **Covenant leaves** — Arkade Script, executed by the Emulator before it co-signs. These leaves enforce the output constraints, asset flows, oracle checks, and timing conditions that make financial contracts possible.
+
+A contract output's spending key is a 2-of-2 multisig: `(arkd_signer, emulator_tweaked_key)`. Neither can spend alone. The Emulator will only co-sign once its covenant script passes.
+
 ### Key derivation
 
-The emulator's base public key is available from `GET /v1/info`. Before embedding it in a VTXO tapscript, the caller tweaks it with the Arkade script hash:
+The emulator's base public key is available from `GET /v1/info`. Before embedding it in a VTXO tapscript, the caller tweaks it with the Arkade Script hash:
 
 ```
 tweaked_key = emulator_key + tagged_hash("ArkScriptHash", arkade_script) * G
 ```
 
-The helper `ComputeArkadeScriptPublicKey` in [`pkg/arkade/tweak.go`](pkg/arkade/tweak.go) performs this derivation. A 2-of-2 multisig closure `(arkd_signer, tweaked_key)` means neither party can spend without the other, and the emulator will only co-sign once the covenant passes.
+The helper `ComputeArkadeScriptPublicKey` in [`pkg/arkade/tweak.go`](pkg/arkade/tweak.go) performs this derivation. The tweak binds the key to the specific script: a different script produces a different key, so it is impossible to present a substitute script at signing time.
 
 ### Emulator Packet
 
-The Arkade Script bytecode (and any runtime witness arguments) are revealed to the emulator via an **Emulator Packet** — a TLV record of type `0x01` carried inside an `OP_RETURN` ARK extension output. The extension starts with magic bytes `ARK` (`0x41524b`) and can contain multiple packet types in a single output (e.g., both an asset packet and an emulator packet).
+The Arkade Script bytecode (and any runtime witness arguments) are revealed to the emulator via an **Emulator Packet** — a TLV record of type `0x01` carried inside an `OP_RETURN` ARK extension output. The extension starts with magic bytes `ARK` (`0x41524b`) and can contain multiple packet types in a single output.
 
 When the emulator receives a transaction, it:
 1. Finds the emulator packet in the `OP_RETURN` extension.
 2. For each listed input, executes the supplied Arkade Script against the transaction.
 3. Signs only if all scripts succeed.
 
-### Delegated renewal and OP_TUNNEL
+### Native VTXO delegation via OP_TUNNEL
 
-Permanent delegation — renewing a VTXO in every Arkade batch without the owner — is the central use case being developed. The current approach uses a **self-send covenant**: an Arkade Script on the delegate VTXO that enforces output 0 preserves the input's `scriptPubKey` and value, and restricts the spend to intent-proof transactions (version 2) to prevent off-chain self-send loops.
+Renewing a VTXO through every Arkade batch settlement without the owner — permanent delegation — is supported today via a self-send covenant (an Arkade Script that enforces the output preserves the input's `scriptPubKey` and value). 
 
-The next evolution, tracked in [issue #139](https://github.com/arkade-os/emulator/issues/139) and [PR #140](https://github.com/arkade-os/emulator/pull/140), introduces `OP_TUNNEL` — an explicit covenant opcode for one-to-one VTXO continuation:
+A dedicated `OP_TUNNEL` opcode is coming that makes this an explicit, auditable script path:
 
 ```
 <output_index> OP_TUNNEL
 ```
 
-`OP_TUNNEL` succeeds when the selected output exactly preserves the source VTXO's `scriptPubKey`, value, and assets, and the intent falls within a configured renewal window. This makes delegated renewal an explicit, auditable script path rather than an implicit emulator policy.
-
----
-
-## Arkade Script examples
-
-- [`test/htlc_test.go`](test/htlc_test.go) — **Non-interactive HTLC.** A 2-of-2 (`arkd` + emulator-tweaked) VTXO with a claim path gated by `HASH160(preimage)` and a refund path gated by absolute timelock. Neither receiver nor sender ever signs — an Arkade covenant enforcing destination and amount replaces both signatures.
-
-- [`test/delegate_test.go`](test/delegate_test.go) — **Non-interactive delegate.** A 2-of-2 (`arkd` + emulator-tweaked) VTXO refreshed through batch settlement by any solver, with a CSV exit leaf reserved for the user. The Arkade covenant is a self-send (preserves the input's `scriptPubKey` and value on output 0) gated to intent-proof transactions (`OP_INSPECTVERSION == 2`).
-
-- [`test/recursive_covenant_test.go`](test/recursive_covenant_test.go) — **Recursive covenant.** Demonstrates stateful propagation across multiple Ark batches.
-
-- [`test/asset_test.go`](test/asset_test.go) — **Asset covenants.** Enforces conservation rules across asset groups using asset introspection opcodes.
-
-- [`test/groth16_bn254_test.go`](test/groth16_bn254_test.go) — **ZK proof verification.** Uses `OP_ECPAIRING` on `alt_bn128` to verify a Groth16 proof inside an Arkade Script.
+`OP_TUNNEL` succeeds when the selected output exactly preserves the source VTXO's `scriptPubKey`, value, and assets within a configured renewal window. Once documented separately, delegation will not need to be explained as part of this README.
 
 ---
 
