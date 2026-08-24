@@ -9,6 +9,8 @@ import (
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/emulator/pkg/arkade"
+	"github.com/arkade-os/go-sdk/indexer"
+	sdktypes "github.com/arkade-os/go-sdk/types"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	log "github.com/sirupsen/logrus"
 )
@@ -59,12 +61,31 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 			return nil, fmt.Errorf("failed to read arkade script: %w vin=%d", err, inputIndex)
 		}
 
+		outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
+		request := indexer.GetVtxosRequestOption{}
+		if err := request.WithOutpoints([]sdktypes.Outpoint{{
+			Txid: outpoint.Hash.String(), VOut: outpoint.Index,
+		}}); err != nil {
+			return nil, err
+		}
+		response, err := s.indexerClient.GetVtxos(
+			withClientVersion(ctx, s.clientVersion), request,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if response == nil || len(response.Vtxos) != 1 {
+			return nil, fmt.Errorf("VTXO expiry not found")
+		}
+		remaining := response.Vtxos[0].ExpiresAt.Unix() - time.Now().Unix()
+
 		if err := script.Execute(
 			ptx.UnsignedTx,
 			prevOutFetcher,
 			inputIndex,
 			arkade.WithExactComputeLimits(s.computeLimits),
 			arkade.WithComputeBudget(budget),
+			arkade.WithExpiry(remaining),
 		); err != nil {
 			log.WithError(err).WithField("input_index", inputIndex).Error("arkade script execution failed")
 			return nil, fmt.Errorf("failed to execute arkade script at input %d: %w", inputIndex, err)

@@ -1,6 +1,7 @@
 package application
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -10,6 +11,8 @@ import (
 	arkscript "github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/arkade-os/emulator/pkg/arkade"
+	"github.com/arkade-os/go-sdk/indexer"
+	sdktypes "github.com/arkade-os/go-sdk/types"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -205,11 +208,21 @@ func submitTestIntent(
 ) (*psbt.Packet, error) {
 	t.Helper()
 
-	svc := &service{signer: signer{signerKey}}
+	svc := &service{signer: signer{signerKey}, indexerClient: intentIndexer{}}
 	return svc.SubmitIntent(t.Context(), Intent{
 		Proof:   intent.Proof{Packet: *ptx},
 		Message: &intent.RegisterMessage{ExpireAt: time.Now().Add(time.Hour).Unix()},
 	})
+}
+
+type intentIndexer struct{ indexer.Indexer }
+
+func (intentIndexer) GetVtxos(
+	context.Context, ...indexer.GetVtxosRequestOption,
+) (*indexer.VtxosResponse, error) {
+	return &indexer.VtxosResponse{Vtxos: []sdktypes.Vtxo{{
+		ExpiresAt: time.Now().Add(time.Hour),
+	}}}, nil
 }
 
 // intentVtxo is a taproot coin with a single multisig closure, enough for the
