@@ -122,8 +122,8 @@ func (s *service) remainingLifetime(
 	if err != nil {
 		return 0, err
 	}
-	if response == nil || len(response.Vtxos) != 1 {
-		return 0, fmt.Errorf("VTXO expiry not found")
+	if response == nil || len(response.Vtxos) == 0 {
+		return 0, nil
 	}
 	return response.Vtxos[0].ExpiresAt.Unix() - time.Now().Unix(), nil
 }

@@ -12,7 +12,6 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/arkade-os/go-sdk/indexer"
-	sdktypes "github.com/arkade-os/go-sdk/types"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -220,9 +219,7 @@ type expiryIndexer struct{ indexer.Indexer }
 func (expiryIndexer) GetVtxos(
 	context.Context, ...indexer.GetVtxosRequestOption,
 ) (*indexer.VtxosResponse, error) {
-	return &indexer.VtxosResponse{Vtxos: []sdktypes.Vtxo{{
-		ExpiresAt: time.Now().Add(time.Hour),
-	}}}, nil
+	return &indexer.VtxosResponse{}, nil
 }
 
 // intentVtxo is a taproot coin with a single multisig closure, enough for the
