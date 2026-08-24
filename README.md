@@ -4,20 +4,87 @@
 [![quality](https://github.com/arkade-os/emulator/actions/workflows/quality.yaml/badge.svg)](https://github.com/arkade-os/emulator/actions/workflows/quality.yaml)
 [![Trivy Security Scan](https://github.com/arkade-os/emulator/actions/workflows/trivy.yaml/badge.svg)](https://github.com/arkade-os/emulator/actions/workflows/trivy.yaml)
 
-_Emulator is a signing service for the [Arkade](https://docs.arkadeos.com/) protocol, executing [Arkade Script](https://docs.arkadeos.com/experimental/arkade-script)._
+> **Alpha — available on testnet.** The Emulator is production-ready for experimentation and integration testing; protocol details may still change before mainnet.
 
-This is achieved by signing any Arkade transaction (offchain or intent proof) expecting the signature of a [tweaked public key](pkg/arkade/tweak.go). The tweaked key is `emulator_key + hash(arkade_script)`, where the script hash is a [tagged hash](pkg/arkade/tweak.go) (`"ArkScriptHash"`). The Arkade script is revealed via an [Emulator Packet](pkg/arkade/emulator_packet.go) committed inside an ARK extension OP_RETURN output. An ARK extension is a TLV stream prefixed with magic bytes `ARK` (`0x41524b`); the Emulator Packet is one of its packet types (`0x01`), containing per-input entries with the script bytecode and optional witness arguments.
+The Emulator is the signing service that powers the **Arkade VM** — the programmable layer that extends Bitcoin into a full financial application platform.
 
-## ArkadeScript examples
+Bitcoin already has a virtual machine: **Bitcoin Script** operating over **UTXOs**. What it lacks is the ability to introspect transactions, enforce output constraints, reason about assets, or read off-chain attested facts. The Emulator fills that gap by running **Arkade Script** — an extended covenant language — before co-signing every spend. The result is a second VM layer that shares Bitcoin's security model and UTXO graph but adds:
 
-- [`test/htlc_test.go`](test/htlc_test.go) — **Non-interactive HTLC.** A 2-of-2 (`arkd` + emulator-tweaked) VTXO with a claim path gated by HASH160(preimage) and a refund path gated by absolute timelock. Neither the receiver nor the sender ever signs — an arkade covenant enforcing destination + amount replaces both their signatures.
-- [`test/delegate_test.go`](test/delegate_test.go) — **Non-interactive delegate.** A 2-of-2 (`arkd` + emulator-tweaked) VTXO refreshed through batch settlement by any solver, with a CSV exit leaf reserved for the user. The arkade covenant is a self-send (preserves the input's scriptPubKey + value on output 0) gated to intent-proof transactions (`OP_INSPECTVERSION` == 2) so it cannot be drained via off-chain self-send loops.
+- **VTXOs** — Virtual Transaction Outputs: off-chain UTXOs that batch-settle on Bitcoin L1
+- **Assets** — native fungible and non-fungible tokens with conservation enforced by script
+- **Arkade Script** — ~50 additional opcodes for transaction introspection, asset flows, cryptography, and off-chain time
+
+---
+
+## What the Arkade VM enables
+
+The combination of Bitcoin Script + UTXO and Arkade Script + VTXO + Assets makes a broad class of financial applications possible natively on Bitcoin, without a bridge or an issuer.
+
+*Collateralized positions and stablecoins* — BTC-collateralized USD claims with per-second oracle-attested funding, non-interactive offer/take flows, and a unilateral L1 exit at any time.
+
+*Options and structured products* — physically-settled calls and puts, pooled covered-call writing vaults where LP shares accrue premium per epoch, capped synthetics with margin (not full notional) so the position can never go underwater, and range vaults for hedging mining revenue.
+
+*Fixed income and lending* — fixed-rate fixed-maturity bonds self-issued as credit/debit token pairs and traded on an order book; variable-rate lending pools with continuous per-second accrual; covenant-guaranteed health floors that make credit tokens genuinely fungible regardless of which vault backs them.
+
+*Perpetual derivatives* — order-book-style perpetual DEX with partial order fills, per-second funding settlement, and permissionless liquidation.
+
+*Payments* — credit-card-style authorize-and-capture with covenant-enforced fee splits, and subscription pull payments where the coin stays customer-spendable at all times while the covenant carves out a bounded periodic merchant allowance.
+
+*Cross-chain bridging* — attested k-of-n quorum mints, and trustless SPV bridging that verifies a Bitcoin deposit entirely on-chain via Merkle proof and PoW header chain before minting — no custodian quorum needed.
+
+*Asset primitives* — authority-gated fungible token issuance with lockable supply, non-fungible assets with collection-controlled mint/transfer/burn, and N-of-M oracle-quorum token minting.
+
+---
+
+## How it works
+
+### The dual VM model
+
+Every Arkade VTXO is a Taproot output. Its tapscript tree contains two kinds of leaves:
+
+- **Tapscript leaves** — standard Bitcoin Script, executable by miners on L1. This includes the unilateral exit leaf (CSV) that every contract carries: users can always exit to L1 without the Emulator's cooperation.
+- **Covenant leaves** — Arkade Script, executed by the Emulator before it co-signs. These leaves enforce the output constraints, asset flows, oracle checks, and timing conditions that make financial contracts possible.
+
+A contract output's spending key is a 2-of-2 multisig: `(arkd_signer, emulator_tweaked_key)`. Neither can spend alone. The Emulator will only co-sign once its covenant script passes.
+
+### Key derivation
+
+The emulator's base public key is available from `GET /v1/info`. Before embedding it in a VTXO tapscript, the caller tweaks it with the Arkade Script hash:
+
+```
+tweaked_key = emulator_key + tagged_hash("ArkScriptHash", arkade_script) * G
+```
+
+The helper `ComputeArkadeScriptPublicKey` in [`pkg/arkade/tweak.go`](pkg/arkade/tweak.go) performs this derivation. The tweak binds the key to the specific script: a different script produces a different key, so it is impossible to present a substitute script at signing time.
+
+### Emulator Packet
+
+The Arkade Script bytecode (and any runtime witness arguments) are revealed to the emulator via an **Emulator Packet** — a TLV record of type `0x01` carried inside an `OP_RETURN` ARK extension output. The extension starts with magic bytes `ARK` (`0x41524b`) and can contain multiple packet types in a single output.
+
+When the emulator receives a transaction, it:
+1. Finds the emulator packet in the `OP_RETURN` extension.
+2. For each listed input, executes the supplied Arkade Script against the transaction.
+3. Signs only if all scripts succeed.
+
+### Native VTXO delegation via OP_TUNNEL
+
+Renewing a VTXO through every Arkade batch settlement without the owner — permanent delegation — is supported today via a self-send covenant (an Arkade Script that enforces the output preserves the input's `scriptPubKey` and value). 
+
+A dedicated `OP_TUNNEL` opcode is coming that makes this an explicit, auditable script path:
+
+```
+<output_index> OP_TUNNEL
+```
+
+`OP_TUNNEL` succeeds when the selected output exactly preserves the source VTXO's `scriptPubKey`, value, and assets within a configured renewal window. Once documented separately, delegation will not need to be explained as part of this README.
+
+---
 
 ## API
 
 ### GetInfo
 
-Returns service metadata including the signer's public key. The public key should be tweaked with the Arkade script hash before being used in a VTXO tapscript.
+Returns service metadata including the signer's public key. The public key must be tweaked with the Arkade script hash before being used in a VTXO tapscript.
 
 **Endpoint**: `GET /v1/info`
 
@@ -29,6 +96,8 @@ Returns service metadata including the signer's public key. The public key shoul
   "deprecatedSignerPubkeys": ["compressed_deprecated_public_key"]
 }
 ```
+
+---
 
 ### SubmitTx
 
@@ -56,6 +125,8 @@ If this emulator is the last required non-`arkd` signer for all owned inputs mat
 
 `signedArkTx` may be either partially signed or finalized, depending on whether this emulator is the last required non-`arkd` signer for all owned inputs matched by the emulator packet.
 
+---
+
 ### SubmitIntent
 
 Signs an intent proof after validating the intent message and executing Arkade scripts on the proof transaction. Accepts any arkd intent message type (`register`, `delete`, `get-pending-tx`, `estimate-intent-fee`, `get-intent`, `get-data`), so contract VTXOs can authenticate every intent-based operation, not just registration.
@@ -78,6 +149,8 @@ Signs an intent proof after validating the intent message and executing Arkade s
   "signedProof": "base64_encoded_signed_psbt"
 }
 ```
+
+---
 
 ### SubmitFinalization
 
@@ -115,9 +188,11 @@ Conditionally signs forfeit and/or boarding inputs during batch finalization. On
 }
 ```
 
+---
+
 ### SubmitOnchainTx
 
-Validates and signs the inputs of a plain Bitcoin transaction whose tapscripts contain the emulator's tweaked key (e.g. a VTXO unrolled onchain). Each input may carry an optional `PrevoutTxField` PSBT unknown field (key `"prevouttx"`) holding the raw previous transaction, required only by arkade opcodes that introspect it.
+Validates and signs the inputs of a plain Bitcoin transaction whose tapscripts contain the emulator's tweaked key (e.g. a VTXO unrolled on-chain). Each input may carry an optional `PrevoutTxField` PSBT unknown field (key `"prevouttx"`) holding the raw previous transaction, required only by Arkade opcodes that introspect it.
 
 Inputs whose tapscript closure also contains the `arkd` signer pubkey are rejected — those must go through [`SubmitTx`](#submittx) so checkpoint and forfeit checks are enforced.
 
@@ -136,6 +211,8 @@ Inputs whose tapscript closure also contains the `arkd` signer pubkey are reject
   "signedTx": "base64_encoded_signed_psbt"
 }
 ```
+
+---
 
 ## Emulator Packet
 
@@ -168,12 +245,14 @@ The serialized packet is the value of an outer TLV record `(0x01, varint(content
 
 - `1 <= entry_count <= 1000`
 - For every entry: `1 <= len(script) <= 10_000`, `len(witness_blob) <= 1_000_000`
-- `vin` is unique across the packet (an entry per vin, never two)
+- `vin` is unique across the packet (one entry per vin, never two)
 - No trailing bytes after the last entry
 
 ### Consensus relevance
 
 The Arkade opcodes `OP_INSPECTPACKET` (`0xf4`) and `OP_INSPECTINPUTPACKET` (`0xf5`) read the raw packet bytes for a given type from the current transaction or a previous Arkade transaction's extension. Any Arkade script that uses these opcodes is sensitive to the exact serialized form of the packet — i.e. the wire format above is part of the consensus surface for those scripts, and changes to it must be treated as a protocol change.
+
+---
 
 ## Configuration
 
@@ -189,6 +268,8 @@ The service can be configured using environment variables:
 | `EMULATOR_ARKD_URL` | URL of the `arkd` instance used for attempted finalization in [`SubmitTx`](#submittx) | Required |
 | `EMULATOR_ARKD_INDEXER_URL` | URL of the `arkd` indexer used to verify commitment txs in [`SubmitFinalization`](#submitfinalization) | `EMULATOR_ARKD_URL` |
 | `EMULATOR_COMPUTE_LIMITS` | Comma-separated `OPCODE=limit` overrides for per-input opcode execution caps, for example `OP_ECPAIRING=8,OP_MODEXP=128`. Overrides are applied on top of defaults; use an empty value such as `OP_ECADD=` to remove a default cap. | Default compute limits |
+
+---
 
 ## Development
 
@@ -230,18 +311,21 @@ make docker-run
 make integrationtest
 ```
 
+---
+
 ## Supported Opcodes
 
 The following opcodes are supported by the Arkade script engine. They extend Bitcoin Script with additional introspection, data manipulation, and cryptographic operations.
 
 ### Sighash (non-standard)
 
-The arkade VM's `OP_CHECKSIG`, `OP_CHECKSIGVERIFY`, `OP_CHECKSIGADD`, and `OP_SIGHASH` operate on a **non-standard tapscript signature hash**, not BIP342. Two deliberate departures from BIP342:
+The Arkade VM's `OP_CHECKSIG`, `OP_CHECKSIGVERIFY`, `OP_CHECKSIGADD`, and `OP_SIGHASH` operate on a **non-standard tapscript signature hash**, not BIP342. Two deliberate departures from BIP342:
 
 1. **Witness blobs are masked out of `sha_outputs`.** When `sha_outputs` (or the per-output digest used by `SIGHASH_SINGLE`) is computed, every entry of every Emulator Packet is rewritten with `witness_len = 0` and the witness bytes dropped. Script bytes, `vin`, entry count, co-located ARK packets (e.g. the asset packet), and every non-extension output continue to flow into the digest unchanged. This lets a script be signed before any party has supplied runtime witness arguments, and lets witness arguments be re-supplied per spend attempt without invalidating signatures.
 2. **The final BIP-340 tag is `"ArkadeTapSighash"`**, not BIP342's `"TapSighash"`. The two digest domains are therefore disjoint: a signature valid under one CANNOT pass verification under the other, even when the underlying message bytes happen to match.
 
-The Bitcoin-level signatures that the emulator itself produces on PSBT `TaprootScriptSpendSig` entries are unaffected — those remain standard BIP342, computed via `txscript.CalcTapscriptSignaturehash` with the `"TapSighash"` tag. Only signatures verified *inside* the arkade VM use the non-standard digest.
+The Bitcoin-level signatures that the emulator itself produces on PSBT `TaprootScriptSpendSig` entries are unaffected — those remain standard BIP342, computed via `txscript.CalcTapscriptSignaturehash` with the `"TapSighash"` tag. Only signatures verified *inside* the Arkade VM use the non-standard digest.
+
 ### Transaction Introspection (Inputs)
 
 | Word | Opcode | Hex | Input | Output | Description |
@@ -271,7 +355,7 @@ The Bitcoin-level signatures that the emulator itself produces on PSBT `TaprootS
 | OP_INSPECTNUMOUTPUTS | 213 | 0xd5 | Nothing | numOutputs | Pushes the number of outputs in the transaction (scriptNum) onto the stack. |
 | OP_TXWEIGHT | 214 | 0xd6 | Nothing | weight | Pushes the transaction weight as a minimally-encoded BigNum. Weight is calculated as `SerializeSizeStripped() * 4`. |
 | OP_TXID | 243 | 0xf3 | Nothing | txid | Pushes the current transaction hash (32 bytes) onto the stack. |
-| OP_SIGHASH | 246 | 0xf6 | hashType | sighash | Pops a sighash flag and pushes the 32-byte [arkade tapscript signature hash](#sighash-non-standard) of the currently executing input under that flag. The pushed digest is identical to the message `OP_CHECKSIG` verifies in the same context, but it is **not** the BIP342 digest — see the Sighash section above. The flag must be a minimally encoded scriptNum in `[0,255]` and one of `{0x00, 0x01, 0x02, 0x03, 0x81, 0x82, 0x83}`; `SIGHASH_SINGLE` additionally requires a matching output at the input's index. |
+| OP_SIGHASH | 246 | 0xf6 | hashType | sighash | Pops a sighash flag and pushes the 32-byte [Arkade tapscript signature hash](#sighash-non-standard) of the currently executing input under that flag. The pushed digest is identical to the message `OP_CHECKSIG` verifies in the same context, but it is **not** the BIP342 digest — see the Sighash section above. The flag must be a minimally encoded scriptNum in `[0,255]` and one of `{0x00, 0x01, 0x02, 0x03, 0x81, 0x82, 0x83}`; `SIGHASH_SINGLE` additionally requires a matching output at the input's index. |
 
 ### Packet Introspection
 
@@ -300,9 +384,7 @@ The Bitcoin-level signatures that the emulator itself produces on PSBT `TaprootS
 
 ### Arithmetic
 
-Arithmetic operands and results use the VM's minimally encoded BigNum format
-and can be up to the maximum script element size. `OP_NUM2BIN` and
-`OP_BIN2NUM` bridge between BigNum values and fixed-width byte strings.
+Arithmetic operands and results use the VM's minimally encoded BigNum format and can be up to the maximum script element size. `OP_NUM2BIN` and `OP_BIN2NUM` bridge between BigNum values and fixed-width byte strings.
 
 | Word | Opcode | Hex | Input | Output | Description |
 |------|--------|-----|-------|--------|-------------|
@@ -321,8 +403,8 @@ and can be up to the maximum script element size. `OP_NUM2BIN` and
 
 | Word | Opcode | Hex | Input | Output | Description |
 |------|--------|-----|-------|--------|-------------|
-| OP_DIGEST | 195 | 0xc3 | data hash_type | hash | Pushes the digest of `data` under the algorithm selected by `hash_type` (top of stack): `1`=SHA-256, `2`=SHA-1, `3`=RIPEMD-160, `4`=Keccak-256 (legacy/Ethereum, distinct from NIST SHA3), `5`=SHA3-256 (NIST). Any other `hash_type` fails the script. |
-| OP_CHECKSIGFROMSTACK | 204 | 0xcc | sig message pubkey | True/false | Verifies a 64-byte compact signature against the message and public key popped from the stack. Public keys are either legacy 32-byte x-only Schnorr/secp256k1 keys, `0x10 || compressed secp256k1` for ECDSA/secp256k1, or `0x11 || compressed P-256` for ECDSA/P-256. ECDSA messages must be 32-byte digests. If signature is empty, pushes empty vector. |
+| OP_DIGEST | 195 | 0xc3 | data hash_type | hash | Pushes the digest of `data` under the algorithm selected by `hash_type`: `1`=SHA-256, `2`=SHA-1, `3`=RIPEMD-160, `4`=Keccak-256 (legacy/Ethereum, distinct from NIST SHA3), `5`=SHA3-256 (NIST). Any other `hash_type` fails the script. |
+| OP_CHECKSIGFROMSTACK | 204 | 0xcc | sig message pubkey | True/false | Verifies a 64-byte compact signature against the message and public key popped from the stack. Public keys are either legacy 32-byte x-only Schnorr/secp256k1 keys, `0x10 \|\| compressed secp256k1` for ECDSA/secp256k1, or `0x11 \|\| compressed P-256` for ECDSA/P-256. ECDSA messages must be 32-byte digests. If signature is empty, pushes empty vector. |
 | OP_MERKLEBRANCHVERIFY | 179 | 0xb3 | leaf_tag branch_tag proof leaf_data | computed_root | Computes a Merkle root using BIP-341 tagged hashes. If leaf_tag is empty, leaf_data (32 bytes) is used as a raw hash; otherwise computes `tagged_hash(leaf_tag, leaf_data)`. Walks the proof path with lexicographic sibling ordering. Pushes the 32-byte computed root. Use with `OP_EQUALVERIFY` to verify against an expected root. |
 
 ### Elliptic Curve Operations
@@ -342,7 +424,6 @@ and can be up to the maximum script element size. `OP_NUM2BIN` and
 | 0 | `secp256k1` | addition, scalar multiplication |
 | 1 | `secp256r1` (NIST P-256) | addition, scalar multiplication |
 | 2 | `alt_bn128` / BN254 | addition, scalar multiplication, pairing |
-
 
 ### SHA256 Streaming Operations
 
