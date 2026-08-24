@@ -280,7 +280,7 @@ const (
 	OP_BIN2NUM                       = 0xd8 // 216
 	OP_REVERSEBYTES                  = 0xd9 // 217
 	OP_MODEXP                        = 0xda // 218
-	OP_UNKNOWN219                    = 0xdb // 219
+	OP_CHECKEXPIRY                   = 0xdb // 219
 	OP_UNKNOWN220                    = 0xdc // 220
 	OP_UNKNOWN221                    = 0xdd // 221
 	OP_UNKNOWN222                    = 0xde // 222
@@ -581,7 +581,7 @@ var opcodeArray = [256]opcode{
 	OP_BIN2NUM:                       {OP_BIN2NUM, "OP_BIN2NUM", 1, opcodeBin2Num},
 	OP_REVERSEBYTES:                  {OP_REVERSEBYTES, "OP_REVERSEBYTES", 1, opcodeReverseBytes},
 	OP_MODEXP:                        {OP_MODEXP, "OP_MODEXP", 1, opcodeModexp},
-	OP_UNKNOWN219:                    {OP_UNKNOWN219, "OP_UNKNOWN219", 1, opcodeInvalid},
+	OP_CHECKEXPIRY:                   {OP_CHECKEXPIRY, "OP_CHECKEXPIRY", 1, opcodeCheckExpiry},
 	OP_UNKNOWN220:                    {OP_UNKNOWN220, "OP_UNKNOWN220", 1, opcodeInvalid},
 	OP_UNKNOWN221:                    {OP_UNKNOWN221, "OP_UNKNOWN221", 1, opcodeInvalid},
 	OP_UNKNOWN222:                    {OP_UNKNOWN222, "OP_UNKNOWN222", 1, opcodeInvalid},
@@ -2500,6 +2500,27 @@ func opcodeModexp(op *opcode, data []byte, vm *Engine) error {
 		return err
 	}
 	return vm.dstack.PushBigNum(result)
+}
+
+func opcodeCheckExpiry(_ *opcode, _ []byte, vm *Engine) error {
+	maxLead, err := vm.dstack.PopInt()
+	if err != nil {
+		return err
+	}
+	minLead, err := vm.dstack.PopInt()
+	if err != nil {
+		return err
+	}
+	if minLead < 0 || minLead >= maxLead {
+		return scriptError(txscript.ErrInvalidStackOperation, "invalid OP_CHECKEXPIRY window")
+	}
+	if vm.remaining == nil {
+		return scriptError(txscript.ErrInvalidStackOperation, "OP_CHECKEXPIRY expiry not set")
+	}
+	if *vm.remaining <= 0 || *vm.remaining < int64(minLead) || *vm.remaining > int64(maxLead) {
+		return scriptError(txscript.ErrInvalidStackOperation, "OP_CHECKEXPIRY failed")
+	}
+	return nil
 }
 
 // opcodeLshift performs a left shift on BigNum operands. The shift count

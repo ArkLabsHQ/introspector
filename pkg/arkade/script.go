@@ -27,6 +27,13 @@ type ArkadeScript struct {
 
 type ExecuteOption func(*Engine)
 
+// WithExpiry sets the VTXO's remaining lifetime for OP_CHECKEXPIRY.
+func WithExpiry(remaining int64) ExecuteOption {
+	return func(engine *Engine) {
+		engine.remaining = &remaining
+	}
+}
+
 func WithDebugCallback(callback func(*StepInfo, *Engine) error) ExecuteOption {
 	return func(engine *Engine) {
 		engine.stepCallback = func(step *StepInfo) error {
