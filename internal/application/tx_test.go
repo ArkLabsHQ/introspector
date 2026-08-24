@@ -922,6 +922,7 @@ func newSubmitTxHarness(
 		svc: &service{
 			signer:        signer{secretKey: signerKey},
 			arkdPubKey:    arkdKey.PubKey(),
+			indexerClient: expiryIndexer{},
 			computeLimits: arkade.DefaultComputeLimits(),
 		},
 		arkPtx:     arkPtx,

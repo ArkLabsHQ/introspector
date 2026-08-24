@@ -68,6 +68,13 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		if err := validateCheckpoint(arkPtx, inputIndex, checkpointPtx, prevOutFetcher.fetchVtxoPrevOut(arkOutpoint), script.TapLeaf()); err != nil {
 			return nil, fmt.Errorf("invalid checkpoint for input %d: %w", inputIndex, err)
 		}
+		prevArkTx := prevOutFetcher.FetchPrevOutArkTx(arkOutpoint)
+		remaining, err := s.remainingLifetime(
+			ctx, prevArkTx.TxHash().String(), prevOutFetcher.prevOutIdxs[arkOutpoint],
+		)
+		if err != nil {
+			return nil, err
+		}
 
 		log.Debugf("executing arkade script: %x", script.Script())
 		if err := script.Execute(
@@ -76,6 +83,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 			inputIndex,
 			arkade.WithExactComputeLimits(s.computeLimits),
 			arkade.WithComputeBudget(budget),
+			arkade.WithExpiry(remaining),
 		); err != nil {
 			return nil, fmt.Errorf("failed to execute arkade script: %w vin=%d", err, inputIndex)
 		}

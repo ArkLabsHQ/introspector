@@ -62,22 +62,10 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 		}
 
 		outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
-		request := indexer.GetVtxosRequestOption{}
-		if err := request.WithOutpoints([]sdktypes.Outpoint{{
-			Txid: outpoint.Hash.String(), VOut: outpoint.Index,
-		}}); err != nil {
-			return nil, err
-		}
-		response, err := s.indexerClient.GetVtxos(
-			withClientVersion(ctx, s.clientVersion), request,
-		)
+		remaining, err := s.remainingLifetime(ctx, outpoint.Hash.String(), outpoint.Index)
 		if err != nil {
 			return nil, err
 		}
-		if response == nil || len(response.Vtxos) != 1 {
-			return nil, fmt.Errorf("VTXO expiry not found")
-		}
-		remaining := response.Vtxos[0].ExpiresAt.Unix() - time.Now().Unix()
 
 		if err := script.Execute(
 			ptx.UnsignedTx,
@@ -119,6 +107,25 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 	}
 
 	return ptx, nil
+}
+
+func (s *service) remainingLifetime(
+	ctx context.Context, txid string, vout uint32,
+) (int64, error) {
+	request := indexer.GetVtxosRequestOption{}
+	if err := request.WithOutpoints([]sdktypes.Outpoint{{Txid: txid, VOut: vout}}); err != nil {
+		return 0, err
+	}
+	response, err := s.indexerClient.GetVtxos(
+		withClientVersion(ctx, s.clientVersion), request,
+	)
+	if err != nil {
+		return 0, err
+	}
+	if response == nil || len(response.Vtxos) != 1 {
+		return 0, fmt.Errorf("VTXO expiry not found")
+	}
+	return response.Vtxos[0].ExpiresAt.Unix() - time.Now().Unix(), nil
 }
 
 // validateMessage checks intent admission policy and the proof's validity window.

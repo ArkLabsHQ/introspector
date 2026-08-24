@@ -208,16 +208,16 @@ func submitTestIntent(
 ) (*psbt.Packet, error) {
 	t.Helper()
 
-	svc := &service{signer: signer{signerKey}, indexerClient: intentIndexer{}}
+	svc := &service{signer: signer{signerKey}, indexerClient: expiryIndexer{}}
 	return svc.SubmitIntent(t.Context(), Intent{
 		Proof:   intent.Proof{Packet: *ptx},
 		Message: &intent.RegisterMessage{ExpireAt: time.Now().Add(time.Hour).Unix()},
 	})
 }
 
-type intentIndexer struct{ indexer.Indexer }
+type expiryIndexer struct{ indexer.Indexer }
 
-func (intentIndexer) GetVtxos(
+func (expiryIndexer) GetVtxos(
 	context.Context, ...indexer.GetVtxosRequestOption,
 ) (*indexer.VtxosResponse, error) {
 	return &indexer.VtxosResponse{Vtxos: []sdktypes.Vtxo{{
