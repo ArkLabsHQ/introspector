@@ -69,6 +69,9 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 			return nil, fmt.Errorf("invalid checkpoint for input %d: %w", inputIndex, err)
 		}
 		prevArkTx := prevOutFetcher.FetchPrevOutArkTx(arkOutpoint)
+		if prevArkTx == nil {
+			return nil, fmt.Errorf("prevout ark tx not found for input %d", inputIndex)
+		}
 		remaining, err := s.remainingLifetime(
 			ctx, script.Script(), prevArkTx.TxHash().String(),
 			prevOutFetcher.prevOutIdxs[arkOutpoint],

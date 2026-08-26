@@ -12,6 +12,7 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/arkade-os/go-sdk/indexer"
+	sdktypes "github.com/arkade-os/go-sdk/types"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -217,6 +218,7 @@ func submitTestIntent(
 type expiryIndexer struct {
 	indexer.Indexer
 	calls *int
+	vtxos []sdktypes.Vtxo
 }
 
 func (e expiryIndexer) GetVtxos(
@@ -225,7 +227,7 @@ func (e expiryIndexer) GetVtxos(
 	if e.calls != nil {
 		(*e.calls)++
 	}
-	return &indexer.VtxosResponse{}, nil
+	return &indexer.VtxosResponse{Vtxos: e.vtxos}, nil
 }
 
 func TestRemainingLifetimeOnlyQueriesIndexerForCheckExpiry(t *testing.T) {
@@ -244,8 +246,52 @@ func TestRemainingLifetimeOnlyQueriesIndexerForCheckExpiry(t *testing.T) {
 	require.Zero(t, calls)
 
 	_, err = svc.remainingLifetime(t.Context(), []byte{arkade.OP_CHECKEXPIRY}, txid, 0)
-	require.NoError(t, err)
+	require.ErrorContains(t, err, "not found")
 	require.Equal(t, 1, calls)
+
+	svc.indexerClient = expiryIndexer{vtxos: []sdktypes.Vtxo{{
+		Outpoint:  sdktypes.Outpoint{Txid: chainhash.Hash{1}.String()},
+		ExpiresAt: time.Now().Add(time.Minute),
+	}}}
+	_, err = svc.remainingLifetime(t.Context(), []byte{arkade.OP_CHECKEXPIRY}, txid, 0)
+	require.ErrorContains(t, err, "not found")
+
+	svc.indexerClient = expiryIndexer{vtxos: []sdktypes.Vtxo{{
+		Outpoint: sdktypes.Outpoint{Txid: txid},
+	}}}
+	_, err = svc.remainingLifetime(t.Context(), []byte{arkade.OP_CHECKEXPIRY}, txid, 0)
+	require.ErrorContains(t, err, "has no expiry")
+}
+
+func TestSubmitIntentCheckExpiry(t *testing.T) {
+	signerKey := newResolverPrivateKey(t)
+	script, err := txscript.NewScriptBuilder().
+		AddInt64(10).AddInt64(120).AddOp(arkade.OP_CHECKEXPIRY).
+		AddOp(txscript.OP_TRUE).Script()
+	require.NoError(t, err)
+	tweaked := arkade.ComputeArkadeScriptPublicKey(
+		signerKey.PubKey(), arkade.ArkadeScriptHash(script),
+	)
+	owned := newIntentVtxo(t, tweaked)
+	ptx := newIntentProof(
+		t, []intentVtxo{owned, owned}, arkade.EmulatorEntry{Vin: 1, Script: script},
+	)
+	outpoint := ptx.UnsignedTx.TxIn[1].PreviousOutPoint
+
+	svc := &service{
+		signer: signer{signerKey},
+		indexerClient: expiryIndexer{vtxos: []sdktypes.Vtxo{{
+			Outpoint:  sdktypes.Outpoint{Txid: outpoint.Hash.String(), VOut: outpoint.Index},
+			ExpiresAt: time.Now().Add(time.Minute),
+		}}},
+	}
+	signed, err := svc.SubmitIntent(t.Context(), Intent{
+		Proof:   intent.Proof{Packet: *ptx},
+		Message: &intent.RegisterMessage{ExpireAt: time.Now().Add(time.Hour).Unix()},
+	})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, signed.Inputs[1].TaprootScriptSpendSig)
 }
 
 // intentVtxo is a taproot coin with a single multisig closure, enough for the

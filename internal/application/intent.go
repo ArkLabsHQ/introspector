@@ -136,10 +136,19 @@ func (s *service) remainingLifetime(
 	if err != nil {
 		return 0, err
 	}
-	if response == nil || len(response.Vtxos) == 0 {
-		return 0, nil
+	if response != nil {
+		for _, vtxo := range response.Vtxos {
+			if vtxo.Txid != txid || vtxo.VOut != vout {
+				continue
+			}
+			expiresAt := vtxo.ExpiresAt.Unix()
+			if expiresAt <= 0 {
+				return 0, fmt.Errorf("vtxo %s:%d has no expiry", txid, vout)
+			}
+			return expiresAt - time.Now().Unix(), nil
+		}
 	}
-	return response.Vtxos[0].ExpiresAt.Unix() - time.Now().Unix(), nil
+	return 0, fmt.Errorf("vtxo %s:%d not found", txid, vout)
 }
 
 // validateMessage checks intent admission policy and the proof's validity window.
