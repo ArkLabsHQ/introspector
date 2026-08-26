@@ -62,7 +62,9 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 		}
 
 		outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
-		remaining, err := s.remainingLifetime(ctx, outpoint.Hash.String(), outpoint.Index)
+		remaining, err := s.remainingLifetime(
+			ctx, script.Script(), outpoint.Hash.String(), outpoint.Index,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -110,8 +112,20 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 }
 
 func (s *service) remainingLifetime(
-	ctx context.Context, txid string, vout uint32,
+	ctx context.Context, script []byte, txid string, vout uint32,
 ) (int64, error) {
+	tokenizer := arkade.MakeScriptTokenizer(0, script)
+	needsExpiry := false
+	for tokenizer.Next() {
+		needsExpiry = needsExpiry || tokenizer.Opcode() == arkade.OP_CHECKEXPIRY
+	}
+	if err := tokenizer.Err(); err != nil {
+		return 0, err
+	}
+	if !needsExpiry {
+		return 0, nil
+	}
+
 	request := indexer.GetVtxosRequestOption{}
 	if err := request.WithOutpoints([]sdktypes.Outpoint{{Txid: txid, VOut: vout}}); err != nil {
 		return 0, err

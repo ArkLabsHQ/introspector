@@ -70,7 +70,8 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		}
 		prevArkTx := prevOutFetcher.FetchPrevOutArkTx(arkOutpoint)
 		remaining, err := s.remainingLifetime(
-			ctx, prevArkTx.TxHash().String(), prevOutFetcher.prevOutIdxs[arkOutpoint],
+			ctx, script.Script(), prevArkTx.TxHash().String(),
+			prevOutFetcher.prevOutIdxs[arkOutpoint],
 		)
 		if err != nil {
 			return nil, err

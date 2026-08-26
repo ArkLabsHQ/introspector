@@ -214,12 +214,38 @@ func submitTestIntent(
 	})
 }
 
-type expiryIndexer struct{ indexer.Indexer }
+type expiryIndexer struct {
+	indexer.Indexer
+	calls *int
+}
 
-func (expiryIndexer) GetVtxos(
+func (e expiryIndexer) GetVtxos(
 	context.Context, ...indexer.GetVtxosRequestOption,
 ) (*indexer.VtxosResponse, error) {
+	if e.calls != nil {
+		(*e.calls)++
+	}
 	return &indexer.VtxosResponse{}, nil
+}
+
+func TestRemainingLifetimeOnlyQueriesIndexerForCheckExpiry(t *testing.T) {
+	calls := 0
+	svc := &service{indexerClient: expiryIndexer{calls: &calls}}
+	txid := chainhash.Hash{}.String()
+
+	pushedOpcode, err := txscript.NewScriptBuilder().
+		AddData([]byte{arkade.OP_CHECKEXPIRY}).Script()
+	require.NoError(t, err)
+
+	for _, script := range [][]byte{{txscript.OP_TRUE}, pushedOpcode} {
+		_, err := svc.remainingLifetime(t.Context(), script, txid, 0)
+		require.NoError(t, err)
+	}
+	require.Zero(t, calls)
+
+	_, err = svc.remainingLifetime(t.Context(), []byte{arkade.OP_CHECKEXPIRY}, txid, 0)
+	require.NoError(t, err)
+	require.Equal(t, 1, calls)
 }
 
 // intentVtxo is a taproot coin with a single multisig closure, enough for the
