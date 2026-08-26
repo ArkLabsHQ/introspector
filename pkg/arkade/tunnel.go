@@ -78,6 +78,8 @@ func opcodeTunnel(op *opcode, data []byte, vm *Engine) error {
 		}
 	}
 	if flags&TunnelValue != 0 {
+		// Value follows the directly spent output, including a checkpoint's
+		// fee-adjusted amount, while the script follows the logical VTXO.
 		prevout := vm.prevOutFetcher.FetchPrevOutput(outpoint)
 		if prevout == nil {
 			return tunnelError("source prevout is missing")
@@ -110,6 +112,8 @@ func tunnelAssets(txHash chainhash.Hash, packet asset.Packet, inputIndex, output
 		if _, excluded := exceptions[id]; excluded {
 			continue
 		}
+		// AssetGroup validation guarantees unique Vin and Vout entries, so at
+		// most one amount on each side can match the selected index.
 		for _, input := range group.Inputs {
 			if input.Type == asset.AssetInputTypeLocal && int(input.Vin) == inputIndex {
 				inputAssets[id] = input.Amount
