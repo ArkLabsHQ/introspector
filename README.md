@@ -11,7 +11,7 @@ This is achieved by signing any Arkade transaction (offchain or intent proof) ex
 ## ArkadeScript examples
 
 - [`test/htlc_test.go`](test/htlc_test.go) — **Non-interactive HTLC.** A 2-of-2 (`arkd` + emulator-tweaked) VTXO with a claim path gated by HASH160(preimage) and a refund path gated by absolute timelock. Neither the receiver nor the sender ever signs — an arkade covenant enforcing destination + amount replaces both their signatures.
-- [`test/delegate_test.go`](test/delegate_test.go) — **Non-interactive delegate.** A 2-of-2 (`arkd` + emulator-tweaked) VTXO refreshed through batch settlement by any solver, with a CSV exit leaf reserved for the user. The arkade covenant is a self-send (preserves the input's scriptPubKey + value on output 0) gated to intent-proof transactions (`OP_INSPECTVERSION` == 2) so it cannot be drained via off-chain self-send loops.
+- [`test/delegate_test.go`](test/delegate_test.go) — **Non-interactive delegate.** A 2-of-2 (`arkd` + emulator-tweaked) VTXO refreshed through batch settlement by any solver, with a CSV exit leaf reserved for the user. The arkade covenant uses `OP_TUNNEL` to preserve the input's scriptPubKey + value on output 0 and is gated to intent-proof transactions (`OP_INSPECTVERSION` == 2) so it cannot be drained via off-chain self-send loops.
 
 ## API
 
@@ -272,6 +272,7 @@ The Bitcoin-level signatures that the emulator itself produces on PSBT `TaprootS
 | OP_TXWEIGHT | 214 | 0xd6 | Nothing | weight | Pushes the transaction weight as a minimally-encoded BigNum. Weight is calculated as `SerializeSizeStripped() * 4`. |
 | OP_TXID | 243 | 0xf3 | Nothing | txid | Pushes the current transaction hash (32 bytes) onto the stack. |
 | OP_SIGHASH | 246 | 0xf6 | hashType | sighash | Pops a sighash flag and pushes the 32-byte [arkade tapscript signature hash](#sighash-non-standard) of the currently executing input under that flag. The pushed digest is identical to the message `OP_CHECKSIG` verifies in the same context, but it is **not** the BIP342 digest — see the Sighash section above. The flag must be a minimally encoded scriptNum in `[0,255]` and one of `{0x00, 0x01, 0x02, 0x03, 0x81, 0x82, 0x83}`; `SIGHASH_SINGLE` additionally requires a matching output at the input's index. |
+| OP_TUNNEL | 247 | 0xf7 | output_index flags [asset_txid asset_gidx]... exception_count | True/fail | Requires the selected output to preserve fields from the current input. `flags` is a bitmask: `1` preserves the logical VTXO scriptPubKey, `2` preserves the directly spent output's value, and `4` preserves input-local asset IDs and amounts. Asset IDs listed before `exception_count` are excluded from the asset check and require flag `4`. Flags must be nonzero and may be combined. |
 
 ### Packet Introspection
 

@@ -45,14 +45,7 @@ const (
 // Witness stack: [].
 //
 //	OP_INSPECTVERSION OP_2 OP_EQUALVERIFY          # intent proof only (v2, not v3)
-//	OP_0 OP_INSPECTOUTPUTSCRIPTPUBKEY
-//	OP_1 OP_EQUALVERIFY                            # force taproot
-//	OP_PUSHCURRENTINPUTINDEX OP_INSPECTINPUTSCRIPTPUBKEY
-//	OP_1 OP_EQUALVERIFY                            # force taproot
-//	OP_EQUALVERIFY                                 # programs equal
-//	OP_0 OP_INSPECTOUTPUTVALUE
-//	OP_PUSHCURRENTINPUTINDEX OP_INSPECTINPUTVALUE
-//	OP_EQUAL                                       # values equal
+//	OP_0 OP_3 OP_0 OP_TUNNEL                       # output, script+value flags, no asset exceptions
 //
 // Delegate path — MultisigClosure [server, emulator_tweaked]. Any solver
 // can trigger the refresh; the covenant acts in the user's place.
@@ -320,22 +313,10 @@ func enforceSelfSend(t *testing.T) []byte {
 		AddOp(arkade.OP_INSPECTVERSION).
 		AddInt64(2).
 		AddOp(arkade.OP_EQUALVERIFY).
-		// output[0] witness program == input[self] witness program
 		AddInt64(0).
-		AddOp(arkade.OP_INSPECTOUTPUTSCRIPTPUBKEY).
-		AddOp(arkade.OP_1).
-		AddOp(arkade.OP_EQUALVERIFY). // segwit v1
-		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).
-		AddOp(arkade.OP_INSPECTINPUTSCRIPTPUBKEY).
-		AddOp(arkade.OP_1).
-		AddOp(arkade.OP_EQUALVERIFY). // segwit v1
-		AddOp(arkade.OP_EQUALVERIFY).
-		// output[0] value == input[self] value
+		AddInt64(arkade.TunnelScriptPubKey | arkade.TunnelValue).
 		AddInt64(0).
-		AddOp(arkade.OP_INSPECTOUTPUTVALUE).
-		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).
-		AddOp(arkade.OP_INSPECTINPUTVALUE).
-		AddOp(arkade.OP_EQUAL).
+		AddOp(arkade.OP_TUNNEL).
 		Script()
 	require.NoError(t, err)
 
@@ -344,7 +325,7 @@ func enforceSelfSend(t *testing.T) []byte {
 
 // fundDelegate locks amount sats into a VTXO with the given script and returns
 // the spend input for its forfeit leaf plus the funding ark tx (needed by
-// OP_INSPECTINPUTSCRIPTPUBKEY via arkade.PrevArkTxField).
+// OP_TUNNEL via arkade.PrevArkTxField).
 func fundDelegate(
 	t *testing.T,
 	ctx context.Context,
