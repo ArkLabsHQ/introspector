@@ -37,8 +37,9 @@ type IntentMessage interface {
 }
 
 type Intent struct {
-	Proof   intent.Proof
-	Message IntentMessage
+	Proof          intent.Proof
+	Message        IntentMessage
+	EncodedMessage string
 }
 
 type BatchFinalization struct {

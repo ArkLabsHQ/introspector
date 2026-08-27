@@ -352,7 +352,7 @@ var opcodeSpecs = [256]*opcodeSpec{
 	OP_INSPECTINPUTPACKET:            inspectInputPacketSpec(),
 	OP_SIGHASH:                       sighashSpec(),
 	OP_UNKNOWN247:                    invalidSpec(OP_UNKNOWN247),
-	OP_UNKNOWN248:                    invalidSpec(OP_UNKNOWN248),
+	OP_INSPECTINTENTMESSAGE:          inspectIntentMessageSpec(),
 	OP_UNKNOWN249:                    invalidSpec(OP_UNKNOWN249),
 	OP_SMALLINTEGER:                  invalidSpec(OP_SMALLINTEGER),
 	OP_PUBKEYS:                       invalidSpec(OP_PUBKEYS),

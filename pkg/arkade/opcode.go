@@ -309,7 +309,7 @@ const (
 	OP_INSPECTINPUTPACKET            = 0xf5 // 245
 	OP_SIGHASH                       = 0xf6 // 246
 	OP_UNKNOWN247                    = 0xf7 // 247
-	OP_UNKNOWN248                    = 0xf8 // 248
+	OP_INSPECTINTENTMESSAGE          = 0xf8 // 248
 	OP_UNKNOWN249                    = 0xf9 // 249
 	OP_SMALLINTEGER                  = 0xfa // 250 - bitcoin core internal
 	OP_PUBKEYS                       = 0xfb // 251 - bitcoin core internal
@@ -610,7 +610,7 @@ var opcodeArray = [256]opcode{
 	OP_INSPECTINPUTPACKET:            {OP_INSPECTINPUTPACKET, "OP_INSPECTINPUTPACKET", 1, opcodeInspectInputPacket},
 	OP_SIGHASH:                       {OP_SIGHASH, "OP_SIGHASH", 1, opcodeSighash},
 	OP_UNKNOWN247:                    {OP_UNKNOWN247, "OP_UNKNOWN247", 1, opcodeInvalid},
-	OP_UNKNOWN248:                    {OP_UNKNOWN248, "OP_UNKNOWN248", 1, opcodeInvalid},
+	OP_INSPECTINTENTMESSAGE:          {OP_INSPECTINTENTMESSAGE, "OP_INSPECTINTENTMESSAGE", 1, opcodeInspectIntentMessage},
 	OP_UNKNOWN249:                    {OP_UNKNOWN249, "OP_UNKNOWN249", 1, opcodeInvalid},
 
 	// Bitcoin Core internal use opcode.  Defined here for completeness.
