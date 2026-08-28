@@ -2,6 +2,7 @@ package arkade
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/btcsuite/btcd/txscript"
@@ -9,7 +10,7 @@ import (
 )
 
 func inspectIntentMessageSpec() *opcodeSpec {
-	message := []byte(`{"type":"register","expire_at":1000,"enabled":false,"items":[1,2]}`)
+	message := []byte(`{"type":"register","expire_at":1000,"enabled":false,"items":[1,2],"metadata":{"label":"ok"}}`)
 	setupMessage := WithIntentMessage(message)
 
 	return &opcodeSpec{
@@ -32,6 +33,12 @@ func inspectIntentMessageSpec() *opcodeSpec {
 				inputStack:    [][]byte{[]byte("expire_at")},
 				setupVM:       setupMessage,
 				expectedStack: [][]byte{scriptNum(1000).Bytes(), {1}},
+			},
+			{
+				name:          "nested_key",
+				inputStack:    [][]byte{[]byte("metadata.label")},
+				setupVM:       setupMessage,
+				expectedStack: [][]byte{[]byte("ok"), {1}},
 			},
 			{
 				name:          "false_value_is_present",
@@ -131,11 +138,15 @@ func inspectIntentMessagePropertyChecker(t *testing.T, c opcodeCheckContext) {
 func TestSimpleIntentMessagePath(t *testing.T) {
 	t.Parallel()
 
-	for _, path := range []string{"type", "nested.value", "items.0", "a_b"} {
-		require.True(t, isSimpleIntentMessagePath([]byte(path)), path)
+	for _, path := range []string{"type", "nested.value", "items.0", "items.4194303", "a_b", "_meta"} {
+		require.True(t, isSimpleIntentMessagePath(path), path)
 	}
-	for _, path := range []string{"", ".type", "type.", "a..b", "*", "items.#", "@this", "items.#(type)", "a|b", "Type"} {
-		require.False(t, isSimpleIntentMessagePath([]byte(path)), path)
+	for _, path := range []string{
+		"", ".type", "type.", "a..b", "*", "items.#", "@this", "items.#(type)",
+		"a|b", "Type", "1field", "items.00", "items.4194304",
+		"items.18446744073709551616",
+	} {
+		require.False(t, isSimpleIntentMessagePath(path), path)
 	}
 }
 
@@ -172,6 +183,9 @@ func TestParseJSONInteger(t *testing.T) {
 	}
 
 	_, _, err := parseJSONInteger("1e999999999")
+	requireScriptErrorCode(t, err, txscript.ErrNumberTooBig)
+
+	_, _, err = parseJSONInteger(strings.Repeat("9", maxBigNumDecimalDigitCount+1))
 	requireScriptErrorCode(t, err, txscript.ErrNumberTooBig)
 }
 

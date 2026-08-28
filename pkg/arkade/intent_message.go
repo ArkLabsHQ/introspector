@@ -10,12 +10,15 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-const maxIntentMessageSize = 4 * 1024 * 1024
+const (
+	maxIntentMessageSize       = 4 * 1024 * 1024
+	maxBigNumDecimalDigitCount = 1255
+)
 
 // opcodeInspectIntentMessage queries the canonical intent message bound by the
 // application. The presence flag is always pushed last.
 func opcodeInspectIntentMessage(op *opcode, data []byte, vm *Engine) error {
-	path, err := vm.dstack.PopByteArray()
+	pathBytes, err := vm.dstack.PopByteArray()
 	if err != nil {
 		return err
 	}
@@ -26,12 +29,13 @@ func opcodeInspectIntentMessage(op *opcode, data []byte, vm *Engine) error {
 	if len(vm.intentMessage) > maxIntentMessageSize {
 		return scriptError(txscript.ErrScriptTooBig, "intent message exceeds 4 MiB")
 	}
+	path := string(pathBytes)
 	if !isSimpleIntentMessagePath(path) {
 		pushIntentMessageMiss(vm)
 		return nil
 	}
 
-	result := gjson.GetBytes(vm.intentMessage, string(path))
+	result := gjson.GetBytes(vm.intentMessage, path)
 	switch result.Type {
 	case gjson.Null:
 		pushIntentMessageMiss(vm)
@@ -64,25 +68,29 @@ func opcodeInspectIntentMessage(op *opcode, data []byte, vm *Engine) error {
 	}
 }
 
-func isSimpleIntentMessagePath(path []byte) bool {
-	if len(path) == 0 {
-		return false
-	}
-	segmentStart := true
-	for _, c := range path {
-		if c == '.' {
-			if segmentStart {
-				return false
-			}
-			segmentStart = true
-			continue
-		}
-		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '_' {
+func isSimpleIntentMessagePath(path string) bool {
+	for _, segment := range strings.Split(path, ".") {
+		if segment == "" {
 			return false
 		}
-		segmentStart = false
+		if segment[0] >= '0' && segment[0] <= '9' {
+			index, err := strconv.ParseUint(segment, 10, 64)
+			if err != nil || (len(segment) > 1 && segment[0] == '0') || index >= maxIntentMessageSize {
+				return false
+			}
+			continue
+		}
+		if segment[0] != '_' && (segment[0] < 'a' || segment[0] > 'z') {
+			return false
+		}
+		for i := 1; i < len(segment); i++ {
+			c := segment[i]
+			if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '_' {
+				return false
+			}
+		}
 	}
-	return !segmentStart
+	return true
 }
 
 func pushIntentMessageMiss(vm *Engine) {
@@ -167,11 +175,15 @@ func parseJSONInteger(raw string) (*big.Int, bool, error) {
 	} else if scale > 0 {
 		// 520 bytes hold fewer than 1,255 decimal digits. The final binary
 		// encoding check remains authoritative at the boundary.
-		if scale > 1255 || int64(len(digits))+scale > 1255 {
+		if scale > maxBigNumDecimalDigitCount || int64(len(digits))+scale > maxBigNumDecimalDigitCount {
 			return nil, false, scriptError(txscript.ErrNumberTooBig,
 				"intent message number exceeds the BigNum range")
 		}
 		digits += strings.Repeat("0", int(scale))
+	}
+	if len(digits) > maxBigNumDecimalDigitCount {
+		return nil, false, scriptError(txscript.ErrNumberTooBig,
+			"intent message number exceeds the BigNum range")
 	}
 
 	n, ok := new(big.Int).SetString(digits, 10)
