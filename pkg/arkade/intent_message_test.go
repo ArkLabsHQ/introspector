@@ -46,10 +46,10 @@ func inspectIntentMessageSpec() *opcodeSpec {
 				expectedStack: [][]byte{[]byte("[1,2]"), {1}},
 			},
 			{
-				name:          "array_length",
-				inputStack:    [][]byte{[]byte("items.#")},
+				name:          "array_index",
+				inputStack:    [][]byte{[]byte("items.0")},
 				setupVM:       setupMessage,
-				expectedStack: [][]byte{scriptNum(2).Bytes(), {1}},
+				expectedStack: [][]byte{scriptNum(1).Bytes(), {1}},
 			},
 			{
 				name:          "missing",
@@ -66,10 +66,10 @@ func inspectIntentMessageSpec() *opcodeSpec {
 				expectedStack: [][]byte{nil, nil},
 			},
 			{
-				name:          "whole_message",
-				inputStack:    [][]byte{[]byte("@this")},
+				name:          "complex_path_is_miss",
+				inputStack:    [][]byte{[]byte("items.#")},
 				setupVM:       setupMessage,
-				expectedStack: [][]byte{message, {1}},
+				expectedStack: [][]byte{nil, nil},
 			},
 		},
 		invalidVectors: []opcodeVector{
@@ -92,6 +92,14 @@ func inspectIntentMessageSpec() *opcodeSpec {
 				},
 				expectedError: txscript.ErrNumberTooBig,
 			},
+			{
+				name:       "oversized_message",
+				inputStack: [][]byte{[]byte("type")},
+				setupVM: func(vm *Engine) {
+					WithIntentMessage(make([]byte, maxIntentMessageSize+1))(vm)
+				},
+				expectedError: txscript.ErrScriptTooBig,
+			},
 		},
 	}
 }
@@ -108,6 +116,7 @@ func inspectIntentMessagePropertyChecker(t *testing.T, c opcodeCheckContext) {
 			txscript.ErrInvalidStackOperation,
 			txscript.ErrNumberTooBig,
 			txscript.ErrElementTooBig,
+			txscript.ErrScriptTooBig,
 		)
 		require.True(t, afterDepth == beforeDepth || afterDepth == beforeDepth-1)
 		return
@@ -117,6 +126,17 @@ func inspectIntentMessagePropertyChecker(t *testing.T, c opcodeCheckContext) {
 	flag := c.after.GetStack()[afterDepth-1]
 	require.True(t, bytes.Equal(flag, nil) || bytes.Equal(flag, []byte{1}))
 	require.LessOrEqual(t, len(c.after.GetStack()[afterDepth-2]), txscript.MaxScriptElementSize)
+}
+
+func TestSimpleIntentMessagePath(t *testing.T) {
+	t.Parallel()
+
+	for _, path := range []string{"type", "nested.value", "items.0", "a_b"} {
+		require.True(t, isSimpleIntentMessagePath([]byte(path)), path)
+	}
+	for _, path := range []string{"", ".type", "type.", "a..b", "*", "items.#", "@this", "items.#(type)", "a|b", "Type"} {
+		require.False(t, isSimpleIntentMessagePath([]byte(path)), path)
+	}
 }
 
 func TestParseJSONInteger(t *testing.T) {
@@ -156,8 +176,10 @@ func TestParseJSONInteger(t *testing.T) {
 }
 
 func BenchmarkInspectIntentMessage4MiB(b *testing.B) {
-	message := append([]byte(`{"padding":"`), bytes.Repeat([]byte{'a'}, 4*1024*1024)...)
-	message = append(message, []byte(`","type":"register"}`)...)
+	prefix := []byte(`{"padding":"`)
+	suffix := []byte(`","type":"register"}`)
+	message := append(prefix, bytes.Repeat([]byte{'a'}, maxIntentMessageSize-len(prefix)-len(suffix))...)
+	message = append(message, suffix...)
 	vm := &Engine{intentMessage: message}
 
 	b.ReportAllocs()

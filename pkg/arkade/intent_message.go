@@ -10,6 +10,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+const maxIntentMessageSize = 4 * 1024 * 1024
+
 // opcodeInspectIntentMessage queries the canonical intent message bound by the
 // application. The presence flag is always pushed last.
 func opcodeInspectIntentMessage(op *opcode, data []byte, vm *Engine) error {
@@ -18,6 +20,13 @@ func opcodeInspectIntentMessage(op *opcode, data []byte, vm *Engine) error {
 		return err
 	}
 	if vm.intentMessage == nil {
+		pushIntentMessageMiss(vm)
+		return nil
+	}
+	if len(vm.intentMessage) > maxIntentMessageSize {
+		return scriptError(txscript.ErrScriptTooBig, "intent message exceeds 4 MiB")
+	}
+	if !isSimpleIntentMessagePath(path) {
 		pushIntentMessageMiss(vm)
 		return nil
 	}
@@ -53,6 +62,27 @@ func opcodeInspectIntentMessage(op *opcode, data []byte, vm *Engine) error {
 		pushIntentMessageMiss(vm)
 		return nil
 	}
+}
+
+func isSimpleIntentMessagePath(path []byte) bool {
+	if len(path) == 0 {
+		return false
+	}
+	segmentStart := true
+	for _, c := range path {
+		if c == '.' {
+			if segmentStart {
+				return false
+			}
+			segmentStart = true
+			continue
+		}
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '_' {
+			return false
+		}
+		segmentStart = false
+	}
+	return !segmentStart
 }
 
 func pushIntentMessageMiss(vm *Engine) {
