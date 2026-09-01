@@ -147,6 +147,19 @@ func (inputPacketCaseBuilder) Build(data []byte, world *opcodeFuzzWorld) opcodeF
 	return c
 }
 
+type tunnelCaseBuilder struct{}
+
+func (tunnelCaseBuilder) Build(data []byte, world *opcodeFuzzWorld) opcodeFuzzCase {
+	c := defaultCaseBuilder{}.Build(data, world)
+	outputIndex := int64(0)
+	if len(world.world.tx.TxOut) > 0 {
+		outputIndex = int64(data[0] % uint8(len(world.world.tx.TxOut)))
+	}
+	flags := int64(data[1]%tunnelFlags) + 1
+	c.stackPushes = tunnelStack(outputIndex, flags)
+	return c
+}
+
 type assetIDLookupCaseBuilder struct{}
 
 func (assetIDLookupCaseBuilder) Build(data []byte, world *opcodeFuzzWorld) opcodeFuzzCase {
@@ -388,6 +401,7 @@ var fuzzCaseBuilders = [256]fuzzCaseBuilder{
 	OP_CHECKSIGVERIFY:                taprootCheckSigCaseBuilder{},
 	OP_CHECKSIGADD:                   taprootCheckSigAddCaseBuilder{},
 	OP_SIGHASH:                       sighashCaseBuilder{},
+	OP_TUNNEL:                        tunnelCaseBuilder{},
 	OP_FINDASSETGROUPBYASSETID:       assetIDLookupCaseBuilder{},
 	OP_INSPECTASSETGROUPASSETID:      assetGroupCaseBuilder{},
 	OP_INSPECTASSETGROUPCTRL:         assetGroupCaseBuilder{},
