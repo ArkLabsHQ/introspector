@@ -215,21 +215,6 @@ func submitTestIntent(
 	})
 }
 
-type expiryIndexer struct {
-	indexer.Indexer
-	calls *int
-	vtxos []sdktypes.Vtxo
-}
-
-func (e expiryIndexer) GetVtxos(
-	context.Context, ...indexer.GetVtxosRequestOption,
-) (*indexer.VtxosResponse, error) {
-	if e.calls != nil {
-		(*e.calls)++
-	}
-	return &indexer.VtxosResponse{Vtxos: e.vtxos}, nil
-}
-
 func TestExpiryForScriptOnlyQueriesIndexerForPushExpiry(t *testing.T) {
 	calls := 0
 	svc := &service{indexerClient: expiryIndexer{calls: &calls}}
@@ -388,4 +373,19 @@ func newIntentProof(
 	ptx.Outputs = append(ptx.Outputs, psbt.POutput{})
 
 	return ptx
+}
+
+type expiryIndexer struct {
+	indexer.Indexer
+	calls *int
+	vtxos []sdktypes.Vtxo
+}
+
+func (e expiryIndexer) GetVtxos(
+	context.Context, ...indexer.GetVtxosRequestOption,
+) (*indexer.VtxosResponse, error) {
+	if e.calls != nil {
+		(*e.calls)++
+	}
+	return &indexer.VtxosResponse{Vtxos: e.vtxos}, nil
 }
