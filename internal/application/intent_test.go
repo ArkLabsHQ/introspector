@@ -10,9 +10,9 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	arkscript "github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
+	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
+	"github.com/arkade-os/arkd/pkg/client-lib/types"
 	"github.com/arkade-os/emulator/pkg/arkade"
-	"github.com/arkade-os/go-sdk/indexer"
-	sdktypes "github.com/arkade-os/go-sdk/types"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -234,15 +234,15 @@ func TestExpiryForScriptOnlyQueriesIndexerForPushExpiry(t *testing.T) {
 	require.ErrorContains(t, err, "not found")
 	require.Equal(t, 1, calls)
 
-	svc.indexerClient = expiryIndexer{vtxos: []sdktypes.Vtxo{{
-		Outpoint:  sdktypes.Outpoint{Txid: chainhash.Hash{1}.String()},
+	svc.indexerClient = expiryIndexer{vtxos: []types.Vtxo{{
+		Outpoint:  types.Outpoint{Txid: chainhash.Hash{1}.String()},
 		ExpiresAt: time.Now().Add(time.Minute),
 	}}}
 	_, err = svc.expiryForScript(t.Context(), []byte{arkade.OP_PUSHEXPIRY}, txid, 0)
 	require.ErrorContains(t, err, "not found")
 
-	svc.indexerClient = expiryIndexer{vtxos: []sdktypes.Vtxo{{
-		Outpoint: sdktypes.Outpoint{Txid: txid},
+	svc.indexerClient = expiryIndexer{vtxos: []types.Vtxo{{
+		Outpoint: types.Outpoint{Txid: txid},
 	}}}
 	_, err = svc.expiryForScript(t.Context(), []byte{arkade.OP_PUSHEXPIRY}, txid, 0)
 	require.ErrorContains(t, err, "has no expiry")
@@ -266,8 +266,8 @@ func TestSubmitIntentPushExpiry(t *testing.T) {
 
 	svc := &service{
 		signer: signer{signerKey},
-		indexerClient: expiryIndexer{vtxos: []sdktypes.Vtxo{{
-			Outpoint:  sdktypes.Outpoint{Txid: outpoint.Hash.String(), VOut: outpoint.Index},
+		indexerClient: expiryIndexer{vtxos: []types.Vtxo{{
+			Outpoint:  types.Outpoint{Txid: outpoint.Hash.String(), VOut: outpoint.Index},
 			ExpiresAt: expiresAt,
 		}}},
 	}
@@ -378,11 +378,11 @@ func newIntentProof(
 type expiryIndexer struct {
 	indexer.Indexer
 	calls *int
-	vtxos []sdktypes.Vtxo
+	vtxos []types.Vtxo
 }
 
 func (e expiryIndexer) GetVtxos(
-	context.Context, ...indexer.GetVtxosRequestOption,
+	context.Context, ...indexer.GetVtxosOption,
 ) (*indexer.VtxosResponse, error) {
 	if e.calls != nil {
 		(*e.calls)++

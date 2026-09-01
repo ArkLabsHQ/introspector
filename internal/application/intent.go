@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
+	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
+	"github.com/arkade-os/arkd/pkg/client-lib/types"
 	"github.com/arkade-os/emulator/pkg/arkade"
-	"github.com/arkade-os/go-sdk/indexer"
-	sdktypes "github.com/arkade-os/go-sdk/types"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	log "github.com/sirupsen/logrus"
 )
@@ -126,12 +126,9 @@ func (s *service) expiryForScript(
 		return 0, nil
 	}
 
-	request := indexer.GetVtxosRequestOption{}
-	if err := request.WithOutpoints([]sdktypes.Outpoint{{Txid: txid, VOut: vout}}); err != nil {
-		return 0, err
-	}
 	response, err := s.indexerClient.GetVtxos(
-		withClientVersion(ctx, s.clientVersion), request,
+		withClientVersion(ctx, s.clientVersion),
+		indexer.WithOutpoints([]types.Outpoint{{Txid: txid, VOut: vout}}),
 	)
 	if err != nil {
 		return 0, err
