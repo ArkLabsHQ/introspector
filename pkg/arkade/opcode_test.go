@@ -308,7 +308,7 @@ var opcodeSpecs = [256]*opcodeSpec{
 	OP_BIN2NUM:                       bin2NumSpec(),
 	OP_REVERSEBYTES:                  reverseBytesSpec(),
 	OP_MODEXP:                        modexpSpec(),
-	OP_CHECKEXPIRY:                   checkExpirySpec(),
+	OP_PUSHEXPIRY:                    pushExpirySpec(),
 	OP_UNKNOWN220:                    invalidSpec(OP_UNKNOWN220),
 	OP_UNKNOWN221:                    invalidSpec(OP_UNKNOWN221),
 	OP_UNKNOWN222:                    invalidSpec(OP_UNKNOWN222),
@@ -667,46 +667,28 @@ func invalidSpec(op byte) *opcodeSpec {
 	}
 }
 
-func checkExpirySpec() *opcodeSpec {
-	setup := func(remaining int64) func(*Engine) {
-		return func(vm *Engine) {
-			vm.remaining = &remaining
-		}
-	}
+func pushExpirySpec() *opcodeSpec {
+	expiry := int64(1_700_000_000)
 	return &opcodeSpec{
-		opcode: OP_CHECKEXPIRY,
+		opcode: OP_PUSHEXPIRY,
 		checkProperties: func(t *testing.T, c opcodeCheckContext) {
 			t.Helper()
 			require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
 			if c.execErr == nil {
-				require.Len(t, c.after.GetStack(), len(c.before.GetStack())-2)
+				require.Len(t, c.after.GetStack(), len(c.before.GetStack())+1)
 			}
 		},
-		validVectors: []opcodeVector{
-			{name: "lower boundary", inputStack: [][]byte{scriptNum(10).Bytes(), scriptNum(20).Bytes()}, setupVM: setup(10)},
-			{name: "upper boundary", inputStack: [][]byte{scriptNum(10).Bytes(), scriptNum(20).Bytes()}, setupVM: setup(20)},
-		},
+		validVectors: []opcodeVector{{
+			name: "push",
+			setupVM: func(vm *Engine) {
+				vm.expiry = &expiry
+			},
+			expectedStack: [][]byte{scriptNum(expiry).Bytes()},
+		}},
 		invalidVectors: []opcodeVector{
-			{name: "below window", inputStack: [][]byte{scriptNum(10).Bytes(), scriptNum(20).Bytes()}, setupVM: setup(9), expectedError: txscript.ErrInvalidStackOperation},
-			{name: "above window", inputStack: [][]byte{scriptNum(10).Bytes(), scriptNum(20).Bytes()}, setupVM: setup(21), expectedError: txscript.ErrInvalidStackOperation},
-			{name: "invalid window", inputStack: [][]byte{scriptNum(20).Bytes(), scriptNum(10).Bytes()}, expectedError: txscript.ErrInvalidStackOperation},
-			{name: "missing expiry", inputStack: [][]byte{scriptNum(10).Bytes(), scriptNum(20).Bytes()}, expectedError: txscript.ErrInvalidStackOperation},
+			{name: "missing expiry", expectedError: txscript.ErrInvalidStackOperation},
 		},
 	}
-}
-
-func TestCheckExpiryReusesRemainingLifetime(t *testing.T) {
-	script, err := txscript.NewScriptBuilder().
-		AddInt64(10).AddInt64(20).AddOp(OP_CHECKEXPIRY).
-		AddInt64(10).AddInt64(20).AddOp(OP_CHECKEXPIRY).
-		AddOp(OP_TRUE).Script()
-	require.NoError(t, err)
-	world := buildOpcodeWorld()
-	world.execScriptByVin = map[int][]byte{0: script}
-	vm, err := newOpcodeEngine(world, 0)
-	require.NoError(t, err)
-	WithExpiry(15)(vm)
-	require.NoError(t, vm.Execute())
 }
 
 func reservedSpec(op byte) *opcodeSpec {

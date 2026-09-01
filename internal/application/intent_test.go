@@ -208,7 +208,7 @@ func submitTestIntent(
 ) (*psbt.Packet, error) {
 	t.Helper()
 
-	svc := &service{signer: signer{signerKey}, indexerClient: expiryIndexer{}}
+	svc := &service{signer: signer{signerKey}}
 	return svc.SubmitIntent(t.Context(), Intent{
 		Proof:   intent.Proof{Packet: *ptx},
 		Message: &intent.RegisterMessage{ExpireAt: time.Now().Add(time.Hour).Unix()},
@@ -230,22 +230,22 @@ func (e expiryIndexer) GetVtxos(
 	return &indexer.VtxosResponse{Vtxos: e.vtxos}, nil
 }
 
-func TestRemainingLifetimeOnlyQueriesIndexerForCheckExpiry(t *testing.T) {
+func TestExpiryForScriptOnlyQueriesIndexerForPushExpiry(t *testing.T) {
 	calls := 0
 	svc := &service{indexerClient: expiryIndexer{calls: &calls}}
 	txid := chainhash.Hash{}.String()
 
 	pushedOpcode, err := txscript.NewScriptBuilder().
-		AddData([]byte{arkade.OP_CHECKEXPIRY}).Script()
+		AddData([]byte{arkade.OP_PUSHEXPIRY}).Script()
 	require.NoError(t, err)
 
 	for _, script := range [][]byte{{txscript.OP_TRUE}, pushedOpcode} {
-		_, err := svc.remainingLifetime(t.Context(), script, txid, 0)
+		_, err := svc.expiryForScript(t.Context(), script, txid, 0)
 		require.NoError(t, err)
 	}
 	require.Zero(t, calls)
 
-	_, err = svc.remainingLifetime(t.Context(), []byte{arkade.OP_CHECKEXPIRY}, txid, 0)
+	_, err = svc.expiryForScript(t.Context(), []byte{arkade.OP_PUSHEXPIRY}, txid, 0)
 	require.ErrorContains(t, err, "not found")
 	require.Equal(t, 1, calls)
 
@@ -253,20 +253,21 @@ func TestRemainingLifetimeOnlyQueriesIndexerForCheckExpiry(t *testing.T) {
 		Outpoint:  sdktypes.Outpoint{Txid: chainhash.Hash{1}.String()},
 		ExpiresAt: time.Now().Add(time.Minute),
 	}}}
-	_, err = svc.remainingLifetime(t.Context(), []byte{arkade.OP_CHECKEXPIRY}, txid, 0)
+	_, err = svc.expiryForScript(t.Context(), []byte{arkade.OP_PUSHEXPIRY}, txid, 0)
 	require.ErrorContains(t, err, "not found")
 
 	svc.indexerClient = expiryIndexer{vtxos: []sdktypes.Vtxo{{
 		Outpoint: sdktypes.Outpoint{Txid: txid},
 	}}}
-	_, err = svc.remainingLifetime(t.Context(), []byte{arkade.OP_CHECKEXPIRY}, txid, 0)
+	_, err = svc.expiryForScript(t.Context(), []byte{arkade.OP_PUSHEXPIRY}, txid, 0)
 	require.ErrorContains(t, err, "has no expiry")
 }
 
-func TestSubmitIntentCheckExpiry(t *testing.T) {
+func TestSubmitIntentPushExpiry(t *testing.T) {
 	signerKey := newResolverPrivateKey(t)
+	expiresAt := time.Now().Add(time.Minute).Truncate(time.Second)
 	script, err := txscript.NewScriptBuilder().
-		AddInt64(10).AddInt64(120).AddOp(arkade.OP_CHECKEXPIRY).
+		AddOp(arkade.OP_PUSHEXPIRY).AddInt64(expiresAt.Unix()).AddOp(txscript.OP_EQUALVERIFY).
 		AddOp(txscript.OP_TRUE).Script()
 	require.NoError(t, err)
 	tweaked := arkade.ComputeArkadeScriptPublicKey(
@@ -282,7 +283,7 @@ func TestSubmitIntentCheckExpiry(t *testing.T) {
 		signer: signer{signerKey},
 		indexerClient: expiryIndexer{vtxos: []sdktypes.Vtxo{{
 			Outpoint:  sdktypes.Outpoint{Txid: outpoint.Hash.String(), VOut: outpoint.Index},
-			ExpiresAt: time.Now().Add(time.Minute),
+			ExpiresAt: expiresAt,
 		}}},
 	}
 	signed, err := svc.SubmitIntent(t.Context(), Intent{

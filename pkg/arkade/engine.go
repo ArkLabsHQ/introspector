@@ -112,7 +112,7 @@ type Engine struct {
 	prevOutFetcher ArkPrevOutFetcher
 	assetPacket    asset.Packet
 	emulatorPacket EmulatorPacket
-	remaining      *int64
+	expiry         *int64
 
 	// The following fields handle keeping track of the current execution state
 	// of the engine.

@@ -62,7 +62,7 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 		}
 
 		outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
-		remaining, err := s.remainingLifetime(
+		expiry, err := s.expiryForScript(
 			ctx, script.Script(), outpoint.Hash.String(), outpoint.Index,
 		)
 		if err != nil {
@@ -75,7 +75,7 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 			inputIndex,
 			arkade.WithExactComputeLimits(s.computeLimits),
 			arkade.WithComputeBudget(budget),
-			arkade.WithExpiry(remaining),
+			arkade.WithExpiry(expiry),
 		); err != nil {
 			log.WithError(err).WithField("input_index", inputIndex).Error("arkade script execution failed")
 			return nil, fmt.Errorf("failed to execute arkade script at input %d: %w", inputIndex, err)
@@ -111,13 +111,13 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 	return ptx, nil
 }
 
-func (s *service) remainingLifetime(
+func (s *service) expiryForScript(
 	ctx context.Context, script []byte, txid string, vout uint32,
 ) (int64, error) {
 	tokenizer := arkade.MakeScriptTokenizer(0, script)
 	needsExpiry := false
 	for tokenizer.Next() {
-		needsExpiry = needsExpiry || tokenizer.Opcode() == arkade.OP_CHECKEXPIRY
+		needsExpiry = needsExpiry || tokenizer.Opcode() == arkade.OP_PUSHEXPIRY
 	}
 	if err := tokenizer.Err(); err != nil {
 		return 0, err
@@ -145,7 +145,7 @@ func (s *service) remainingLifetime(
 			if expiresAt <= 0 {
 				return 0, fmt.Errorf("vtxo %s:%d has no expiry", txid, vout)
 			}
-			return expiresAt - time.Now().Unix(), nil
+			return expiresAt, nil
 		}
 	}
 	return 0, fmt.Errorf("vtxo %s:%d not found", txid, vout)

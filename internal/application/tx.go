@@ -72,7 +72,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		if prevArkTx == nil {
 			return nil, fmt.Errorf("prevout ark tx not found for input %d", inputIndex)
 		}
-		remaining, err := s.remainingLifetime(
+		expiry, err := s.expiryForScript(
 			ctx, script.Script(), prevArkTx.TxHash().String(),
 			prevOutFetcher.prevOutIdxs[arkOutpoint],
 		)
@@ -87,7 +87,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 			inputIndex,
 			arkade.WithExactComputeLimits(s.computeLimits),
 			arkade.WithComputeBudget(budget),
-			arkade.WithExpiry(remaining),
+			arkade.WithExpiry(expiry),
 		); err != nil {
 			return nil, fmt.Errorf("failed to execute arkade script: %w vin=%d", err, inputIndex)
 		}

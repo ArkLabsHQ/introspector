@@ -27,10 +27,10 @@ type ArkadeScript struct {
 
 type ExecuteOption func(*Engine)
 
-// WithExpiry sets the VTXO's remaining lifetime for OP_CHECKEXPIRY.
-func WithExpiry(remaining int64) ExecuteOption {
+// WithExpiry sets the VTXO's expiry timestamp for OP_PUSHEXPIRY.
+func WithExpiry(expiry int64) ExecuteOption {
 	return func(engine *Engine) {
-		engine.remaining = &remaining
+		engine.expiry = &expiry
 	}
 }
 

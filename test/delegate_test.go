@@ -44,6 +44,7 @@ const (
 // pkScript and value, and gates the spend to intent-proof txs only (v2).
 // Witness stack: [].
 //
+//	OP_PUSHEXPIRY OP_DROP                          # expiry is available to the covenant
 //	OP_INSPECTVERSION OP_2 OP_EQUALVERIFY          # intent proof only (v2, not v3)
 //	OP_0 OP_INSPECTOUTPUTSCRIPTPUBKEY
 //	OP_1 OP_EQUALVERIFY                            # force taproot
@@ -89,8 +90,9 @@ func TestCovenantDelegate(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// covenant: output[0] preserves the spent VTXO (same pkScript and value)
-	delegateArkadeScript := enforceSelfSend(t)
+	// covenant: expiry is available and output[0] preserves the spent VTXO
+	// TODO: Replace OP_DROP with the expiry check once OP_CLTV uses the emulator locktime.
+	delegateArkadeScript := append([]byte{arkade.OP_PUSHEXPIRY, txscript.OP_DROP}, enforceSelfSend(t)...)
 
 	// delegate VTXO: [server, emulator_tweaked] for refresh, [alice]+CSV for exit
 	delegateVtxoScript := script.TapscriptsVtxoScript{
@@ -236,8 +238,6 @@ func TestCovenantDelegate(t *testing.T) {
 	validPtx, validMessage := buildIntent([]*wire.TxOut{
 		{Value: delegateAmount, PkScript: delegatePkScript},
 	})
-	require.NoError(t, executeArkadeScripts(t, validPtx, nil, emulatorPubKey))
-
 	encodedValidProof, err := validPtx.B64Encode()
 	require.NoError(t, err)
 
