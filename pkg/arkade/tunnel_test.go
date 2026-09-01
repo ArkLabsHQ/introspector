@@ -177,30 +177,6 @@ func TestTunnelTreatsMissingAssetPacketAsEmpty(t *testing.T) {
 	require.NoError(t, invokeOpcodeWithData(OP_TUNNEL, nil, vm))
 }
 
-func tunnelSpec() *opcodeSpec {
-	return &opcodeSpec{
-		opcode: OP_TUNNEL,
-		checkProperties: func(t *testing.T, c opcodeCheckContext) {
-			t.Helper()
-			require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
-			require.Equal(t, c.before.condStack, c.after.condStack)
-			if c.execErr != nil {
-				requireScriptErrorCodeIn(t, c.execErr, txscript.ErrInvalidStackOperation, txscript.ErrNumberTooBig, txscript.ErrMinimalData)
-				return
-			}
-			require.NotEmpty(t, c.after.GetStack())
-			require.Equal(t, []byte{1}, c.after.GetStack()[len(c.after.GetStack())-1])
-		},
-		validVectors: []opcodeVector{{
-			name:          "value",
-			inputStack:    tunnelStack(0, TunnelValue),
-			setupWorld:    func(w *opcodeWorld) { w.tx.TxOut[0].Value = w.prevouts[w.tx.TxIn[0].PreviousOutPoint].Value },
-			expectedStack: [][]byte{{1}},
-		}},
-		invalidVectors: []opcodeVector{{name: "underflow", expectedError: txscript.ErrInvalidStackOperation}},
-	}
-}
-
 func tunnelTestVM(t *testing.T) *Engine {
 	t.Helper()
 
