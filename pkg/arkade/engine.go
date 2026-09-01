@@ -113,6 +113,7 @@ type Engine struct {
 	assetPacket    asset.Packet
 	emulatorPacket EmulatorPacket
 	expiry         *int64
+	currentTime    *int64
 
 	// The following fields handle keeping track of the current execution state
 	// of the engine.

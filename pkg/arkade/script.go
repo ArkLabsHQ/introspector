@@ -34,6 +34,13 @@ func WithExpiry(expiry int64) ExecuteOption {
 	}
 }
 
+// WithCurrentTime sets the Unix time used by OP_CHECKTIMEVERIFY.
+func WithCurrentTime(currentTime int64) ExecuteOption {
+	return func(engine *Engine) {
+		engine.currentTime = &currentTime
+	}
+}
+
 func WithDebugCallback(callback func(*StepInfo, *Engine) error) ExecuteOption {
 	return func(engine *Engine) {
 		engine.stepCallback = func(step *StepInfo) error {

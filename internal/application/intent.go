@@ -40,6 +40,7 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 	}
 
 	budget := arkade.NewComputeBudgetWithLimits(arkade.AggregateComputeLimits(s.computeLimits))
+	emulatorTime := time.Now().Unix()
 
 	var nSigned = 0
 	for _, entry := range packet {
@@ -76,6 +77,7 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 			arkade.WithExactComputeLimits(s.computeLimits),
 			arkade.WithComputeBudget(budget),
 			arkade.WithExpiry(expiry),
+			arkade.WithCurrentTime(emulatorTime),
 		); err != nil {
 			log.WithError(err).WithField("input_index", inputIndex).Error("arkade script execution failed")
 			return nil, fmt.Errorf("failed to execute arkade script at input %d: %w", inputIndex, err)

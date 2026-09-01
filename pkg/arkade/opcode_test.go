@@ -283,7 +283,7 @@ var opcodeSpecs = [256]*opcodeSpec{
 	),
 	OP_CHECKMULTISIG:                 tapscriptDisabledSpec(OP_CHECKMULTISIG),
 	OP_CHECKMULTISIGVERIFY:           tapscriptDisabledSpec(OP_CHECKMULTISIGVERIFY),
-	OP_CHECKLOCKTIMEVERIFY:           checkLockTimeVerifySpec(),
+	OP_CHECKTIMEVERIFY:               checkTimeVerifySpec(),
 	OP_CHECKSEQUENCEVERIFY:           checkSequenceVerifySpec(),
 	OP_MERKLEBRANCHVERIFY:            merkleBranchVerifySpec(),
 	OP_SHA256INITIALIZE:              sha256InitializeSpec(),
@@ -4391,15 +4391,17 @@ func assetSpec(op byte) *opcodeSpec {
 	}
 }
 
-func checkLockTimeVerifySpec() *opcodeSpec {
+func checkTimeVerifySpec() *opcodeSpec {
+	currentTime := int64(1_700_000_000)
 	return &opcodeSpec{
-		opcode: OP_CHECKLOCKTIMEVERIFY,
+		opcode: OP_CHECKTIMEVERIFY,
 		checkProperties: func(t *testing.T, c opcodeCheckContext) {
 			t.Helper()
-			require.Equal(t, c.before.GetStack(), c.after.GetStack())
 			require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
 			require.Equal(t, c.before.condStack, c.after.condStack)
 			if c.execErr == nil {
+				beforeStack := c.before.GetStack()
+				require.Equal(t, beforeStack[:len(beforeStack)-1], c.after.GetStack())
 				return
 			}
 			requireScriptErrorCodeIn(t, c.execErr,
@@ -4412,48 +4414,44 @@ func checkLockTimeVerifySpec() *opcodeSpec {
 		},
 		validVectors: []opcodeVector{
 			{
-				name:       "satisfied",
-				inputStack: [][]byte{scriptNum(100).Bytes()},
-				setupWorld: func(w *opcodeWorld) {
-					w.tx.LockTime = 200
-					w.tx.TxIn[0].Sequence = 0
+				name:       "past",
+				inputStack: [][]byte{scriptNum(currentTime - 1).Bytes()},
+				setupVM: func(vm *Engine) {
+					vm.currentTime = &currentTime
 				},
 			},
 			{
-				name:       "satisfied_5_byte_bignum",
-				inputStack: [][]byte{{0x00, 0x5e, 0xd0, 0xb2, 0x00}},
+				name:       "exact_time_ignores_transaction_locktime_and_sequence",
+				inputStack: [][]byte{scriptNum(currentTime).Bytes()},
 				setupWorld: func(w *opcodeWorld) {
-					w.tx.LockTime = 3_000_000_000
-					w.tx.TxIn[0].Sequence = 0
+					w.tx.LockTime = 0
+					w.tx.TxIn[0].Sequence = wire.MaxTxInSequenceNum
+				},
+				setupVM: func(vm *Engine) {
+					vm.currentTime = &currentTime
 				},
 			},
 		},
 		invalidVectors: []opcodeVector{
 			{name: "underflow", expectedError: txscript.ErrInvalidStackOperation},
 			{
-				name:       "not_satisfied",
-				inputStack: [][]byte{scriptNum(300).Bytes()},
-				setupWorld: func(w *opcodeWorld) {
-					w.tx.LockTime = 200
-					w.tx.TxIn[0].Sequence = 0
+				name:          "missing_current_time",
+				inputStack:    [][]byte{scriptNum(currentTime).Bytes()},
+				expectedError: txscript.ErrInvalidStackOperation,
+			},
+			{
+				name:       "future",
+				inputStack: [][]byte{scriptNum(currentTime + 1).Bytes()},
+				setupVM: func(vm *Engine) {
+					vm.currentTime = &currentTime
 				},
 				expectedError: txscript.ErrUnsatisfiedLockTime,
 			},
 			{
-				name:       "too_large_for_uint32",
+				name:       "large_future_timestamp",
 				inputStack: [][]byte{{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00}},
-				setupWorld: func(w *opcodeWorld) {
-					w.tx.LockTime = 1
-					w.tx.TxIn[0].Sequence = 0
-				},
-				expectedError: txscript.ErrUnsatisfiedLockTime,
-			},
-			{
-				name:       "bignum_above_uint32",
-				inputStack: [][]byte{{0x00, 0x00, 0x00, 0x00, 0x00, 0x01}},
-				setupWorld: func(w *opcodeWorld) {
-					w.tx.LockTime = 1
-					w.tx.TxIn[0].Sequence = 0
+				setupVM: func(vm *Engine) {
+					vm.currentTime = &currentTime
 				},
 				expectedError: txscript.ErrUnsatisfiedLockTime,
 			},
@@ -4461,24 +4459,6 @@ func checkLockTimeVerifySpec() *opcodeSpec {
 				name:          "negative",
 				inputStack:    [][]byte{scriptNum(-1).Bytes()},
 				expectedError: txscript.ErrNegativeLockTime,
-			},
-			{
-				name:       "mismatched_type",
-				inputStack: [][]byte{scriptNum(int64(txscript.LockTimeThreshold) + 1).Bytes()},
-				setupWorld: func(w *opcodeWorld) {
-					w.tx.LockTime = 200
-					w.tx.TxIn[0].Sequence = 0
-				},
-				expectedError: txscript.ErrUnsatisfiedLockTime,
-			},
-			{
-				name:       "finalized_input",
-				inputStack: [][]byte{scriptNum(100).Bytes()},
-				setupWorld: func(w *opcodeWorld) {
-					w.tx.LockTime = 200
-					w.tx.TxIn[0].Sequence = wire.MaxTxInSequenceNum
-				},
-				expectedError: txscript.ErrUnsatisfiedLockTime,
 			},
 		},
 	}

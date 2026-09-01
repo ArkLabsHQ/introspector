@@ -44,7 +44,7 @@ const (
 // pkScript and value, and gates the spend to intent-proof txs only (v2).
 // Witness stack: [].
 //
-//	OP_PUSHEXPIRY OP_DROP                          # expiry is available to the covenant
+//	OP_PUSHEXPIRY 1024 OP_SUB OP_CHECKTIMEVERIFY   # within 1024 seconds of expiry
 //	OP_INSPECTVERSION OP_2 OP_EQUALVERIFY          # intent proof only (v2, not v3)
 //	OP_0 OP_INSPECTOUTPUTSCRIPTPUBKEY
 //	OP_1 OP_EQUALVERIFY                            # force taproot
@@ -90,9 +90,15 @@ func TestCovenantDelegate(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// covenant: expiry is available and output[0] preserves the spent VTXO
-	// TODO: Replace OP_DROP with the expiry check once OP_CLTV uses the emulator locktime.
-	delegateArkadeScript := append([]byte{arkade.OP_PUSHEXPIRY, txscript.OP_DROP}, enforceSelfSend(t)...)
+	// covenant: spending is allowed near expiry if output[0] preserves the spent VTXO
+	expiryCheck, err := txscript.NewScriptBuilder().
+		AddOp(arkade.OP_PUSHEXPIRY).
+		AddInt64(1024).
+		AddOp(arkade.OP_SUB).
+		AddOp(arkade.OP_CHECKTIMEVERIFY).
+		Script()
+	require.NoError(t, err)
+	delegateArkadeScript := append(expiryCheck, enforceSelfSend(t)...)
 
 	// delegate VTXO: [server, emulator_tweaked] for refresh, [alice]+CSV for exit
 	delegateVtxoScript := script.TapscriptsVtxoScript{

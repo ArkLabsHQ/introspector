@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -37,6 +38,7 @@ func (s *service) SubmitOnchainTx(ctx context.Context, tx OnchainTx) (*psbt.Pack
 	}
 
 	budget := arkade.NewComputeBudgetWithLimits(arkade.AggregateComputeLimits(s.computeLimits))
+	emulatorTime := time.Now().Unix()
 
 	nSigned := 0
 
@@ -65,6 +67,7 @@ func (s *service) SubmitOnchainTx(ctx context.Context, tx OnchainTx) (*psbt.Pack
 			inputIndex,
 			arkade.WithExactComputeLimits(s.computeLimits),
 			arkade.WithComputeBudget(budget),
+			arkade.WithCurrentTime(emulatorTime),
 		); err != nil {
 			return nil, fmt.Errorf("failed to execute arkade script: %w vin=%d", err, inputIndex)
 		}
