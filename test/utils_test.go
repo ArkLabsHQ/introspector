@@ -480,7 +480,10 @@ func fundAndSettleAlice(t *testing.T, ctx context.Context, alice arksdk.Wallet, 
 	_, err = runCommand("nigiri", "faucet", boardingAddress, amountBtc)
 	require.NoError(t, err)
 
-	time.Sleep(5 * time.Second)
+	require.Eventually(t, func() bool {
+		balance, err := alice.Balance(ctx)
+		return err == nil && balance.OnchainBalance.Total > 0
+	}, 30*time.Second, 500*time.Millisecond, "boarding utxo not detected by wallet")
 
 	_, err = alice.Settle(ctx)
 	require.NoError(t, err)

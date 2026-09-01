@@ -1304,6 +1304,10 @@ func setupArkSDKwithPublicKey(
 	err = client.Unlock(t.Context(), password)
 	require.NoError(t, err)
 
+	synced := <-client.IsSynced(t.Context())
+	require.NoError(t, synced.Err)
+	require.True(t, synced.Synced)
+
 	grpcClient, err := grpcclient.NewClient("localhost:7070", arksdk.HeaderVersion)
 	require.NoError(t, err)
 
