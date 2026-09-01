@@ -14,13 +14,13 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
+	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
+	mempoolexplorer "github.com/arkade-os/arkd/pkg/client-lib/explorer/mempool"
+	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
+	"github.com/arkade-os/arkd/pkg/client-lib/types"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	emulatorclient "github.com/arkade-os/emulator/pkg/client"
 	arksdk "github.com/arkade-os/go-sdk"
-	"github.com/arkade-os/go-sdk/client"
-	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
-	"github.com/arkade-os/go-sdk/indexer"
-	"github.com/arkade-os/go-sdk/types"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/txscript"
@@ -248,7 +248,7 @@ func TestCovenantDelegate(t *testing.T) {
 	intentId, err := grpcAlice.RegisterIntent(ctx, signedIntent.Proof, signedIntent.Message)
 	require.NoError(t, err)
 
-	vtxo := client.TapscriptsVtxo{
+	vtxo := types.VtxoWithTapTree{
 		Vtxo: types.Vtxo{
 			Outpoint: types.Outpoint{
 				Txid: delegateInput.Outpoint.Hash.String(),
@@ -263,7 +263,7 @@ func TestCovenantDelegate(t *testing.T) {
 	handler := &delegateBatchEventsHandler{
 		intentId:       intentId,
 		intent:         signedIntent,
-		vtxosToForfeit: []client.TapscriptsVtxo{vtxo},
+		vtxosToForfeit: []types.VtxoWithTapTree{vtxo},
 		signerSession:  signerSession,
 		emulatorClient: emulatorClient,
 		wallet:         aliceWallet,
@@ -271,7 +271,7 @@ func TestCovenantDelegate(t *testing.T) {
 		explorer:       explorerSvc,
 	}
 
-	topics := arksdk.GetEventStreamTopics(
+	topics := clientlib.GetEventStreamTopics(
 		[]types.Outpoint{vtxo.Outpoint},
 		[]tree.SignerSession{signerSession},
 	)
@@ -280,7 +280,7 @@ func TestCovenantDelegate(t *testing.T) {
 	t.Cleanup(stop)
 
 	capturing := &capturingBatchEventsHandler{delegateBatchEventsHandler: handler}
-	commitmentTxid, err := arksdk.JoinBatchSession(ctx, eventStream, capturing)
+	commitmentTxid, _, _, _, _, err := clientlib.JoinBatchSession(ctx, eventStream, capturing)
 	require.NoError(t, err)
 	require.NotEmpty(t, commitmentTxid)
 	require.NotNil(t, capturing.vtxoTree)
@@ -290,11 +290,7 @@ func TestCovenantDelegate(t *testing.T) {
 
 	// refreshed VTXO is a batch leaf (not preconfirmed)
 	require.Eventually(t, func() bool {
-		req := indexer.GetVtxosRequestOption{}
-		if err := req.WithOutpoints([]types.Outpoint{refreshedOutpoint}); err != nil {
-			return false
-		}
-		resp, err := indexerSvc.GetVtxos(ctx, req)
+		resp, err := indexerSvc.GetVtxos(ctx, indexer.WithOutpoints([]types.Outpoint{refreshedOutpoint}))
 		if err != nil || resp == nil || len(resp.Vtxos) != 1 {
 			return false
 		}
@@ -333,7 +329,7 @@ func enforceSelfSend(t *testing.T) []byte {
 func fundDelegate(
 	t *testing.T,
 	ctx context.Context,
-	alice arksdk.ArkClient,
+	alice arksdk.Wallet,
 	indexerSvc indexer.Indexer,
 	serverSigner *btcec.PublicKey,
 	delegateVtxoScript script.TapscriptsVtxoScript,
