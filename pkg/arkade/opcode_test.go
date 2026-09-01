@@ -5688,3 +5688,107 @@ func TestOpcodeECMulScalarVerifyRequiresCompressedP(t *testing.T) {
 		t, opcodeECMulScalarVerify(nil, nil, vm), txscript.ErrInvalidStackOperation,
 	)
 }
+
+func inspectIntentMessageSpec() *opcodeSpec {
+	message := []byte(`{"type":"register","onchain_output_indexes":[1,2],"valid_at":1000,"expire_at":2000,"cosigners_public_keys":["0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"]}`)
+	setupMessage := WithIntentMessage(message)
+
+	return &opcodeSpec{
+		opcode:          OP_INSPECTINTENTMESSAGE,
+		checkProperties: inspectIntentMessagePropertyChecker,
+		validVectors: []opcodeVector{
+			{
+				name:          "no_context",
+				inputStack:    [][]byte{[]byte("type")},
+				expectedStack: [][]byte{nil, nil},
+			},
+			{
+				name:          "type",
+				inputStack:    [][]byte{[]byte("type")},
+				setupVM:       setupMessage,
+				expectedStack: [][]byte{[]byte("register"), {1}},
+			},
+			{
+				name:          "expire_at",
+				inputStack:    [][]byte{[]byte("expire_at")},
+				setupVM:       setupMessage,
+				expectedStack: [][]byte{scriptNum(2000).Bytes(), {1}},
+			},
+			{
+				name:          "cosigner",
+				inputStack:    [][]byte{[]byte("cosigners_public_keys.0")},
+				setupVM:       setupMessage,
+				expectedStack: [][]byte{[]byte("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"), {1}},
+			},
+			{
+				name:       "false_value_is_present",
+				inputStack: [][]byte{[]byte("enabled")},
+				setupVM: func(vm *Engine) {
+					WithIntentMessage([]byte(`{"enabled":false}`))(vm)
+				},
+				expectedStack: [][]byte{nil, {1}},
+			},
+			{
+				name:          "onchain_output_indexes",
+				inputStack:    [][]byte{[]byte("onchain_output_indexes")},
+				setupVM:       setupMessage,
+				expectedStack: [][]byte{[]byte("[1,2]"), {1}},
+			},
+			{
+				name:          "onchain_output_index",
+				inputStack:    [][]byte{[]byte("onchain_output_indexes.0")},
+				setupVM:       setupMessage,
+				expectedStack: [][]byte{scriptNum(1).Bytes(), {1}},
+			},
+			{
+				name:          "missing",
+				inputStack:    [][]byte{[]byte("missing")},
+				setupVM:       setupMessage,
+				expectedStack: [][]byte{nil, nil},
+			},
+			{
+				name:       "non_integer",
+				inputStack: [][]byte{[]byte("value")},
+				setupVM: func(vm *Engine) {
+					WithIntentMessage([]byte(`{"value":1e-1}`))(vm)
+				},
+				expectedStack: [][]byte{nil, nil},
+			},
+			{
+				name:          "complex_path_is_miss",
+				inputStack:    [][]byte{[]byte("onchain_output_indexes.#")},
+				setupVM:       setupMessage,
+				expectedStack: [][]byte{nil, nil},
+			},
+		},
+		invalidVectors: []opcodeVector{
+			{name: "underflow", expectedError: txscript.ErrInvalidStackOperation},
+			{
+				name:       "oversized_result",
+				inputStack: [][]byte{[]byte("value")},
+				setupVM: func(vm *Engine) {
+					raw := []byte(`{"value":"` +
+						string(bytes.Repeat([]byte{'a'}, txscript.MaxScriptElementSize+1)) + `"}`)
+					WithIntentMessage(raw)(vm)
+				},
+				expectedError: txscript.ErrElementTooBig,
+			},
+			{
+				name:       "oversized_integer",
+				inputStack: [][]byte{[]byte("value")},
+				setupVM: func(vm *Engine) {
+					WithIntentMessage([]byte(`{"value":1e2000}`))(vm)
+				},
+				expectedError: txscript.ErrNumberTooBig,
+			},
+			{
+				name:       "oversized_message",
+				inputStack: [][]byte{[]byte("type")},
+				setupVM: func(vm *Engine) {
+					WithIntentMessage(make([]byte, maxIntentMessageSize+1))(vm)
+				},
+				expectedError: txscript.ErrElementTooBig,
+			},
+		},
+	}
+}

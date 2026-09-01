@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	maxIntentMessageSize       = 4 * 1024 * 1024
+	maxIntentMessageSize       = 1024 * 1024
 	maxBigNumDecimalDigitCount = 1255
 )
 
@@ -27,7 +27,7 @@ func opcodeInspectIntentMessage(op *opcode, data []byte, vm *Engine) error {
 		return nil
 	}
 	if len(vm.intentMessage) > maxIntentMessageSize {
-		return scriptError(txscript.ErrScriptTooBig, "intent message exceeds 4 MiB")
+		return scriptError(txscript.ErrElementTooBig, "intent message exceeds 1 MiB")
 	}
 	path := string(pathBytes)
 	if !isSimpleIntentMessagePath(path) {
@@ -68,6 +68,8 @@ func opcodeInspectIntentMessage(op *opcode, data []byte, vm *Engine) error {
 	}
 }
 
+// isSimpleIntentMessagePath accepts plain lowercase keys and bounded array indexes.
+// GJSON operators are rejected to keep lookup cost predictable.
 func isSimpleIntentMessagePath(path string) bool {
 	for _, segment := range strings.Split(path, ".") {
 		if segment == "" {
