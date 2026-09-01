@@ -233,7 +233,7 @@ const (
 	OP_NOP9                = 0xb8 // 184
 	OP_NOP10               = 0xb9 // 185
 	OP_CHECKSIGADD         = 0xba // 186
-	OP_UNKNOWN187          = 0xbb // 187
+	OP_PUT                 = 0xbb // 187
 	OP_UNKNOWN188          = 0xbc // 188
 	OP_UNKNOWN189          = 0xbd // 189
 	OP_UNKNOWN190          = 0xbe // 190
@@ -533,8 +533,9 @@ var opcodeArray = [256]opcode{
 	OP_NOP9:               {OP_NOP9, "OP_NOP9", 1, opcodeNop},
 	OP_NOP10:              {OP_NOP10, "OP_NOP10", 1, opcodeNop},
 
+	OP_PUT: {OP_PUT, "OP_PUT", 1, opcodePut},
+
 	// Undefined opcodes.
-	OP_UNKNOWN187: {OP_UNKNOWN187, "OP_UNKNOWN187", 1, opcodeInvalid},
 	OP_UNKNOWN188: {OP_UNKNOWN188, "OP_UNKNOWN188", 1, opcodeInvalid},
 	OP_UNKNOWN189: {OP_UNKNOWN189, "OP_UNKNOWN189", 1, opcodeInvalid},
 	OP_UNKNOWN190: {OP_UNKNOWN190, "OP_UNKNOWN190", 1, opcodeInvalid},
@@ -1172,6 +1173,26 @@ func opcodePick(op *opcode, data []byte, vm *Engine) error {
 	}
 
 	return vm.dstack.PickN(val.Int32())
+}
+
+// opcodePut treats the top item on the data stack as an integer and replaces
+// the item that number of items back with the value beneath it.
+//
+// Stack transformation: [xn ... x2 x1 x0 value n] -> [value ... x2 x1 x0]
+// Example with n=0: [x2 x1 x0 value 0] -> [x2 x1 value]
+// Example with n=2: [x2 x1 x0 value 2] -> [value x1 x0]
+func opcodePut(op *opcode, data []byte, vm *Engine) error {
+	val, err := vm.dstack.PopInt()
+	if err != nil {
+		return err
+	}
+
+	so, err := vm.dstack.PopByteArray()
+	if err != nil {
+		return err
+	}
+
+	return vm.dstack.PutN(val.Int32(), so)
 }
 
 // opcodeRoll treats the top item on the data stack as an integer and moves
