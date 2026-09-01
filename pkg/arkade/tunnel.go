@@ -24,7 +24,7 @@ func opcodeTunnel(op *opcode, data []byte, vm *Engine) error {
 	}
 	remaining := int64(vm.dstack.Depth())
 	if exceptionCount < 0 || remaining < 2 || int64(exceptionCount) > (remaining-2)/2 {
-		return tunnelError("invalid asset exception count")
+		return scriptError(txscript.ErrInvalidStackOperation, "invalid asset exception count")
 	}
 
 	exceptions := make(map[asset.AssetId]struct{}, int(exceptionCount))
@@ -41,28 +41,25 @@ func opcodeTunnel(op *opcode, data []byte, vm *Engine) error {
 		return err
 	}
 	if flags <= 0 || flags&^scriptNum(tunnelFlags) != 0 {
-		return tunnelError("invalid tunnel flags")
+		return scriptError(txscript.ErrInvalidStackOperation, "invalid tunnel flags")
 	}
 	if flags&TunnelAssets == 0 && len(exceptions) > 0 {
-		return tunnelError("asset exceptions require asset tunneling")
+		return scriptError(txscript.ErrInvalidStackOperation, "asset exceptions require asset tunneling")
 	}
 
 	outputIndex, err := vm.dstack.PopInt()
 	if err != nil {
 		return err
 	}
-	if outputIndex < 0 || int64(outputIndex) >= int64(len(vm.tx.TxOut)) {
-		return tunnelError("output index out of range")
-	}
-	if vm.txIdx < 0 || vm.txIdx >= len(vm.tx.TxIn) {
-		return tunnelError("input index out of range")
+	if outputIndex < 0 || int(outputIndex) >= len(vm.tx.TxOut) {
+		return scriptError(txscript.ErrInvalidIndex, "output index out of range")
 	}
 	if flags&(TunnelScriptPubKey|TunnelValue) != 0 && vm.prevOutFetcher == nil {
-		return tunnelError("missing prevout fetcher")
+		return scriptError(txscript.ErrInvalidIndex, "previous output fetcher not set")
 	}
 
 	outpoint := vm.tx.TxIn[vm.txIdx].PreviousOutPoint
-	output := vm.tx.TxOut[int(outputIndex)]
+	output := vm.tx.TxOut[outputIndex]
 	if flags&TunnelScriptPubKey != 0 {
 		script := vm.prevOutFetcher.FetchVtxoPrevOutPkScript(outpoint)
 		if script == nil {
@@ -70,22 +67,24 @@ func opcodeTunnel(op *opcode, data []byte, vm *Engine) error {
 				script = prevout.PkScript
 			}
 			if script == nil {
-				return tunnelError("source script is missing")
+				return scriptError(txscript.ErrInvalidIndex, "previous output not found")
 			}
 		}
 		if !bytes.Equal(script, output.PkScript) {
-			return tunnelError("selected output does not preserve source script")
+			return scriptError(txscript.ErrInvalidStackOperation, "selected output does not preserve source script")
 		}
 	}
 	if flags&TunnelValue != 0 {
-		// Value follows the directly spent output, including a checkpoint's
-		// fee-adjusted amount, while the script follows the logical VTXO.
+		// Value is compared against the directly spent output. When a
+		// checkpoint sits in between, validateCheckpoint pins its output value
+		// to the VTXO value, so this equals the logical VTXO amount; the script
+		// instead always follows the logical VTXO.
 		prevout := vm.prevOutFetcher.FetchPrevOutput(outpoint)
 		if prevout == nil {
-			return tunnelError("source prevout is missing")
+			return scriptError(txscript.ErrInvalidIndex, "previous output not found")
 		}
 		if prevout.Value != output.Value {
-			return tunnelError("selected output does not preserve source value")
+			return scriptError(txscript.ErrInvalidStackOperation, "selected output does not preserve source value")
 		}
 	}
 	if flags&TunnelAssets != 0 {
@@ -112,26 +111,20 @@ func tunnelAssets(txHash chainhash.Hash, packet asset.Packet, inputIndex, output
 		if _, excluded := exceptions[id]; excluded {
 			continue
 		}
-		// AssetGroup validation guarantees unique Vin and Vout entries, so at
-		// most one amount on each side can match the selected index.
 		for _, input := range group.Inputs {
 			if input.Type == asset.AssetInputTypeLocal && int(input.Vin) == inputIndex {
-				inputAssets[id] = input.Amount
+				inputAssets[id] += input.Amount
 			}
 		}
 		for _, output := range group.Outputs {
 			if output.Type == asset.AssetOutputTypeLocal && int(output.Vout) == outputIndex {
-				outputAssets[id] = output.Amount
+				outputAssets[id] += output.Amount
 			}
 		}
 	}
 
 	if !maps.Equal(inputAssets, outputAssets) {
-		return tunnelError("selected output does not preserve source assets")
+		return scriptError(txscript.ErrInvalidStackOperation, "selected output does not preserve source assets")
 	}
 	return nil
-}
-
-func tunnelError(description string) error {
-	return scriptError(txscript.ErrInvalidStackOperation, description)
 }

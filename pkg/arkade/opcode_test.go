@@ -5685,7 +5685,7 @@ func tunnelSpec() *opcodeSpec {
 			require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
 			require.Equal(t, c.before.condStack, c.after.condStack)
 			if c.execErr != nil {
-				requireScriptErrorCodeIn(t, c.execErr, txscript.ErrInvalidStackOperation, txscript.ErrNumberTooBig, txscript.ErrMinimalData)
+				requireScriptErrorCodeIn(t, c.execErr, txscript.ErrInvalidStackOperation, txscript.ErrInvalidIndex, txscript.ErrNumberTooBig, txscript.ErrMinimalData)
 				return
 			}
 			require.NotEmpty(t, c.after.GetStack())

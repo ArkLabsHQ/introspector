@@ -51,13 +51,14 @@ func TestTunnelRejectsInvalidPolicy(t *testing.T) {
 	tests := []struct {
 		name  string
 		stack [][]byte
+		code  txscript.ErrorCode
 	}{
-		{name: "zero flags", stack: tunnelStack(0, 0)},
-		{name: "unknown flags", stack: tunnelStack(0, 8)},
-		{name: "negative output", stack: tunnelStack(-1, TunnelValue)},
-		{name: "output out of range", stack: tunnelStack(1, TunnelValue)},
-		{name: "missing exception items", stack: [][]byte{nil, scriptNum(TunnelValue).Bytes(), {1}}},
-		{name: "underflow"},
+		{name: "zero flags", stack: tunnelStack(0, 0), code: txscript.ErrInvalidStackOperation},
+		{name: "unknown flags", stack: tunnelStack(0, 8), code: txscript.ErrInvalidStackOperation},
+		{name: "negative output", stack: tunnelStack(-1, TunnelValue), code: txscript.ErrInvalidIndex},
+		{name: "output out of range", stack: tunnelStack(1, TunnelValue), code: txscript.ErrInvalidIndex},
+		{name: "missing exception items", stack: [][]byte{nil, scriptNum(TunnelValue).Bytes(), {1}}, code: txscript.ErrInvalidStackOperation},
+		{name: "underflow", code: txscript.ErrInvalidStackOperation},
 	}
 
 	for _, test := range tests {
@@ -65,7 +66,7 @@ func TestTunnelRejectsInvalidPolicy(t *testing.T) {
 			t.Parallel()
 			vm := tunnelTestVM(t)
 			vm.SetStack(test.stack)
-			requireScriptErrorCode(t, invokeOpcodeWithData(OP_TUNNEL, nil, vm), txscript.ErrInvalidStackOperation)
+			requireScriptErrorCode(t, invokeOpcodeWithData(OP_TUNNEL, nil, vm), test.code)
 		})
 	}
 }

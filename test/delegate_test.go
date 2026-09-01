@@ -40,12 +40,12 @@ const (
 // key) with an extra CSV exit leaf for the user. The emulator only signs
 // once the arkade covenant on the spending tx passes.
 //
-// Self-send arkade script — enforces output[0] preserves the spent VTXO's
+// Self-send arkade script — enforces output[i-1] preserves the spent VTXO's
 // pkScript and value, and gates the spend to intent-proof txs only (v2).
 // Witness stack: [].
 //
 //	OP_INSPECTVERSION OP_2 OP_EQUALVERIFY          # intent proof only (v2, not v3)
-//	OP_0 OP_3 OP_0 OP_TUNNEL                       # output, script+value flags, no asset exceptions
+//	OP_PUSHCURRENTINPUTINDEX OP_1SUB OP_3 OP_0 OP_TUNNEL  # output i-1, script+value flags, no asset exceptions
 //
 // Delegate path — MultisigClosure [server, emulator_tweaked]. Any solver
 // can trigger the refresh; the covenant acts in the user's place.
@@ -170,7 +170,7 @@ func TestCovenantDelegate(t *testing.T) {
 		addEmulatorPacket(t, intentPtx, []arkade.EmulatorEntry{
 			{Vin: 1, Script: delegateArkadeScript},
 		})
-		// required by OP_INSPECTINPUTSCRIPTPUBKEY on input 1
+		// required by OP_TUNNEL on input 1
 		require.NoError(t, txutils.SetArkPsbtField(
 			intentPtx, 1, arkade.PrevArkTxField, *fundingTx,
 		))
@@ -303,9 +303,12 @@ func TestCovenantDelegate(t *testing.T) {
 	}, 10*time.Second, 200*time.Millisecond, "refreshed delegate VTXO not found or preconfirmed")
 }
 
-// enforceSelfSend builds an arkade script that asserts output[0] has the same
-// pkScript and value as the current input, and that the spending tx is an
-// intent proof (v2). Witness stack: [].
+// enforceSelfSend builds an arkade script that asserts the output paired with
+// the current input (intent proof input i, whose input 0 is the BIP322
+// message, maps to output i-1) has the same pkScript and value, and that the
+// spending tx is an intent proof (v2). Binding the output to the input index
+// stops two equal delegate VTXOs from both being "preserved" by one output.
+// Witness stack: [].
 func enforceSelfSend(t *testing.T) []byte {
 	t.Helper()
 
@@ -313,7 +316,8 @@ func enforceSelfSend(t *testing.T) []byte {
 		AddOp(arkade.OP_INSPECTVERSION).
 		AddInt64(2).
 		AddOp(arkade.OP_EQUALVERIFY).
-		AddInt64(0).
+		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).
+		AddOp(arkade.OP_1SUB).
 		AddInt64(arkade.TunnelScriptPubKey | arkade.TunnelValue).
 		AddInt64(0).
 		AddOp(arkade.OP_TUNNEL).
