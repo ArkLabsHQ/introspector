@@ -2,6 +2,7 @@ package application
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -70,7 +71,14 @@ func TestValidateMessage(t *testing.T) {
 // yielding a signature bound to a script that was never executed for it.
 func TestSubmitIntentMessageInputBinding(t *testing.T) {
 	signerKey := newResolverPrivateKey(t)
-	arkadeScript := []byte{txscript.OP_TRUE}
+	arkadeScript, err := txscript.NewScriptBuilder().
+		AddData([]byte("type")).
+		AddOp(arkade.OP_INSPECTINTENTMESSAGE).
+		AddOp(txscript.OP_VERIFY).
+		AddData([]byte(intent.IntentMessageTypeRegister)).
+		AddOp(txscript.OP_EQUAL).
+		Script()
+	require.NoError(t, err)
 	tweaked := arkade.ComputeArkadeScriptPublicKey(
 		signerKey.PubKey(), arkade.ArkadeScriptHash(arkadeScript),
 	)
@@ -113,6 +121,33 @@ func TestSubmitIntentMessageInputBinding(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestValidateIntentMessageCommitment(t *testing.T) {
+	message, encoded := testRegisterMessage(t)
+	ptx := newIntentProof(
+		t, []intentVtxo{{}, {pkScript: []byte{txscript.OP_TRUE}}},
+		arkade.EmulatorEntry{Vin: 1, Script: []byte{txscript.OP_TRUE}},
+	)
+	ptx.Inputs[1].WitnessUtxo = &wire.TxOut{Value: 1, PkScript: []byte{txscript.OP_TRUE}}
+	bindIntentProofToMessage(t, ptx, encoded)
+
+	request := Intent{
+		Proof:   intent.Proof{Packet: *ptx},
+		Message: message,
+	}
+	require.NoError(t, validateIntentMessageCommitment(request, encoded))
+
+	// a proof bound to non-canonical bytes fails the outpoint comparison
+	require.ErrorContains(t,
+		validateIntentMessageCommitment(request, " "+encoded), "synthetic message input")
+	require.ErrorContains(t, validateIntentMessageCommitment(request, strings.Replace(
+		encoded, `"expire_at":`, `"expire_at":1,"expire_at":`, 1,
+	)), "synthetic message input")
+
+	request.Proof.UnsignedTx.TxIn[0].PreviousOutPoint.Hash[0] ^= 0xff
+	require.ErrorContains(t,
+		validateIntentMessageCommitment(request, encoded), "synthetic message input")
 }
 
 func TestSubmitIntentRejectsOnchainOutputsBeforeSigning(t *testing.T) {
@@ -205,11 +240,42 @@ func submitTestIntent(
 ) (*psbt.Packet, error) {
 	t.Helper()
 
+	message, encoded := testRegisterMessage(t)
+	if len(ptx.Inputs) > 1 && ptx.Inputs[1].WitnessUtxo != nil {
+		bindIntentProofToMessage(t, ptx, encoded)
+	}
 	svc := &service{signer: signer{signerKey}}
 	return svc.SubmitIntent(t.Context(), Intent{
 		Proof:   intent.Proof{Packet: *ptx},
-		Message: &intent.RegisterMessage{ExpireAt: time.Now().Add(time.Hour).Unix()},
+		Message: message,
 	})
+}
+
+func testRegisterMessage(t *testing.T) (*intent.RegisterMessage, string) {
+	t.Helper()
+	message := &intent.RegisterMessage{
+		BaseMessage: intent.BaseMessage{Type: intent.IntentMessageTypeRegister},
+		ExpireAt:    time.Now().Add(time.Hour).Unix(),
+	}
+	encoded, err := message.Encode()
+	require.NoError(t, err)
+	return message, encoded
+}
+
+func bindIntentProofToMessage(t *testing.T, ptx *psbt.Packet, encoded string) {
+	t.Helper()
+	require.GreaterOrEqual(t, len(ptx.UnsignedTx.TxIn), 2)
+	require.GreaterOrEqual(t, len(ptx.Inputs), 2)
+	require.NotNil(t, ptx.Inputs[1].WitnessUtxo)
+
+	firstInput := ptx.UnsignedTx.TxIn[1]
+	expected, err := intent.New(encoded, []intent.Input{{
+		OutPoint:    &firstInput.PreviousOutPoint,
+		Sequence:    firstInput.Sequence,
+		WitnessUtxo: ptx.Inputs[1].WitnessUtxo,
+	}}, nil)
+	require.NoError(t, err)
+	ptx.UnsignedTx.TxIn[0].PreviousOutPoint = expected.UnsignedTx.TxIn[0].PreviousOutPoint
 }
 
 // intentVtxo is a taproot coin with a single multisig closure, enough for the

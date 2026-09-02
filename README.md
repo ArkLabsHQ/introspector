@@ -367,6 +367,7 @@ The Bitcoin-level signatures that the emulator itself produces on PSBT `TaprootS
 |------|--------|-----|-------|--------|-------------|
 | OP_INSPECTPACKET | 244 | 0xf4 | packet_type | content 1 (or `<empty>` 0) | Looks up the packet with the given type in the current transaction's extension. On hit: pushes the raw packet content and 1. Not found: pushes an empty byte array and 0. |
 | OP_INSPECTINPUTPACKET | 245 | 0xf5 | packet_type input_index | content 1 (or `<empty>` 0) | Looks up the packet with the given type in the ARK extension of the previous Arkade transaction spent by the input at `input_index`. On hit: pushes the raw packet content and 1. Not found: pushes an empty byte array and 0. Fails on negative / out-of-range `input_index`. |
+| OP_INSPECTINTENTMESSAGE | 248 | 0xf8 | path | value 1 (or `<empty>` 0) | Reads a field of the canonical intent message bound to the current execution (only set while validating a `SubmitIntent` proof; pushes `<empty>` 0 otherwise). `path` is a dot-separated sequence of lowercase `[a-z_][a-z0-9_]*` keys and non-padded array indexes, e.g. `outpoints.0`; any other syntax (GJSON operators, wildcards) fails. Strings push their raw bytes, integers push a minimally-encoded BigNum, `true` pushes `0x01`, `false` pushes `<empty>`, and objects / arrays push their raw JSON. Missing fields, `null`, and non-integer numbers push `<empty>` 0. Fails if the value exceeds 520 bytes or the number exceeds the BigNum range. |
 
 ### Data Manipulation
 
