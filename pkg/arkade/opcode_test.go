@@ -6002,7 +6002,7 @@ func ecMulSpec() *opcodeSpec {
 }
 
 func inspectIntentMessageSpec() *opcodeSpec {
-	message := []byte(`{"type":"register","onchain_output_indexes":[1,2],"valid_at":1000,"expire_at":2000,"cosigners_public_keys":["0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"]}`)
+	message := `{"type":"register","onchain_output_indexes":[1,2],"valid_at":1000,"expire_at":2000,"cosigners_public_keys":["0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"]}`
 	setupMessage := WithIntentMessage(message)
 
 	return &opcodeSpec{
@@ -6036,7 +6036,7 @@ func inspectIntentMessageSpec() *opcodeSpec {
 				name:       "false_value_is_present",
 				inputStack: [][]byte{[]byte("enabled")},
 				setupVM: func(vm *Engine) {
-					WithIntentMessage([]byte(`{"enabled":false}`))(vm)
+					WithIntentMessage(`{"enabled":false}`)(vm)
 				},
 				expectedStack: [][]byte{nil, {1}},
 			},
@@ -6062,7 +6062,7 @@ func inspectIntentMessageSpec() *opcodeSpec {
 				name:       "non_integer",
 				inputStack: [][]byte{[]byte("value")},
 				setupVM: func(vm *Engine) {
-					WithIntentMessage([]byte(`{"value":1e-1}`))(vm)
+					WithIntentMessage(`{"value":1e-1}`)(vm)
 				},
 				expectedStack: [][]byte{nil, nil},
 			},
@@ -6072,6 +6072,22 @@ func inspectIntentMessageSpec() *opcodeSpec {
 				setupVM:       setupMessage,
 				expectedStack: [][]byte{nil, nil},
 			},
+			{
+				name:       "truncated_exponent_is_miss",
+				inputStack: [][]byte{[]byte("value")},
+				setupVM: func(vm *Engine) {
+					WithIntentMessage(`{"value":1e}`)(vm)
+				},
+				expectedStack: [][]byte{nil, nil},
+			},
+			{
+				name:       "malformed_exponent_is_miss",
+				inputStack: [][]byte{[]byte("value")},
+				setupVM: func(vm *Engine) {
+					WithIntentMessage(`{"value":1e5x}`)(vm)
+				},
+				expectedStack: [][]byte{nil, nil},
+			},
 		},
 		invalidVectors: []opcodeVector{
 			{name: "underflow", expectedError: txscript.ErrInvalidStackOperation},
@@ -6079,8 +6095,8 @@ func inspectIntentMessageSpec() *opcodeSpec {
 				name:       "oversized_result",
 				inputStack: [][]byte{[]byte("value")},
 				setupVM: func(vm *Engine) {
-					raw := []byte(`{"value":"` +
-						string(bytes.Repeat([]byte{'a'}, txscript.MaxScriptElementSize+1)) + `"}`)
+					raw := `{"value":"` +
+						strings.Repeat("a", txscript.MaxScriptElementSize+1) + `"}`
 					WithIntentMessage(raw)(vm)
 				},
 				expectedError: txscript.ErrElementTooBig,
@@ -6089,7 +6105,7 @@ func inspectIntentMessageSpec() *opcodeSpec {
 				name:       "oversized_integer",
 				inputStack: [][]byte{[]byte("value")},
 				setupVM: func(vm *Engine) {
-					WithIntentMessage([]byte(`{"value":1e2000}`))(vm)
+					WithIntentMessage(`{"value":1e2000}`)(vm)
 				},
 				expectedError: txscript.ErrNumberTooBig,
 			},
@@ -6097,7 +6113,7 @@ func inspectIntentMessageSpec() *opcodeSpec {
 				name:       "oversized_message",
 				inputStack: [][]byte{[]byte("type")},
 				setupVM: func(vm *Engine) {
-					WithIntentMessage(make([]byte, maxIntentMessageSize+1))(vm)
+					WithIntentMessage(strings.Repeat("0", maxIntentMessageSize+1))(vm)
 				},
 				expectedError: txscript.ErrElementTooBig,
 			},

@@ -1,6 +1,7 @@
 package arkade
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
 	"strconv"
@@ -11,7 +12,7 @@ import (
 )
 
 const (
-	maxIntentMessageSize       = 1024 * 1024
+	maxIntentMessageSize       = 1024 * 1024 // 1 MB
 	maxBigNumDecimalDigitCount = 1255
 )
 
@@ -130,8 +131,10 @@ func parseJSONInteger(raw string) (*big.Int, bool, error) {
 
 	mantissa := raw
 	exponentText := ""
+	hasExponent := false
 	if i := strings.IndexAny(raw, "eE"); i >= 0 {
 		mantissa, exponentText = raw[:i], raw[i+1:]
+		hasExponent = true
 	}
 
 	fractionDigits := 0
@@ -149,10 +152,12 @@ func parseJSONInteger(raw string) (*big.Int, bool, error) {
 	}
 
 	exponent := int64(0)
-	if exponentText != "" {
+	if hasExponent {
 		parsed, err := strconv.ParseInt(exponentText, 10, 64)
 		if err != nil {
-			if exponentText[0] != '-' {
+			// only a genuine int64 overflow of a positive exponent means "too
+			// big"; a malformed exponent (empty, garbage) is not an integer
+			if errors.Is(err, strconv.ErrRange) && exponentText[0] != '-' {
 				return nil, false, scriptError(txscript.ErrNumberTooBig,
 					"intent message number exceeds the BigNum range")
 			}
