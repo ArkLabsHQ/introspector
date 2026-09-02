@@ -963,7 +963,6 @@ func cloneEngineForExpectedResult(vm *Engine) *Engine {
 		clone.condStack = make([]int, len(vm.condStack))
 		copy(clone.condStack, vm.condStack)
 	}
-	clone.witnessProgram = cloneBytes(vm.witnessProgram)
 	clone.dstack = cloneStack(vm.dstack)
 	clone.astack = cloneStack(vm.astack)
 	clone.emulatorPacket = cloneEmulatorPacket(vm.emulatorPacket)
