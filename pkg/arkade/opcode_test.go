@@ -523,7 +523,7 @@ var opcodeSpecs = [256]*opcodeSpec{
 	),
 	OP_CHECKMULTISIG:                 tapscriptDisabledSpec(OP_CHECKMULTISIG),
 	OP_CHECKMULTISIGVERIFY:           tapscriptDisabledSpec(OP_CHECKMULTISIGVERIFY),
-	OP_CHECKTIMEVERIFY:               checkTimeVerifySpec(),
+	OP_CHECKLOCKTIMEVERIFY:           checkLockTimeVerifySpec(),
 	OP_CHECKSEQUENCEVERIFY:           checkSequenceVerifySpec(),
 	OP_MERKLEBRANCHVERIFY:            merkleBranchVerifySpec(),
 	OP_SHA256INITIALIZE:              sha256InitializeSpec(),
@@ -549,7 +549,7 @@ var opcodeSpecs = [256]*opcodeSpec{
 	OP_REVERSEBYTES:                  reverseBytesSpec(),
 	OP_MODEXP:                        modexpSpec(),
 	OP_PUSHEXPIRY:                    pushExpirySpec(),
-	OP_UNKNOWN220:                    invalidSpec(OP_UNKNOWN220),
+	OP_CHECKTIMEVERIFY:               checkTimeVerifySpec(),
 	OP_UNKNOWN221:                    invalidSpec(OP_UNKNOWN221),
 	OP_UNKNOWN222:                    invalidSpec(OP_UNKNOWN222),
 	OP_UNKNOWN223:                    invalidSpec(OP_UNKNOWN223),
@@ -4988,6 +4988,99 @@ func assetSpec(op byte) *opcodeSpec {
 		checkProperties: errorNoMutationChecker(txscript.ErrInvalidStackOperation),
 		invalidVectors: []opcodeVector{
 			{name: "no_assets", expectedError: txscript.ErrInvalidStackOperation},
+		},
+	}
+}
+
+func checkLockTimeVerifySpec() *opcodeSpec {
+	return &opcodeSpec{
+		opcode: OP_CHECKLOCKTIMEVERIFY,
+		checkProperties: func(t *testing.T, c opcodeCheckContext) {
+			t.Helper()
+			require.Equal(t, c.before.GetStack(), c.after.GetStack())
+			require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+			require.Equal(t, c.before.condStack, c.after.condStack)
+			if c.execErr == nil {
+				return
+			}
+			requireScriptErrorCodeIn(t, c.execErr,
+				txscript.ErrInvalidStackOperation,
+				txscript.ErrNegativeLockTime,
+				txscript.ErrUnsatisfiedLockTime,
+				txscript.ErrNumberTooBig,
+				txscript.ErrMinimalData,
+			)
+		},
+		validVectors: []opcodeVector{
+			{
+				name:       "satisfied",
+				inputStack: [][]byte{scriptNum(100).Bytes()},
+				setupWorld: func(w *opcodeWorld) {
+					w.tx.LockTime = 200
+					w.tx.TxIn[0].Sequence = 0
+				},
+			},
+			{
+				name:       "satisfied_5_byte_bignum",
+				inputStack: [][]byte{{0x00, 0x5e, 0xd0, 0xb2, 0x00}},
+				setupWorld: func(w *opcodeWorld) {
+					w.tx.LockTime = 3_000_000_000
+					w.tx.TxIn[0].Sequence = 0
+				},
+			},
+		},
+		invalidVectors: []opcodeVector{
+			{name: "underflow", expectedError: txscript.ErrInvalidStackOperation},
+			{
+				name:       "not_satisfied",
+				inputStack: [][]byte{scriptNum(300).Bytes()},
+				setupWorld: func(w *opcodeWorld) {
+					w.tx.LockTime = 200
+					w.tx.TxIn[0].Sequence = 0
+				},
+				expectedError: txscript.ErrUnsatisfiedLockTime,
+			},
+			{
+				name:       "too_large_for_uint32",
+				inputStack: [][]byte{{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00}},
+				setupWorld: func(w *opcodeWorld) {
+					w.tx.LockTime = 1
+					w.tx.TxIn[0].Sequence = 0
+				},
+				expectedError: txscript.ErrUnsatisfiedLockTime,
+			},
+			{
+				name:       "bignum_above_uint32",
+				inputStack: [][]byte{{0x00, 0x00, 0x00, 0x00, 0x00, 0x01}},
+				setupWorld: func(w *opcodeWorld) {
+					w.tx.LockTime = 1
+					w.tx.TxIn[0].Sequence = 0
+				},
+				expectedError: txscript.ErrUnsatisfiedLockTime,
+			},
+			{
+				name:          "negative",
+				inputStack:    [][]byte{scriptNum(-1).Bytes()},
+				expectedError: txscript.ErrNegativeLockTime,
+			},
+			{
+				name:       "mismatched_type",
+				inputStack: [][]byte{scriptNum(int64(txscript.LockTimeThreshold) + 1).Bytes()},
+				setupWorld: func(w *opcodeWorld) {
+					w.tx.LockTime = 200
+					w.tx.TxIn[0].Sequence = 0
+				},
+				expectedError: txscript.ErrUnsatisfiedLockTime,
+			},
+			{
+				name:       "finalized_input",
+				inputStack: [][]byte{scriptNum(100).Bytes()},
+				setupWorld: func(w *opcodeWorld) {
+					w.tx.LockTime = 200
+					w.tx.TxIn[0].Sequence = wire.MaxTxInSequenceNum
+				},
+				expectedError: txscript.ErrUnsatisfiedLockTime,
+			},
 		},
 	}
 }
