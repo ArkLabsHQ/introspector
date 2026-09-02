@@ -222,7 +222,7 @@ const (
 	OP_CHECKMULTISIGVERIFY = 0xaf // 175
 	OP_NOP1                = 0xb0 // 176
 	OP_NOP2                = 0xb1 // 177
-	OP_CHECKLOCKTIMEVERIFY = 0xb1 // 177 - AKA OP_NOP2
+	OP_CHECKTIMEVERIFY     = 0xb1 // 177 - AKA OP_NOP2
 	OP_NOP3                = 0xb2 // 178
 	OP_CHECKSEQUENCEVERIFY = 0xb2 // 178 - AKA OP_NOP3
 	OP_MERKLEBRANCHVERIFY  = 0xb3 // 179
@@ -440,7 +440,7 @@ var opcodeArray = [256]opcode{
 	OP_ENDIF:               {OP_ENDIF, "OP_ENDIF", 1, opcodeEndif},
 	OP_VERIFY:              {OP_VERIFY, "OP_VERIFY", 1, opcodeVerify},
 	OP_RETURN:              {OP_RETURN, "OP_RETURN", 1, opcodeReturn},
-	OP_CHECKLOCKTIMEVERIFY: {OP_CHECKLOCKTIMEVERIFY, "OP_CHECKLOCKTIMEVERIFY", 1, opcodeCheckLockTimeVerify},
+	OP_CHECKTIMEVERIFY:     {OP_CHECKTIMEVERIFY, "OP_CHECKTIMEVERIFY", 1, opcodeCheckTimeVerify},
 	OP_CHECKSEQUENCEVERIFY: {OP_CHECKSEQUENCEVERIFY, "OP_CHECKSEQUENCEVERIFY", 1, opcodeCheckSequenceVerify},
 
 	// Stack opcodes.
@@ -948,33 +948,22 @@ func verifyLockTime(txLockTime, threshold, lockTime int64) error {
 	return nil
 }
 
-// opcodeCheckLockTimeVerify compares the top item on the data stack to the
-// LockTime field of the transaction. The item is peeked as a BigNum so that
-// values produced by the unified arithmetic pipeline can be fed in directly.
-// The script fails if the value is negative, does not fit in uint32, or the
-// locktime requirement is not satisfied.
-func opcodeCheckLockTimeVerify(op *opcode, data []byte, vm *Engine) error {
-	n, err := vm.dstack.PeekBigNum(0)
+// opcodeCheckTimeVerify checks that the Unix timestamp on top of the data
+// stack is not later than the emulator's current time.
+// Stack transformation: [... timestamp] -> [...]
+func opcodeCheckTimeVerify(_ *opcode, _ []byte, vm *Engine) error {
+	n, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
 	}
 	if n.Sign() < 0 {
 		return scriptError(txscript.ErrNegativeLockTime,
-			fmt.Sprintf("negative lock time: %s", n.BigInt().Text(10)))
+			fmt.Sprintf("negative timestamp: %s", n.BigInt().Text(10)))
 	}
-	// Locktime must fit in uint32. Values on the big path are ≥ 2^63,
-	// which cannot be a valid locktime.
-	if n.useBig || n.small > math.MaxUint32 {
+	if n.Cmp(vm.currentTime) > 0 {
 		return scriptError(txscript.ErrUnsatisfiedLockTime,
-			"locktime value exceeds uint32")
-	}
-	lockTime := n.small
-	if err := verifyLockTime(int64(vm.tx.LockTime), txscript.LockTimeThreshold, lockTime); err != nil {
-		return err
-	}
-	if vm.tx.TxIn[vm.txIdx].Sequence == wire.MaxTxInSequenceNum {
-		return scriptError(txscript.ErrUnsatisfiedLockTime,
-			"transaction input is finalized")
+			fmt.Sprintf("timestamp is later than emulator time: %s > %s",
+				n.BigInt().Text(10), vm.currentTime.BigInt().Text(10)))
 	}
 	return nil
 }
@@ -1995,13 +1984,13 @@ func init() {
 	// Initialize the opcode name to value map using the contents of the
 	// opcode array.  Also add entries for "OP_FALSE", "OP_TRUE", and
 	// "OP_NOP2" since they are aliases for "OP_0", "OP_1",
-	// and "OP_CHECKLOCKTIMEVERIFY" respectively.
+	// and "OP_CHECKTIMEVERIFY" respectively.
 	for _, op := range opcodeArray {
 		OpcodeByName[op.name] = op.value
 	}
 	OpcodeByName["OP_FALSE"] = OP_FALSE
 	OpcodeByName["OP_TRUE"] = OP_TRUE
-	OpcodeByName["OP_NOP2"] = OP_CHECKLOCKTIMEVERIFY
+	OpcodeByName["OP_NOP2"] = OP_CHECKTIMEVERIFY
 	OpcodeByName["OP_NOP3"] = OP_CHECKSEQUENCEVERIFY
 }
 
