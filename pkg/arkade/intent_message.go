@@ -32,8 +32,8 @@ func opcodeInspectIntentMessage(op *opcode, data []byte, vm *Engine) error {
 	}
 	path := string(pathBytes)
 	if !isSimpleIntentMessagePath(path) {
-		pushIntentMessageMiss(vm)
-		return nil
+		return scriptError(txscript.ErrInvalidStackOperation,
+			fmt.Sprintf("invalid intent message path %q", path))
 	}
 
 	result := gjson.GetBytes(vm.intentMessage, path)

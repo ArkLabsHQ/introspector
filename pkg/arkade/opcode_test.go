@@ -6067,12 +6067,6 @@ func inspectIntentMessageSpec() *opcodeSpec {
 				expectedStack: [][]byte{nil, nil},
 			},
 			{
-				name:          "complex_path_is_miss",
-				inputStack:    [][]byte{[]byte("onchain_output_indexes.#")},
-				setupVM:       setupMessage,
-				expectedStack: [][]byte{nil, nil},
-			},
-			{
 				name:       "truncated_exponent_is_miss",
 				inputStack: [][]byte{[]byte("value")},
 				setupVM: func(vm *Engine) {
@@ -6091,6 +6085,12 @@ func inspectIntentMessageSpec() *opcodeSpec {
 		},
 		invalidVectors: []opcodeVector{
 			{name: "underflow", expectedError: txscript.ErrInvalidStackOperation},
+			{
+				name:          "complex_path_errors",
+				inputStack:    [][]byte{[]byte("onchain_output_indexes.#")},
+				setupVM:       setupMessage,
+				expectedError: txscript.ErrInvalidStackOperation,
+			},
 			{
 				name:       "oversized_result",
 				inputStack: [][]byte{[]byte("value")},
