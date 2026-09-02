@@ -19,7 +19,11 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 	if err := validateMessage(intent.Message); err != nil {
 		return nil, fmt.Errorf("invalid message: %w", err)
 	}
-	if err := validateIntentMessageCommitment(intent); err != nil {
+	encodedMessage, err := intent.Message.Encode()
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode intent message: %w", err)
+	}
+	if err := validateIntentMessageCommitment(intent, encodedMessage); err != nil {
 		return nil, fmt.Errorf("intent message is not committed by the proof: %w", err)
 	}
 
@@ -66,7 +70,7 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 			ptx.UnsignedTx,
 			prevOutFetcher,
 			inputIndex,
-			arkade.WithIntentMessage([]byte(intent.EncodedMessage)),
+			arkade.WithIntentMessage([]byte(encodedMessage)),
 			arkade.WithExactComputeLimits(s.computeLimits),
 			arkade.WithComputeBudget(budget),
 		); err != nil {
@@ -104,21 +108,17 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 	return ptx, nil
 }
 
-func validateIntentMessageCommitment(request Intent) error {
-	canonical, err := request.Message.Encode()
-	if err != nil {
-		return fmt.Errorf("failed to encode intent message: %w", err)
-	}
-	if request.EncodedMessage != canonical {
-		return fmt.Errorf("intent message is not canonically encoded")
-	}
-
+// validateIntentMessageCommitment checks that the proof's synthetic message
+// input (index 0) was derived from encodedMessage. Since encodedMessage is the
+// server-side canonical re-encoding of the decoded message, a client that
+// signed a non-canonical encoding fails the outpoint comparison here.
+func validateIntentMessageCommitment(request Intent, encodedMessage string) error {
 	ptx := &request.Proof.Packet
 	if len(ptx.UnsignedTx.TxIn) < 2 || len(ptx.Inputs) < 2 || ptx.Inputs[1].WitnessUtxo == nil {
 		return fmt.Errorf("proof is missing its first ownership input witness utxo")
 	}
 	firstInput := ptx.UnsignedTx.TxIn[1]
-	expected, err := intent.New(request.EncodedMessage, []intent.Input{{
+	expected, err := intent.New(encodedMessage, []intent.Input{{
 		OutPoint:    &firstInput.PreviousOutPoint,
 		Sequence:    firstInput.Sequence,
 		WitnessUtxo: ptx.Inputs[1].WitnessUtxo,

@@ -98,7 +98,6 @@ func TestParseIntent(t *testing.T) {
 			}
 			require.NoError(t, err)
 			require.IsType(t, tc.wantType, result.Message)
-			require.Equal(t, tc.message, result.EncodedMessage)
 		})
 	}
 }

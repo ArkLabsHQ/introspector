@@ -133,22 +133,21 @@ func TestValidateIntentMessageCommitment(t *testing.T) {
 	bindIntentProofToMessage(t, ptx, encoded)
 
 	request := Intent{
-		Proof:          intent.Proof{Packet: *ptx},
-		Message:        message,
-		EncodedMessage: encoded,
+		Proof:   intent.Proof{Packet: *ptx},
+		Message: message,
 	}
-	require.NoError(t, validateIntentMessageCommitment(request))
+	require.NoError(t, validateIntentMessageCommitment(request, encoded))
 
-	request.EncodedMessage = " " + encoded
-	require.ErrorContains(t, validateIntentMessageCommitment(request), "canonically encoded")
-	request.EncodedMessage = strings.Replace(
+	// a proof bound to non-canonical bytes fails the outpoint comparison
+	require.ErrorContains(t,
+		validateIntentMessageCommitment(request, " "+encoded), "synthetic message input")
+	require.ErrorContains(t, validateIntentMessageCommitment(request, strings.Replace(
 		encoded, `"expire_at":`, `"expire_at":1,"expire_at":`, 1,
-	)
-	require.ErrorContains(t, validateIntentMessageCommitment(request), "canonically encoded")
+	)), "synthetic message input")
 
-	request.EncodedMessage = encoded
 	request.Proof.UnsignedTx.TxIn[0].PreviousOutPoint.Hash[0] ^= 0xff
-	require.ErrorContains(t, validateIntentMessageCommitment(request), "synthetic message input")
+	require.ErrorContains(t,
+		validateIntentMessageCommitment(request, encoded), "synthetic message input")
 }
 
 func TestSubmitIntentRejectsOnchainOutputsBeforeSigning(t *testing.T) {
@@ -247,9 +246,8 @@ func submitTestIntent(
 	}
 	svc := &service{signer: signer{signerKey}}
 	return svc.SubmitIntent(t.Context(), Intent{
-		Proof:          intent.Proof{Packet: *ptx},
-		Message:        message,
-		EncodedMessage: encoded,
+		Proof:   intent.Proof{Packet: *ptx},
+		Message: message,
 	})
 }
 

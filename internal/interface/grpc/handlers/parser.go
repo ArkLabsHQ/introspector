@@ -73,8 +73,7 @@ func parseIntent(fromProto *emulatorv1.Intent) (*application.Intent, error) {
 	}
 
 	return &application.Intent{
-		Proof:          intent.Proof{Packet: *proofPsbt},
-		Message:        decoded,
-		EncodedMessage: message,
+		Proof:   intent.Proof{Packet: *proofPsbt},
+		Message: decoded,
 	}, nil
 }
