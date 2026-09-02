@@ -960,14 +960,10 @@ func opcodeCheckTimeVerify(_ *opcode, _ []byte, vm *Engine) error {
 		return scriptError(txscript.ErrNegativeLockTime,
 			fmt.Sprintf("negative timestamp: %s", n.BigInt().Text(10)))
 	}
-	if vm.currentTime == nil {
-		return scriptError(txscript.ErrInvalidStackOperation,
-			"OP_CHECKTIMEVERIFY current time not set")
-	}
-	if n.Cmp(BigNumFromInt64(*vm.currentTime)) > 0 {
+	if n.Cmp(vm.currentTime) > 0 {
 		return scriptError(txscript.ErrUnsatisfiedLockTime,
-			fmt.Sprintf("timestamp is later than emulator time: %s > %d",
-				n.BigInt().Text(10), *vm.currentTime))
+			fmt.Sprintf("timestamp is later than emulator time: %s > %s",
+				n.BigInt().Text(10), vm.currentTime.BigInt().Text(10)))
 	}
 	return nil
 }

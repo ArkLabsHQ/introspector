@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -113,7 +114,7 @@ type Engine struct {
 	assetPacket    asset.Packet
 	emulatorPacket EmulatorPacket
 	expiry         *int64
-	currentTime    *int64
+	currentTime    BigNum
 
 	// The following fields handle keeping track of the current execution state
 	// of the engine.
@@ -861,6 +862,7 @@ func NewEngine(scriptPubKey []byte, tx *wire.MsgTx, txIdx int,
 		inputAmount:    inputAmount,
 		prevOutFetcher: prevOutFetcher,
 		limits:         DefaultComputeLimits(),
+		currentTime:    BigNumFromInt64(time.Now().Unix()),
 	}
 
 	// The signature script must only contain data pushes.

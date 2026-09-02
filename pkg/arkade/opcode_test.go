@@ -5018,7 +5018,7 @@ func checkTimeVerifySpec() *opcodeSpec {
 				name:       "past",
 				inputStack: [][]byte{scriptNum(currentTime - 1).Bytes()},
 				setupVM: func(vm *Engine) {
-					vm.currentTime = &currentTime
+					vm.currentTime = BigNumFromInt64(currentTime)
 				},
 			},
 			{
@@ -5029,22 +5029,17 @@ func checkTimeVerifySpec() *opcodeSpec {
 					w.tx.TxIn[0].Sequence = wire.MaxTxInSequenceNum
 				},
 				setupVM: func(vm *Engine) {
-					vm.currentTime = &currentTime
+					vm.currentTime = BigNumFromInt64(currentTime)
 				},
 			},
 		},
 		invalidVectors: []opcodeVector{
 			{name: "underflow", expectedError: txscript.ErrInvalidStackOperation},
 			{
-				name:          "missing_current_time",
-				inputStack:    [][]byte{scriptNum(currentTime).Bytes()},
-				expectedError: txscript.ErrInvalidStackOperation,
-			},
-			{
 				name:       "future",
 				inputStack: [][]byte{scriptNum(currentTime + 1).Bytes()},
 				setupVM: func(vm *Engine) {
-					vm.currentTime = &currentTime
+					vm.currentTime = BigNumFromInt64(currentTime)
 				},
 				expectedError: txscript.ErrUnsatisfiedLockTime,
 			},
@@ -5052,7 +5047,7 @@ func checkTimeVerifySpec() *opcodeSpec {
 				name:       "large_future_timestamp",
 				inputStack: [][]byte{{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00}},
 				setupVM: func(vm *Engine) {
-					vm.currentTime = &currentTime
+					vm.currentTime = BigNumFromInt64(currentTime)
 				},
 				expectedError: txscript.ErrUnsatisfiedLockTime,
 			},
