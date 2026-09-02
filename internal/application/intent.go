@@ -70,7 +70,7 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 			ptx.UnsignedTx,
 			prevOutFetcher,
 			inputIndex,
-			arkade.WithIntentMessage([]byte(encodedMessage)),
+			arkade.WithIntentMessage(encodedMessage),
 			arkade.WithExactComputeLimits(s.computeLimits),
 			arkade.WithComputeBudget(budget),
 		); err != nil {
