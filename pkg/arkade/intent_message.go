@@ -71,7 +71,7 @@ func opcodeInspectIntentMessage(op *opcode, data []byte, vm *Engine) error {
 // isSimpleIntentMessagePath accepts plain lowercase keys and bounded array indexes.
 // GJSON operators are rejected to keep lookup cost predictable.
 func isSimpleIntentMessagePath(path string) bool {
-	for _, segment := range strings.Split(path, ".") {
+	for segment := range strings.SplitSeq(path, ".") {
 		if segment == "" {
 			return false
 		}

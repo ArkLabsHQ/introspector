@@ -10,8 +10,6 @@ import (
 )
 
 func TestSimpleIntentMessagePath(t *testing.T) {
-	t.Parallel()
-
 	for _, path := range []string{"type", "nested.value", "items.0", "items.1048575", "a_b", "_meta"} {
 		require.True(t, isSimpleIntentMessagePath(path), path)
 	}
@@ -25,8 +23,6 @@ func TestSimpleIntentMessagePath(t *testing.T) {
 }
 
 func TestParseJSONInteger(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		raw     string
 		want    string
