@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
+	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
+	"github.com/arkade-os/arkd/pkg/client-lib/types"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	log "github.com/sirupsen/logrus"
@@ -66,6 +68,14 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 			return nil, fmt.Errorf("failed to read arkade script: %w vin=%d", err, inputIndex)
 		}
 
+		outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
+		expiry, err := s.expiryForScript(
+			ctx, script.Script(), outpoint.Hash.String(), outpoint.Index,
+		)
+		if err != nil {
+			return nil, err
+		}
+
 		if err := script.Execute(
 			ptx.UnsignedTx,
 			prevOutFetcher,
@@ -73,6 +83,7 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 			arkade.WithIntentMessage(encodedMessage),
 			arkade.WithExactComputeLimits(s.computeLimits),
 			arkade.WithComputeBudget(budget),
+			arkade.WithExpiry(expiry),
 		); err != nil {
 			log.WithError(err).WithField("input_index", inputIndex).Error("arkade script execution failed")
 			return nil, fmt.Errorf("failed to execute arkade script at input %d: %w", inputIndex, err)
@@ -106,6 +117,43 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 	}
 
 	return ptx, nil
+}
+
+func (s *service) expiryForScript(
+	ctx context.Context, script []byte, txid string, vout uint32,
+) (int64, error) {
+	tokenizer := arkade.MakeScriptTokenizer(0, script)
+	needsExpiry := false
+	for tokenizer.Next() {
+		needsExpiry = needsExpiry || tokenizer.Opcode() == arkade.OP_PUSHEXPIRY
+	}
+	if err := tokenizer.Err(); err != nil {
+		return 0, err
+	}
+	if !needsExpiry {
+		return 0, nil
+	}
+
+	response, err := s.indexerClient.GetVtxos(
+		withClientVersion(ctx, s.clientVersion),
+		indexer.WithOutpoints([]types.Outpoint{{Txid: txid, VOut: vout}}),
+	)
+	if err != nil {
+		return 0, err
+	}
+	if response != nil {
+		for _, vtxo := range response.Vtxos {
+			if vtxo.Txid != txid || vtxo.VOut != vout {
+				continue
+			}
+			expiresAt := vtxo.ExpiresAt.Unix()
+			if expiresAt <= 0 {
+				return 0, fmt.Errorf("vtxo %s:%d has no expiry", txid, vout)
+			}
+			return expiresAt, nil
+		}
+	}
+	return 0, fmt.Errorf("vtxo %s:%d not found", txid, vout)
 }
 
 // validateIntentMessageCommitment checks that the proof's synthetic message

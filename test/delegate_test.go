@@ -41,18 +41,23 @@ const (
 // once the arkade covenant on the spending tx passes.
 //
 // Self-send arkade script — enforces output[i-1] preserves the spent VTXO's
-// pkScript and value, and gates the spend to intent-proof txs only (v2).
+// pkScript and value, and gates the spend to register intents only with strict
+// cosigner verification.
 // Witness stack: [].
 //
-//	OP_INSPECTVERSION OP_2 OP_EQUALVERIFY          # intent proof only (v2, not v3)
-//	OP_PUSHCURRENTINPUTINDEX OP_1SUB OP_3 OP_0 OP_TUNNEL  # output i-1, script+value flags, no asset exceptions
+//	OP_PUSHEXPIRY 1024 OP_SUB OP_CHECKTIMEVERIFY          # within 1024 seconds of expiry
+//	"type" OP_INSPECTINTENTMESSAGE OP_VERIFY "register" OP_EQUALVERIFY  # type == "register"
+//	"onchain_output_indexes" OP_INSPECTINTENTMESSAGE OP_VERIFY "[]" OP_EQUALVERIFY  # no onchain outputs
+//	"cosigners_public_keys.0" OP_INSPECTINTENTMESSAGE OP_VERIFY <pubkey> OP_EQUALVERIFY  # cosigner[0] == delegate key
+//	"cosigners_public_keys.1" OP_INSPECTINTENTMESSAGE OP_NOT OP_VERIFY OP_DROP  # no second cosigner
+//	OP_PUSHCURRENTINPUTINDEX OP_1SUB OP_7 OP_0 OP_TUNNEL  # output i-1, script+value+assets flags, no exceptions
 //
 // Delegate path — MultisigClosure [server, emulator_tweaked]. Any solver
 // can trigger the refresh; the covenant acts in the user's place.
 // Exit path — CSVMultisigClosure for the user. Unilateral exit remains
 // available if the emulator or arkd refuse to cooperate.
 //
-// The v=2 version gate blocks off-chain Ark txs (v=3): without it a solver
+// The intent-message gate blocks off-chain Ark txs: without it a solver
 // could spend the delegate VTXO via SubmitTx in a self-send loop, burning
 // fees without ever refreshing the VTXO through a batch.
 //
@@ -82,8 +87,52 @@ func TestCovenantDelegate(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// covenant: output[0] preserves the spent VTXO (same pkScript and value)
-	delegateArkadeScript := enforceSelfSend(t)
+	// solver-owned cosigner, drives Musig2 on behalf of the absent user.
+	// Generated before the covenant script so its pubkey can be pinned in it.
+	cosignerKey, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+	signerSession := tree.NewTreeSignerSession(cosignerKey)
+	delegateSignerPubkeyHex := signerSession.GetPublicKey()
+
+	// covenant: spending is allowed near expiry if output[0] preserves the spent VTXO
+	// with additional checks on intent message fields
+	delegateArkadeScript, err := txscript.NewScriptBuilder().
+		AddOp(arkade.OP_PUSHEXPIRY).
+		AddInt64(1024).
+		AddOp(arkade.OP_SUB).
+		AddOp(arkade.OP_CHECKTIMEVERIFY).
+		// Check intent message type == "register"
+		AddData([]byte("type")).
+		AddOp(arkade.OP_INSPECTINTENTMESSAGE).
+		AddOp(txscript.OP_VERIFY).
+		AddData([]byte(intent.IntentMessageTypeRegister)).
+		AddOp(arkade.OP_EQUALVERIFY).
+		// Check onchain_output_indexes == "[]"
+		AddData([]byte("onchain_output_indexes")).
+		AddOp(arkade.OP_INSPECTINTENTMESSAGE).
+		AddOp(txscript.OP_VERIFY).
+		AddData([]byte("[]")).
+		AddOp(arkade.OP_EQUALVERIFY).
+		// Check cosigners_public_keys.0 == delegate's vtxotree signer pubkey
+		AddData([]byte("cosigners_public_keys.0")).
+		AddOp(arkade.OP_INSPECTINTENTMESSAGE).
+		AddOp(txscript.OP_VERIFY).
+		AddData([]byte(delegateSignerPubkeyHex)).
+		AddOp(arkade.OP_EQUALVERIFY).
+		// Check cosigners_public_keys.1 does not exist (only one cosigner allowed)
+		AddData([]byte("cosigners_public_keys.1")).
+		AddOp(arkade.OP_INSPECTINTENTMESSAGE).
+		AddOp(txscript.OP_NOT).
+		AddOp(txscript.OP_VERIFY).
+		AddOp(txscript.OP_DROP).
+		// Tunnel: output i-1, script+value+assets flags, no asset exceptions
+		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).
+		AddOp(arkade.OP_1SUB).
+		AddInt64(arkade.TunnelScriptPubKey | arkade.TunnelValue | arkade.TunnelAssets).
+		AddInt64(0).
+		AddOp(arkade.OP_TUNNEL).
+		Script()
+	require.NoError(t, err)
 
 	// delegate VTXO: [server, emulator_tweaked] for refresh, [alice]+CSV for exit
 	delegateVtxoScript := script.TapscriptsVtxoScript{
@@ -120,11 +169,6 @@ func TestCovenantDelegate(t *testing.T) {
 		aliceAddr.Signer, delegateVtxoScript, delegateAmount,
 	)
 
-	// solver-owned cosigner, drives Musig2 on behalf of the absent user
-	cosignerKey, err := btcec.NewPrivateKey()
-	require.NoError(t, err)
-	signerSession := tree.NewTreeSignerSession(cosignerKey)
-
 	buildIntent := func(outputs []*wire.TxOut) (*psbt.Packet, string) {
 		t.Helper()
 
@@ -132,7 +176,9 @@ func TestCovenantDelegate(t *testing.T) {
 			BaseMessage: intent.BaseMessage{
 				Type: intent.IntentMessageTypeRegister,
 			},
-			CosignersPublicKeys: []string{signerSession.GetPublicKey()},
+			// non-nil so it encodes as "[]" (nil marshals to null, a covenant miss)
+			OnchainOutputIndexes: []int{},
+			CosignersPublicKeys:  []string{delegateSignerPubkeyHex},
 		}.Encode()
 		require.NoError(t, err)
 
@@ -202,7 +248,7 @@ func TestCovenantDelegate(t *testing.T) {
 		{Value: delegateAmount - 1, PkScript: delegatePkScript},
 	})
 
-	// Invalid: off-chain Ark tx (v3) rejected by the version gate
+	// Invalid: off-chain Ark tx rejected by the intent-message gate
 	infos, err := grpcAlice.GetInfo(ctx)
 	require.NoError(t, err)
 	checkpointScriptBytes, err := hex.DecodeString(infos.CheckpointTapscript)
@@ -229,8 +275,6 @@ func TestCovenantDelegate(t *testing.T) {
 	validPtx, validMessage := buildIntent([]*wire.TxOut{
 		{Value: delegateAmount, PkScript: delegatePkScript},
 	})
-	require.NoError(t, executeArkadeScripts(t, validPtx, nil, emulatorPubKey))
-
 	encodedValidProof, err := validPtx.B64Encode()
 	require.NoError(t, err)
 

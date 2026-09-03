@@ -548,8 +548,8 @@ var opcodeSpecs = [256]*opcodeSpec{
 	OP_BIN2NUM:                       bin2NumSpec(),
 	OP_REVERSEBYTES:                  reverseBytesSpec(),
 	OP_MODEXP:                        modexpSpec(),
-	OP_UNKNOWN219:                    invalidSpec(OP_UNKNOWN219),
-	OP_UNKNOWN220:                    invalidSpec(OP_UNKNOWN220),
+	OP_PUSHEXPIRY:                    pushExpirySpec(),
+	OP_CHECKTIMEVERIFY:               checkTimeVerifySpec(),
 	OP_UNKNOWN221:                    invalidSpec(OP_UNKNOWN221),
 	OP_UNKNOWN222:                    invalidSpec(OP_UNKNOWN222),
 	OP_UNKNOWN223:                    invalidSpec(OP_UNKNOWN223),
@@ -1620,6 +1620,30 @@ func invalidSpec(op byte) *opcodeSpec {
 		checkProperties: unchangedStateWithErrorCodeChecker(txscript.ErrReservedOpcode),
 		invalidVectors: []opcodeVector{
 			{name: "invalid", expectedError: txscript.ErrReservedOpcode},
+		},
+	}
+}
+
+func pushExpirySpec() *opcodeSpec {
+	expiry := int64(1_700_000_000)
+	return &opcodeSpec{
+		opcode: OP_PUSHEXPIRY,
+		checkProperties: func(t *testing.T, c opcodeCheckContext) {
+			t.Helper()
+			require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+			if c.execErr == nil {
+				require.Len(t, c.after.GetStack(), len(c.before.GetStack())+1)
+			}
+		},
+		validVectors: []opcodeVector{{
+			name: "push",
+			setupVM: func(vm *Engine) {
+				vm.expiry = &expiry
+			},
+			expectedStack: [][]byte{scriptNum(expiry).Bytes()},
+		}},
+		invalidVectors: []opcodeVector{
+			{name: "missing expiry", expectedError: txscript.ErrInvalidStackOperation},
 		},
 	}
 }
@@ -5056,6 +5080,74 @@ func checkLockTimeVerifySpec() *opcodeSpec {
 					w.tx.TxIn[0].Sequence = wire.MaxTxInSequenceNum
 				},
 				expectedError: txscript.ErrUnsatisfiedLockTime,
+			},
+		},
+	}
+}
+
+func checkTimeVerifySpec() *opcodeSpec {
+	currentTime := int64(1_700_000_000)
+	return &opcodeSpec{
+		opcode: OP_CHECKTIMEVERIFY,
+		checkProperties: func(t *testing.T, c opcodeCheckContext) {
+			t.Helper()
+			require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+			require.Equal(t, c.before.condStack, c.after.condStack)
+			if c.execErr == nil {
+				beforeStack := c.before.GetStack()
+				require.Equal(t, beforeStack[:len(beforeStack)-1], c.after.GetStack())
+				return
+			}
+			requireScriptErrorCodeIn(t, c.execErr,
+				txscript.ErrInvalidStackOperation,
+				txscript.ErrNegativeLockTime,
+				txscript.ErrUnsatisfiedLockTime,
+				txscript.ErrNumberTooBig,
+				txscript.ErrMinimalData,
+			)
+		},
+		validVectors: []opcodeVector{
+			{
+				name:       "past",
+				inputStack: [][]byte{scriptNum(currentTime - 1).Bytes()},
+				setupVM: func(vm *Engine) {
+					vm.currentTime = BigNumFromInt64(currentTime)
+				},
+			},
+			{
+				name:       "exact_time_ignores_transaction_locktime_and_sequence",
+				inputStack: [][]byte{scriptNum(currentTime).Bytes()},
+				setupWorld: func(w *opcodeWorld) {
+					w.tx.LockTime = 0
+					w.tx.TxIn[0].Sequence = wire.MaxTxInSequenceNum
+				},
+				setupVM: func(vm *Engine) {
+					vm.currentTime = BigNumFromInt64(currentTime)
+				},
+			},
+		},
+		invalidVectors: []opcodeVector{
+			{name: "underflow", expectedError: txscript.ErrInvalidStackOperation},
+			{
+				name:       "future",
+				inputStack: [][]byte{scriptNum(currentTime + 1).Bytes()},
+				setupVM: func(vm *Engine) {
+					vm.currentTime = BigNumFromInt64(currentTime)
+				},
+				expectedError: txscript.ErrUnsatisfiedLockTime,
+			},
+			{
+				name:       "large_future_timestamp",
+				inputStack: [][]byte{{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00}},
+				setupVM: func(vm *Engine) {
+					vm.currentTime = BigNumFromInt64(currentTime)
+				},
+				expectedError: txscript.ErrUnsatisfiedLockTime,
+			},
+			{
+				name:          "negative",
+				inputStack:    [][]byte{scriptNum(-1).Bytes()},
+				expectedError: txscript.ErrNegativeLockTime,
 			},
 		},
 	}

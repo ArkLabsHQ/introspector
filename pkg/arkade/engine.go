@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -105,6 +106,8 @@ type Engine struct {
 	prevOutFetcher ArkPrevOutFetcher
 	assetPacket    asset.Packet
 	emulatorPacket EmulatorPacket
+	expiry         *int64
+	currentTime    BigNum
 	intentMessage  []byte
 
 	// The following fields handle keeping track of the current execution state
@@ -698,6 +701,7 @@ func NewEngine(scriptPubKey []byte, tx *wire.MsgTx, txIdx int,
 		inputAmount:    inputAmount,
 		prevOutFetcher: prevOutFetcher,
 		limits:         DefaultComputeLimits(),
+		currentTime:    BigNumFromInt64(time.Now().Unix()),
 	}
 
 	// The signature script must only contain data pushes.
@@ -730,7 +734,6 @@ func NewEngine(scriptPubKey []byte, tx *wire.MsgTx, txIdx int,
 
 	vm.dstack.verifyMinimalData = true
 	vm.astack.verifyMinimalData = true
-
 
 	// Setup the current tokenizer used to parse through the script one opcode
 	// at a time with the script associated with the program counter.

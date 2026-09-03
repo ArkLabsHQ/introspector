@@ -1,6 +1,7 @@
 package application
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -10,6 +11,8 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	arkscript "github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
+	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
+	"github.com/arkade-os/arkd/pkg/client-lib/types"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
@@ -251,6 +254,73 @@ func submitTestIntent(
 	})
 }
 
+func TestExpiryForScriptOnlyQueriesIndexerForPushExpiry(t *testing.T) {
+	calls := 0
+	svc := &service{indexerClient: expiryIndexer{calls: &calls}}
+	txid := chainhash.Hash{}.String()
+
+	pushedOpcode, err := txscript.NewScriptBuilder().
+		AddData([]byte{arkade.OP_PUSHEXPIRY}).Script()
+	require.NoError(t, err)
+
+	for _, script := range [][]byte{{txscript.OP_TRUE}, pushedOpcode} {
+		_, err := svc.expiryForScript(t.Context(), script, txid, 0)
+		require.NoError(t, err)
+	}
+	require.Zero(t, calls)
+
+	_, err = svc.expiryForScript(t.Context(), []byte{arkade.OP_PUSHEXPIRY}, txid, 0)
+	require.ErrorContains(t, err, "not found")
+	require.Equal(t, 1, calls)
+
+	svc.indexerClient = expiryIndexer{vtxos: []types.Vtxo{{
+		Outpoint:  types.Outpoint{Txid: chainhash.Hash{1}.String()},
+		ExpiresAt: time.Now().Add(time.Minute),
+	}}}
+	_, err = svc.expiryForScript(t.Context(), []byte{arkade.OP_PUSHEXPIRY}, txid, 0)
+	require.ErrorContains(t, err, "not found")
+
+	svc.indexerClient = expiryIndexer{vtxos: []types.Vtxo{{
+		Outpoint: types.Outpoint{Txid: txid},
+	}}}
+	_, err = svc.expiryForScript(t.Context(), []byte{arkade.OP_PUSHEXPIRY}, txid, 0)
+	require.ErrorContains(t, err, "has no expiry")
+}
+
+func TestSubmitIntentPushExpiry(t *testing.T) {
+	signerKey := newResolverPrivateKey(t)
+	expiresAt := time.Now().Add(time.Minute).Truncate(time.Second)
+	script, err := txscript.NewScriptBuilder().
+		AddOp(arkade.OP_PUSHEXPIRY).AddInt64(expiresAt.Unix()).AddOp(txscript.OP_EQUALVERIFY).
+		AddOp(txscript.OP_TRUE).Script()
+	require.NoError(t, err)
+	tweaked := arkade.ComputeArkadeScriptPublicKey(
+		signerKey.PubKey(), arkade.ArkadeScriptHash(script),
+	)
+	owned := newIntentVtxo(t, tweaked)
+	ptx := newIntentProof(
+		t, []intentVtxo{owned, owned}, arkade.EmulatorEntry{Vin: 1, Script: script},
+	)
+	outpoint := ptx.UnsignedTx.TxIn[1].PreviousOutPoint
+	message, encoded := testRegisterMessage(t)
+	bindIntentProofToMessage(t, ptx, encoded)
+
+	svc := &service{
+		signer: signer{signerKey},
+		indexerClient: expiryIndexer{vtxos: []types.Vtxo{{
+			Outpoint:  types.Outpoint{Txid: outpoint.Hash.String(), VOut: outpoint.Index},
+			ExpiresAt: expiresAt,
+		}}},
+	}
+	signed, err := svc.SubmitIntent(t.Context(), Intent{
+		Proof:   intent.Proof{Packet: *ptx},
+		Message: message,
+	})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, signed.Inputs[1].TaprootScriptSpendSig)
+}
+
 func testRegisterMessage(t *testing.T) (*intent.RegisterMessage, string) {
 	t.Helper()
 	message := &intent.RegisterMessage{
@@ -371,4 +441,19 @@ func newIntentProof(
 	ptx.Outputs = append(ptx.Outputs, psbt.POutput{})
 
 	return ptx
+}
+
+type expiryIndexer struct {
+	indexer.Indexer
+	calls *int
+	vtxos []types.Vtxo
+}
+
+func (e expiryIndexer) GetVtxos(
+	context.Context, ...indexer.GetVtxosOption,
+) (*indexer.VtxosResponse, error) {
+	if e.calls != nil {
+		(*e.calls)++
+	}
+	return &indexer.VtxosResponse{Vtxos: e.vtxos}, nil
 }
