@@ -41,12 +41,16 @@ const (
 // once the arkade covenant on the spending tx passes.
 //
 // Self-send arkade script — enforces output[i-1] preserves the spent VTXO's
-// pkScript and value, and gates the spend to register intents only.
+// pkScript and value, and gates the spend to register intents only with strict
+// cosigner verification.
 // Witness stack: [].
 //
-//	OP_PUSHEXPIRY 1024 OP_SUB OP_CHECKTIMEVERIFY   # within 1024 seconds of expiry
-//	"type" OP_INSPECTINTENTMESSAGE OP_VERIFY "register" OP_EQUALVERIFY  # register intent only
-//	OP_PUSHCURRENTINPUTINDEX OP_1SUB OP_3 OP_0 OP_TUNNEL  # output i-1, script+value flags, no asset exceptions
+//	OP_PUSHEXPIRY 1024 OP_SUB OP_CHECKTIMEVERIFY          # within 1024 seconds of expiry
+//	"type" OP_INSPECTINTENTMESSAGE OP_VERIFY "register" OP_EQUALVERIFY  # type == "register"
+//	"onchain_output_indexes" OP_INSPECTINTENTMESSAGE OP_VERIFY "[]" OP_EQUALVERIFY  # no onchain outputs
+//	"cosigners_public_keys.0" OP_INSPECTINTENTMESSAGE OP_VERIFY <pubkey> OP_EQUALVERIFY  # cosigner[0] == delegate key
+//	"cosigners_public_keys.1" OP_INSPECTINTENTMESSAGE OP_NOT OP_VERIFY OP_DROP  # no second cosigner
+//	OP_PUSHCURRENTINPUTINDEX OP_1SUB OP_7 OP_0 OP_TUNNEL  # output i-1, script+value+assets flags, no exceptions
 //
 // Delegate path — MultisigClosure [server, emulator_tweaked]. Any solver
 // can trigger the refresh; the covenant acts in the user's place.
@@ -83,20 +87,48 @@ func TestCovenantDelegate(t *testing.T) {
 	)
 	require.NoError(t, err)
 
+	// solver-owned cosigner, drives Musig2 on behalf of the absent user.
+	// Generated before the covenant script so its pubkey can be pinned in it.
+	cosignerKey, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+	signerSession := tree.NewTreeSignerSession(cosignerKey)
+	delegateSignerPubkeyHex := signerSession.GetPublicKey()
+
 	// covenant: spending is allowed near expiry if output[0] preserves the spent VTXO
+	// with additional checks on intent message fields
 	delegateArkadeScript, err := txscript.NewScriptBuilder().
 		AddOp(arkade.OP_PUSHEXPIRY).
 		AddInt64(1024).
 		AddOp(arkade.OP_SUB).
 		AddOp(arkade.OP_CHECKTIMEVERIFY).
+		// Check intent message type == "register"
 		AddData([]byte("type")).
 		AddOp(arkade.OP_INSPECTINTENTMESSAGE).
 		AddOp(txscript.OP_VERIFY).
 		AddData([]byte(intent.IntentMessageTypeRegister)).
 		AddOp(arkade.OP_EQUALVERIFY).
+		// Check onchain_output_indexes == "[]"
+		AddData([]byte("onchain_output_indexes")).
+		AddOp(arkade.OP_INSPECTINTENTMESSAGE).
+		AddOp(txscript.OP_VERIFY).
+		AddData([]byte("[]")).
+		AddOp(arkade.OP_EQUALVERIFY).
+		// Check cosigners_public_keys.0 == delegate's vtxotree signer pubkey
+		AddData([]byte("cosigners_public_keys.0")).
+		AddOp(arkade.OP_INSPECTINTENTMESSAGE).
+		AddOp(txscript.OP_VERIFY).
+		AddData([]byte(delegateSignerPubkeyHex)).
+		AddOp(arkade.OP_EQUALVERIFY).
+		// Check cosigners_public_keys.1 does not exist (only one cosigner allowed)
+		AddData([]byte("cosigners_public_keys.1")).
+		AddOp(arkade.OP_INSPECTINTENTMESSAGE).
+		AddOp(txscript.OP_NOT).
+		AddOp(txscript.OP_VERIFY).
+		AddOp(txscript.OP_DROP).
+		// Tunnel: output i-1, script+value+assets flags, no asset exceptions
 		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).
 		AddOp(arkade.OP_1SUB).
-		AddInt64(arkade.TunnelScriptPubKey | arkade.TunnelValue).
+		AddInt64(arkade.TunnelScriptPubKey | arkade.TunnelValue | arkade.TunnelAssets).
 		AddInt64(0).
 		AddOp(arkade.OP_TUNNEL).
 		Script()
@@ -137,11 +169,6 @@ func TestCovenantDelegate(t *testing.T) {
 		aliceAddr.Signer, delegateVtxoScript, delegateAmount,
 	)
 
-	// solver-owned cosigner, drives Musig2 on behalf of the absent user
-	cosignerKey, err := btcec.NewPrivateKey()
-	require.NoError(t, err)
-	signerSession := tree.NewTreeSignerSession(cosignerKey)
-
 	buildIntent := func(outputs []*wire.TxOut) (*psbt.Packet, string) {
 		t.Helper()
 
@@ -149,7 +176,9 @@ func TestCovenantDelegate(t *testing.T) {
 			BaseMessage: intent.BaseMessage{
 				Type: intent.IntentMessageTypeRegister,
 			},
-			CosignersPublicKeys: []string{signerSession.GetPublicKey()},
+			// non-nil so it encodes as "[]" (nil marshals to null, a covenant miss)
+			OnchainOutputIndexes: []int{},
+			CosignersPublicKeys:  []string{delegateSignerPubkeyHex},
 		}.Encode()
 		require.NoError(t, err)
 
