@@ -41,11 +41,11 @@ const (
 // once the arkade covenant on the spending tx passes.
 //
 // Self-send arkade script — enforces output[i-1] preserves the spent VTXO's
-// pkScript and value, and gates the spend to intent-proof txs only (v2).
+// pkScript and value, and gates the spend to register intents only.
 // Witness stack: [].
 //
 //	OP_PUSHEXPIRY 1024 OP_SUB OP_CHECKTIMEVERIFY   # within 1024 seconds of expiry
-//	OP_INSPECTVERSION OP_2 OP_EQUALVERIFY          # intent proof only (v2, not v3)
+//	"type" OP_INSPECTINTENTMESSAGE OP_VERIFY "register" OP_EQUALVERIFY  # register intent only
 //	OP_PUSHCURRENTINPUTINDEX OP_1SUB OP_3 OP_0 OP_TUNNEL  # output i-1, script+value flags, no asset exceptions
 //
 // Delegate path — MultisigClosure [server, emulator_tweaked]. Any solver
@@ -53,7 +53,7 @@ const (
 // Exit path — CSVMultisigClosure for the user. Unilateral exit remains
 // available if the emulator or arkd refuse to cooperate.
 //
-// The v=2 version gate blocks off-chain Ark txs (v=3): without it a solver
+// The intent-message gate blocks off-chain Ark txs: without it a solver
 // could spend the delegate VTXO via SubmitTx in a self-send loop, burning
 // fees without ever refreshing the VTXO through a batch.
 //
@@ -84,14 +84,23 @@ func TestCovenantDelegate(t *testing.T) {
 	require.NoError(t, err)
 
 	// covenant: spending is allowed near expiry if output[0] preserves the spent VTXO
-	expiryCheck, err := txscript.NewScriptBuilder().
+	delegateArkadeScript, err := txscript.NewScriptBuilder().
 		AddOp(arkade.OP_PUSHEXPIRY).
 		AddInt64(1024).
 		AddOp(arkade.OP_SUB).
 		AddOp(arkade.OP_CHECKTIMEVERIFY).
+		AddData([]byte("type")).
+		AddOp(arkade.OP_INSPECTINTENTMESSAGE).
+		AddOp(txscript.OP_VERIFY).
+		AddData([]byte(intent.IntentMessageTypeRegister)).
+		AddOp(arkade.OP_EQUALVERIFY).
+		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).
+		AddOp(arkade.OP_1SUB).
+		AddInt64(arkade.TunnelScriptPubKey | arkade.TunnelValue).
+		AddInt64(0).
+		AddOp(arkade.OP_TUNNEL).
 		Script()
 	require.NoError(t, err)
-	delegateArkadeScript := append(expiryCheck, enforceSelfSend(t)...)
 
 	// delegate VTXO: [server, emulator_tweaked] for refresh, [alice]+CSV for exit
 	delegateVtxoScript := script.TapscriptsVtxoScript{
@@ -210,7 +219,7 @@ func TestCovenantDelegate(t *testing.T) {
 		{Value: delegateAmount - 1, PkScript: delegatePkScript},
 	})
 
-	// Invalid: off-chain Ark tx (v3) rejected by the version gate
+	// Invalid: off-chain Ark tx rejected by the intent-message gate
 	infos, err := grpcAlice.GetInfo(ctx)
 	require.NoError(t, err)
 	checkpointScriptBytes, err := hex.DecodeString(infos.CheckpointTapscript)

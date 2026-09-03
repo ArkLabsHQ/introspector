@@ -21,6 +21,13 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 	if err := validateMessage(intent.Message); err != nil {
 		return nil, fmt.Errorf("invalid message: %w", err)
 	}
+	encodedMessage, err := intent.Message.Encode()
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode intent message: %w", err)
+	}
+	if err := validateIntentMessageCommitment(intent, encodedMessage); err != nil {
+		return nil, fmt.Errorf("intent message is not committed by the proof: %w", err)
+	}
 
 	ptx := &intent.Proof.Packet
 
@@ -73,6 +80,7 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 			ptx.UnsignedTx,
 			prevOutFetcher,
 			inputIndex,
+			arkade.WithIntentMessage(encodedMessage),
 			arkade.WithExactComputeLimits(s.computeLimits),
 			arkade.WithComputeBudget(budget),
 			arkade.WithExpiry(expiry),
@@ -146,6 +154,30 @@ func (s *service) expiryForScript(
 		}
 	}
 	return 0, fmt.Errorf("vtxo %s:%d not found", txid, vout)
+}
+
+// validateIntentMessageCommitment checks that the proof's synthetic message
+// input (index 0) was derived from encodedMessage. Since encodedMessage is the
+// server-side canonical re-encoding of the decoded message, a client that
+// signed a non-canonical encoding fails the outpoint comparison here.
+func validateIntentMessageCommitment(request Intent, encodedMessage string) error {
+	ptx := &request.Proof.Packet
+	if len(ptx.UnsignedTx.TxIn) < 2 || len(ptx.Inputs) < 2 || ptx.Inputs[1].WitnessUtxo == nil {
+		return fmt.Errorf("proof is missing its first ownership input witness utxo")
+	}
+	firstInput := ptx.UnsignedTx.TxIn[1]
+	expected, err := intent.New(encodedMessage, []intent.Input{{
+		OutPoint:    &firstInput.PreviousOutPoint,
+		Sequence:    firstInput.Sequence,
+		WitnessUtxo: ptx.Inputs[1].WitnessUtxo,
+	}}, nil)
+	if err != nil {
+		return err
+	}
+	if ptx.UnsignedTx.TxIn[0].PreviousOutPoint != expected.UnsignedTx.TxIn[0].PreviousOutPoint {
+		return fmt.Errorf("synthetic message input does not match the supplied message")
+	}
+	return nil
 }
 
 // validateMessage checks intent admission policy and the proof's validity window.
