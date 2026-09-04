@@ -10,11 +10,20 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
 	"github.com/arkade-os/emulator/pkg/emulator"
+	"github.com/btcsuite/btcd/blockchain"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+// internalErrMsg is returned in place of an unexpected error. The detail is
+// logged server-side instead of being echoed back, since callers reaching these
+// endpoints are unauthenticated and the underlying errors can carry
+// implementation detail. Validation errors stay descriptive so that a
+// legitimate caller can fix its request.
+const internalErrMsg = "internal error"
 
 type handler struct {
 	version string
@@ -54,14 +63,14 @@ func (h *handler) SubmitTx(
 		return nil, status.Error(codes.InvalidArgument, "missing checkpoint txs")
 	}
 
-	arkPtx, err := psbt.NewFromRawBytes(strings.NewReader(arkTx), true)
+	arkPtx, err := parsePsbt(arkTx)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid ark tx")
 	}
 
 	checkpointPsbt := make([]*psbt.Packet, 0, len(checkpoints))
 	for _, checkpoint := range checkpoints {
-		checkpointPtx, err := psbt.NewFromRawBytes(strings.NewReader(checkpoint), true)
+		checkpointPtx, err := parsePsbt(checkpoint)
 		if err != nil {
 			return nil, status.Error(codes.InvalidArgument, "invalid checkpoint tx")
 		}
@@ -76,7 +85,7 @@ func (h *handler) SubmitTx(
 	approvedTx, err := h.svc.SubmitTx(ctx, offchainTx)
 	if err != nil {
 		log.WithError(err).Error("failed to process transaction")
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, status.Error(codes.Internal, internalErrMsg)
 	}
 
 	encodedArkTx, err := approvedTx.ArkTx.B64Encode()
@@ -116,12 +125,13 @@ func (h *handler) SubmitIntent(
 	signedIntentProof, err := h.svc.SubmitIntent(ctx, *intent)
 	if err != nil {
 		log.WithError(err).Error("failed to process intent")
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, status.Error(codes.Internal, internalErrMsg)
 	}
 
 	encodedProof, err := signedIntentProof.B64Encode()
 	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		log.WithError(err).Error("failed to encode intent proof")
+		return nil, status.Error(codes.Internal, internalErrMsg)
 	}
 
 	return &emulatorv1.SubmitIntentResponse{
@@ -150,14 +160,14 @@ func (h *handler) SubmitFinalization(
 		return nil, status.Error(codes.InvalidArgument, "missing commitment tx")
 	}
 
-	commitmentPtx, err := psbt.NewFromRawBytes(strings.NewReader(commitmentTx), true)
+	commitmentPtx, err := parsePsbt(commitmentTx)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid commitment tx")
 	}
 
 	forfeitPsbt := make([]*psbt.Packet, 0, len(forfeitTxs))
 	for _, forfeit := range forfeitTxs {
-		forfeitPtx, err := psbt.NewFromRawBytes(strings.NewReader(forfeit), true)
+		forfeitPtx, err := parsePsbt(forfeit)
 		if err != nil {
 			return nil, status.Error(codes.InvalidArgument, "invalid forfeit tx")
 		}
@@ -190,7 +200,7 @@ func (h *handler) SubmitFinalization(
 	signedBatchFinalization, err := h.svc.SubmitFinalization(ctx, batchFinalization)
 	if err != nil {
 		log.WithError(err).Error("failed to process finalization")
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, status.Error(codes.Internal, internalErrMsg)
 	}
 
 	encodedForfeits := make([]string, 0, len(signedBatchFinalization.Forfeits))
@@ -225,7 +235,7 @@ func (h *handler) SubmitOnchainTx(
 		return nil, status.Error(codes.InvalidArgument, "missing tx")
 	}
 
-	ptx, err := psbt.NewFromRawBytes(strings.NewReader(b64), true)
+	ptx, err := parsePsbt(b64)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid tx")
 	}
@@ -233,12 +243,13 @@ func (h *handler) SubmitOnchainTx(
 	signed, err := h.svc.SubmitOnchainTx(ctx, emulator.OnchainTx{Tx: ptx})
 	if err != nil {
 		log.WithError(err).Error("failed to process onchain tx")
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, status.Error(codes.Internal, internalErrMsg)
 	}
 
 	encoded, err := signed.B64Encode()
 	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		log.WithError(err).Error("failed to encode onchain tx")
+		return nil, status.Error(codes.Internal, internalErrMsg)
 	}
 
 	return &emulatorv1.SubmitOnchainTxResponse{SignedTx: encoded}, nil
@@ -299,7 +310,7 @@ func parseIntent(fromProto *emulatorv1.Intent) (*emulator.Intent, error) {
 		return nil, fmt.Errorf("missing message")
 	}
 
-	proofPsbt, err := psbt.NewFromRawBytes(strings.NewReader(proof), true)
+	proofPsbt, err := parsePsbt(proof)
 	if err != nil {
 		return nil, fmt.Errorf("invalid proof: %w", err)
 	}
@@ -337,4 +348,15 @@ func parseIntent(fromProto *emulatorv1.Intent) (*emulator.Intent, error) {
 		Proof:   intent.Proof{Packet: *proofPsbt},
 		Message: decoded,
 	}, nil
+}
+
+func parsePsbt(b64 string) (*psbt.Packet, error) {
+	ptx, err := psbt.NewFromRawBytes(strings.NewReader(b64), true)
+	if err != nil {
+		return nil, err
+	}
+	if err := blockchain.CheckTransactionSanity(btcutil.NewTx(ptx.UnsignedTx)); err != nil {
+		return nil, err
+	}
+	return ptx, nil
 }

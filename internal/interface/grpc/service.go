@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/arkade-os/arkd/pkg/macaroons"
 	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
 	"github.com/arkade-os/emulator/internal/config"
 	interfaces "github.com/arkade-os/emulator/internal/interface"
 	"github.com/arkade-os/emulator/internal/interface/grpc/handlers"
+	"github.com/arkade-os/emulator/internal/interface/grpc/interceptors"
 	"github.com/arkade-os/emulator/pkg/emulator"
 	grpchandler "github.com/arkade-os/emulator/pkg/emulator/grpchandler"
 	"github.com/meshapi/grpc-api-gateway/gateway"
@@ -28,6 +30,10 @@ type service struct {
 	appSvc     emulator.Service
 	server     *http.Server
 	grpcServer *grpc.Server
+	// macaroonSvc gates the signing endpoints when set. It is nil until a
+	// deployment configures macaroon auth, in which case requests are served
+	// unauthenticated.
+	macaroonSvc *macaroons.Service
 }
 
 func NewService(
@@ -82,6 +88,36 @@ func (s *service) start() error {
 	return nil
 }
 
+const (
+	// maxReceiveMessageSize bounds a single inbound grpc message. The signing
+	// handlers parse every PSBT, checkpoint, forfeit and tree element they are
+	// handed before validating anything, so an unbounded message is an
+	// unbounded allocation. This pins the bound explicitly instead of relying
+	// on the grpc-go default.
+	maxReceiveMessageSize = 4 * 1024 * 1024
+
+	// maxHTTPRequestBodySize bounds a request arriving through the JSON
+	// gateway. The gateway decodes the whole body before the message ever
+	// reaches the grpc receive limit, so the bound has to be applied here too.
+	// It is larger than maxReceiveMessageSize to leave room for JSON encoding
+	// overhead on an otherwise legitimate payload.
+	maxHTTPRequestBodySize = 8 * 1024 * 1024
+
+	// maxConcurrentStreams bounds concurrent streams per grpc transport. It
+	// takes effect when the server is driven through Serve(listener); on the
+	// ServeHTTP path used here concurrency is governed by net/http's HTTP/2
+	// server, which defaults to 250 streams per connection.
+	maxConcurrentStreams = 256
+)
+
+func serverOptions() []grpc.ServerOption {
+	return []grpc.ServerOption{
+		grpc.Creds(insecure.NewCredentials()),
+		grpc.MaxRecvMsgSize(maxReceiveMessageSize),
+		grpc.MaxConcurrentStreams(maxConcurrentStreams),
+	}
+}
+
 func (s *service) newServer() error {
 	ctx := context.Background()
 
@@ -89,15 +125,25 @@ func (s *service) newServer() error {
 		otelgrpc.WithTracerProvider(otel.GetTracerProvider()),
 	)
 
-	grpcConfig := []grpc.ServerOption{
-		grpc.StatsHandler(otelHandler),
+	// No macaroon service is configured today, so the interceptors run without
+	// authentication. They are still installed so that the request logging and
+	// the macaroon check are in place the moment one is provided.
+	if s.macaroonSvc == nil {
+		log.Warn("no macaroon service configured, serving requests without authentication")
 	}
-	grpcConfig = append(grpcConfig, grpc.Creds(insecure.NewCredentials()))
+
+	grpcConfig := serverOptions()
+	grpcConfig = append(
+		grpcConfig,
+		grpc.StatsHandler(otelHandler),
+		interceptors.UnaryInterceptor(s.macaroonSvc),
+		interceptors.StreamInterceptor(s.macaroonSvc),
+	)
 
 	// Server grpc.
 	grpcServer := grpc.NewServer(grpcConfig...)
 
-	appSvc, err := s.cfg.AppService(ctx)
+	appSvc, err := s.cfg.AppService(ctx, s.version)
 	if err != nil {
 		return err
 	}
@@ -170,6 +216,10 @@ func router(
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Access-Control-Allow-Headers", "*")
 			w.Header().Add("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+
+			// The gateway decodes the whole body before the message reaches
+			// the grpc receive limit, so cap it here as well.
+			r.Body = http.MaxBytesReader(w, r.Body, maxHTTPRequestBodySize)
 
 			grpcGateway.ServeHTTP(w, r)
 			return

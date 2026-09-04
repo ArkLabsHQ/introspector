@@ -1,6 +1,7 @@
 package emulator
 
 import (
+	"bytes"
 	"fmt"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
@@ -25,11 +26,34 @@ func prevOutFetcherForIntent(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher, error)
 
 	prevOutArkTxs := make(map[wire.OutPoint]*wire.MsgTx, len(prevoutTxs))
 	prevOutIdxs := make(map[wire.OutPoint]uint32, len(prevoutTxs))
-	for inputIndex, prevTx := range prevoutTxs {
+	if len(ptx.Inputs) < 2 {
+		return nil, fmt.Errorf("intent proof must have at least 2 inputs")
+	}
+	// Input 0 is always the BIP322 message input; its output carries zero value
+	// and mirrors the first real input script.
+	expected := &wire.TxOut{PkScript: ptx.Inputs[1].WitnessUtxo.PkScript}
+	if !equalTxOut(ptx.Inputs[0].WitnessUtxo, expected) {
+		return nil, fmt.Errorf("intent message input witness utxo is invalid")
+	}
+	outpoint := ptx.UnsignedTx.TxIn[0].PreviousOutPoint
+	prevOutArkTxs[outpoint] = &wire.MsgTx{TxOut: []*wire.TxOut{expected}}
+	prevOutIdxs[outpoint] = 0
+	for inputIndex := 1; inputIndex < len(ptx.Inputs); inputIndex++ {
+		prevTx, ok := prevoutTxs[inputIndex]
+		if !ok {
+			return nil, fmt.Errorf("missing prevout tx for input %d", inputIndex)
+		}
 		outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
 		if err := validatePrevoutTx(inputIndex, prevTx, outpoint.Hash); err != nil {
 			return nil, err
 		}
+
+		if err := reconcilePrevout(
+			inputIndex, prevTx, outpoint.Index, ptx.Inputs[inputIndex].WitnessUtxo,
+		); err != nil {
+			return nil, err
+		}
+
 		prevOutArkTxs[outpoint] = prevTx
 		prevOutIdxs[outpoint] = outpoint.Index
 	}
@@ -40,7 +64,7 @@ func prevOutFetcherForIntent(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher, error)
 // prevOutFetcherForArkTx computes and validate prevouts for an Ark tx using its checkpoints
 func prevOutFetcherForArkTx(
 	ptx *psbt.Packet, checkpoints []*psbt.Packet,
-) (arkade.ArkPrevOutFetcher, error) {
+) (*mapArkPrevOutFetcher, error) {
 	baseFetcher, err := computePrevoutFetcher(ptx)
 	if err != nil {
 		return nil, err
@@ -58,15 +82,30 @@ func prevOutFetcherForArkTx(
 
 	prevOutArkTxs := make(map[wire.OutPoint]*wire.MsgTx, len(prevoutTxs))
 	prevOutIdxs := make(map[wire.OutPoint]uint32, len(prevoutTxs))
-	for inputIndex, prevTx := range prevoutTxs {
+	for inputIndex := range ptx.Inputs {
+		prevTx, ok := prevoutTxs[inputIndex]
+		if !ok {
+			return nil, fmt.Errorf("missing prevout tx for input %d", inputIndex)
+		}
 		outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
 		checkpointTxid := outpoint.Hash.String()
 		checkpoint, ok := checkpointsByTxid[checkpointTxid]
 		if !ok {
 			return nil, fmt.Errorf("checkpoint not found for input %d", inputIndex)
 		}
-		if len(checkpoint.UnsignedTx.TxIn) == 0 {
+		if len(checkpoint.Inputs) == 0 || len(checkpoint.UnsignedTx.TxIn) == 0 {
 			return nil, fmt.Errorf("checkpoint has no inputs for input %d", inputIndex)
+		}
+		if len(checkpoint.Inputs) != 1 || len(checkpoint.UnsignedTx.TxIn) != 1 {
+			return nil, fmt.Errorf("checkpoint must have exactly one input for ark input %d", inputIndex)
+		}
+
+		// the checkpoint txid is pinned by the ark input outpoint, so its
+		// outputs are authenticated and the ark input witness utxo must agree
+		if err := reconcilePrevout(
+			inputIndex, checkpoint.UnsignedTx, outpoint.Index, ptx.Inputs[inputIndex].WitnessUtxo,
+		); err != nil {
+			return nil, fmt.Errorf("ark input: %w", err)
 		}
 
 		checkpointInputPrevout := checkpoint.UnsignedTx.TxIn[0].PreviousOutPoint
@@ -74,11 +113,13 @@ func prevOutFetcherForArkTx(
 			return nil, err
 		}
 
-		if checkpointInputPrevout.Index >= uint32(len(prevTx.TxOut)) {
-			return nil, fmt.Errorf(
-				"prevout tx output index out of range for input %d: index=%d outputs=%d",
-				inputIndex, checkpointInputPrevout.Index, len(prevTx.TxOut),
-			)
+		// the prevout tx carried by an ark tx input funds the checkpoint input,
+		// not the ark input itself, so it must be reconciled against the
+		// checkpoint witness utxo
+		if err := reconcilePrevout(
+			inputIndex, prevTx, checkpointInputPrevout.Index, checkpoint.Inputs[0].WitnessUtxo,
+		); err != nil {
+			return nil, err
 		}
 
 		prevOutArkTxs[outpoint] = prevTx
@@ -102,18 +143,21 @@ func prevOutFetcherForOnchainTx(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher, err
 
 	prevOutTxs := make(map[wire.OutPoint]*wire.MsgTx, len(prevoutTxs))
 	prevOutIdxs := make(map[wire.OutPoint]uint32, len(prevoutTxs))
-	for inputIndex, prevTx := range prevoutTxs {
+	for inputIndex := range ptx.Inputs {
+		prevTx, ok := prevoutTxs[inputIndex]
+		if !ok {
+			return nil, fmt.Errorf("missing prevout tx for input %d", inputIndex)
+		}
 		outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
 
 		if err := validatePrevoutTx(inputIndex, prevTx, outpoint.Hash); err != nil {
 			return nil, err
 		}
 
-		if outpoint.Index >= uint32(len(prevTx.TxOut)) {
-			return nil, fmt.Errorf(
-				"prevout tx output index out of range for input %d: index=%d outputs=%d",
-				inputIndex, outpoint.Index, len(prevTx.TxOut),
-			)
+		if err := reconcilePrevout(
+			inputIndex, prevTx, outpoint.Index, ptx.Inputs[inputIndex].WitnessUtxo,
+		); err != nil {
+			return nil, err
 		}
 
 		prevOutTxs[outpoint] = prevTx
@@ -182,6 +226,14 @@ func (f *mapArkPrevOutFetcher) FetchPrevOutArkTx(op wire.OutPoint) *wire.MsgTx {
 }
 
 func (f *mapArkPrevOutFetcher) FetchVtxoPrevOutPkScript(op wire.OutPoint) []byte {
+	prevOut := f.fetchVtxoPrevOut(op)
+	if prevOut == nil {
+		return nil
+	}
+	return prevOut.PkScript
+}
+
+func (f *mapArkPrevOutFetcher) fetchVtxoPrevOut(op wire.OutPoint) *wire.TxOut {
 	if f.arkTxs == nil || f.prevOutIdxs == nil {
 		return nil
 	}
@@ -197,7 +249,7 @@ func (f *mapArkPrevOutFetcher) FetchVtxoPrevOutPkScript(op wire.OutPoint) []byte
 		return nil
 	}
 
-	return arkTx.TxOut[idx].PkScript
+	return arkTx.TxOut[idx]
 }
 
 func validatePrevoutTx(inputIndex int, prevTx *wire.MsgTx, expectedHash chainhash.Hash) error {
@@ -210,6 +262,48 @@ func validatePrevoutTx(inputIndex int, prevTx *wire.MsgTx, expectedHash chainhas
 	}
 
 	return nil
+}
+
+// reconcilePrevout asserts the witness utxo asserted by the requester matches
+// exactly the output it claims to spend on the verified prevout tx.
+// The prevout tx only proves it hashes to the spent outpoint, it says nothing
+// about the witness utxo: without this check a requester can pair a
+// self-consistent prevout tx with a witness utxo declaring any amount and
+// script, which is what the VM introspects and what the signature commits to.
+func reconcilePrevout(
+	inputIndex int, prevTx *wire.MsgTx, outputIndex uint32, witnessUtxo *wire.TxOut,
+) error {
+	if witnessUtxo == nil {
+		return fmt.Errorf("witness utxo is nil for input %d", inputIndex)
+	}
+
+	if outputIndex >= uint32(len(prevTx.TxOut)) {
+		return fmt.Errorf(
+			"prevout tx output index out of range for input %d: index=%d outputs=%d",
+			inputIndex, outputIndex, len(prevTx.TxOut),
+		)
+	}
+
+	prevOut := prevTx.TxOut[outputIndex]
+	if prevOut.Value != witnessUtxo.Value {
+		return fmt.Errorf(
+			"prevout tx value mismatch for input %d: got %d, expected %d",
+			inputIndex, witnessUtxo.Value, prevOut.Value,
+		)
+	}
+
+	if !bytes.Equal(prevOut.PkScript, witnessUtxo.PkScript) {
+		return fmt.Errorf(
+			"prevout tx script mismatch for input %d: got %x, expected %x",
+			inputIndex, witnessUtxo.PkScript, prevOut.PkScript,
+		)
+	}
+
+	return nil
+}
+
+func equalTxOut(a, b *wire.TxOut) bool {
+	return a != nil && b != nil && a.Value == b.Value && bytes.Equal(a.PkScript, b.PkScript)
 }
 
 func computePrevoutFetcher(ptx *psbt.Packet) (txscript.PrevOutputFetcher, error) {

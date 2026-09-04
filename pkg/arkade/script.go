@@ -27,6 +27,18 @@ type ArkadeScript struct {
 
 type ExecuteOption func(*Engine)
 
+// WithExpiry sets the VTXO's expiry timestamp for OP_PUSHEXPIRY.
+func WithExpiry(expiry int64) ExecuteOption {
+	return func(engine *Engine) {
+		engine.expiry = &expiry
+	}
+}
+
+// WithIntentMessage binds a canonical intent message to script execution.
+func WithIntentMessage(raw string) ExecuteOption {
+	return func(engine *Engine) { engine.intentMessage = []byte(raw) }
+}
+
 func WithDebugCallback(callback func(*StepInfo, *Engine) error) ExecuteOption {
 	return func(engine *Engine) {
 		engine.stepCallback = func(step *StepInfo) error {
@@ -83,6 +95,40 @@ type ArkPrevOutFetcher interface {
 	FetchPrevOutArkTx(wire.OutPoint) *wire.MsgTx
 
 	FetchVtxoPrevOutPkScript(wire.OutPoint) []byte
+}
+
+// VerifyTaprootLeafCommitment checks that leaf, combined with its control
+// block, recomputes to the taproot output key committed in pkScript. Without
+// it a taproot leaf script is nothing more than the requester's assertion, and
+// the signer would sign a tapscript spend for a leaf that is not part of the
+// taproot tree being spent.
+func VerifyTaprootLeafCommitment(pkScript []byte, leaf *psbt.TaprootTapLeafScript) error {
+	if !txscript.IsPayToTaproot(pkScript) {
+		return fmt.Errorf("prevout script is not a taproot output")
+	}
+
+	controlBlock, err := txscript.ParseControlBlock(leaf.ControlBlock)
+	if err != nil {
+		return fmt.Errorf("failed to parse taproot control block: %w", err)
+	}
+
+	// the leaf hash committed by the merkle proof is computed with the control
+	// block's leaf version, so a mismatch would prove a different leaf
+	if controlBlock.LeafVersion != leaf.LeafVersion {
+		return fmt.Errorf(
+			"control block leaf version 0x%02x does not match tapscript leaf version 0x%02x",
+			byte(controlBlock.LeafVersion), byte(leaf.LeafVersion),
+		)
+	}
+
+	// pkScript is OP_1 <32-byte output key>, the witness program starts at byte 2
+	if err := txscript.VerifyTaprootLeafCommitment(
+		controlBlock, pkScript[2:], leaf.Script,
+	); err != nil {
+		return fmt.Errorf("taproot leaf script is not committed by the prevout script: %w", err)
+	}
+
+	return nil
 }
 
 // ReadArkadeScript reads an arkade script from an EmulatorEntry and validates
@@ -159,11 +205,18 @@ func ReadArkadeScript(ptx *psbt.Packet, signerPublicKey *btcec.PublicKey, entry 
 }
 
 func (s *ArkadeScript) Execute(spendingTx *wire.MsgTx, prevOutFetcher ArkPrevOutFetcher, inputIndex int, opts ...ExecuteOption) error {
-	prevOut := prevOutFetcher.FetchPrevOutput(spendingTx.TxIn[inputIndex].PreviousOutPoint)
-	inputAmount := int64(0)
-	if prevOut != nil {
-		inputAmount = prevOut.Value
+	// fail closed when the fetcher misses: the sighash midstates commit to every
+	// input's amount and script, so a miss is either signed as a fabricated zero
+	// value the introspection opcodes also see, or panics while hashing them
+	for i, txIn := range spendingTx.TxIn {
+		if prevOutFetcher.FetchPrevOutput(txIn.PreviousOutPoint) == nil {
+			return fmt.Errorf("no prevout found for input %d", i)
+		}
 	}
+
+	inputAmount := prevOutFetcher.FetchPrevOutput(
+		spendingTx.TxIn[inputIndex].PreviousOutPoint,
+	).Value
 
 	engine, err := NewEngine(
 		s.script,

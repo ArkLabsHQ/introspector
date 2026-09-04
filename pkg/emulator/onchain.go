@@ -36,12 +36,14 @@ func (s *service) SubmitOnchainTx(ctx context.Context, tx OnchainTx) (*psbt.Pack
 		return nil, fmt.Errorf("no emulator packet found in transaction")
 	}
 
+	budget := arkade.NewComputeBudgetWithLimits(arkade.AggregateComputeLimits(s.computeLimits))
+
 	nSigned := 0
 
 	for _, entry := range packet {
 		inputIndex := int(entry.Vin)
 
-		matchedSigner, script, err := resolveArkadeScriptSigner(s.signer, s.deprecatedSigners, ptx, entry)
+		matchedSigner, script, err := resolveArkadeScriptSigner(s.signer, s.activeDeprecatedSigners(), ptx, entry)
 		if err != nil {
 			if errors.Is(err, arkade.ErrTweakedArkadePubKeyNotFound) && len(ptx.Inputs) > 1 {
 				continue
@@ -62,6 +64,7 @@ func (s *service) SubmitOnchainTx(ctx context.Context, tx OnchainTx) (*psbt.Pack
 			prevOutFetcher,
 			inputIndex,
 			arkade.WithExactComputeLimits(s.computeLimits),
+			arkade.WithComputeBudget(budget),
 		); err != nil {
 			return nil, fmt.Errorf("failed to execute arkade script: %w vin=%d", err, inputIndex)
 		}

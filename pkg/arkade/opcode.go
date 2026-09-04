@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"crypto/sha256"
-	"encoding/binary"
+	"encoding"
 	"encoding/gob"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash"
 	"math"
+	"slices"
 	"strings"
 
 	//nolint:staticcheck
@@ -18,6 +19,7 @@ import (
 	"golang.org/x/crypto/sha3"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
@@ -231,7 +233,7 @@ const (
 	OP_NOP9                = 0xb8 // 184
 	OP_NOP10               = 0xb9 // 185
 	OP_CHECKSIGADD         = 0xba // 186
-	OP_UNKNOWN187          = 0xbb // 187
+	OP_PUT                 = 0xbb // 187
 	OP_UNKNOWN188          = 0xbc // 188
 	OP_UNKNOWN189          = 0xbd // 189
 	OP_UNKNOWN190          = 0xbe // 190
@@ -278,8 +280,8 @@ const (
 	OP_BIN2NUM                       = 0xd8 // 216
 	OP_REVERSEBYTES                  = 0xd9 // 217
 	OP_MODEXP                        = 0xda // 218
-	OP_UNKNOWN219                    = 0xdb // 219
-	OP_UNKNOWN220                    = 0xdc // 220
+	OP_PUSHEXPIRY                    = 0xdb // 219
+	OP_CHECKTIMEVERIFY               = 0xdc // 220
 	OP_UNKNOWN221                    = 0xdd // 221
 	OP_UNKNOWN222                    = 0xde // 222
 	OP_UNKNOWN223                    = 0xdf // 223
@@ -306,8 +308,8 @@ const (
 	OP_INSPECTPACKET                 = 0xf4 // 244
 	OP_INSPECTINPUTPACKET            = 0xf5 // 245
 	OP_SIGHASH                       = 0xf6 // 246
-	OP_UNKNOWN247                    = 0xf7 // 247
-	OP_UNKNOWN248                    = 0xf8 // 248
+	OP_TUNNEL                        = 0xf7 // 247
+	OP_INSPECTINTENTMESSAGE          = 0xf8 // 248
 	OP_UNKNOWN249                    = 0xf9 // 249
 	OP_SMALLINTEGER                  = 0xfa // 250 - bitcoin core internal
 	OP_PUBKEYS                       = 0xfb // 251 - bitcoin core internal
@@ -531,8 +533,9 @@ var opcodeArray = [256]opcode{
 	OP_NOP9:               {OP_NOP9, "OP_NOP9", 1, opcodeNop},
 	OP_NOP10:              {OP_NOP10, "OP_NOP10", 1, opcodeNop},
 
+	OP_PUT: {OP_PUT, "OP_PUT", 1, opcodePut},
+
 	// Undefined opcodes.
-	OP_UNKNOWN187: {OP_UNKNOWN187, "OP_UNKNOWN187", 1, opcodeInvalid},
 	OP_UNKNOWN188: {OP_UNKNOWN188, "OP_UNKNOWN188", 1, opcodeInvalid},
 	OP_UNKNOWN189: {OP_UNKNOWN189, "OP_UNKNOWN189", 1, opcodeInvalid},
 	OP_UNKNOWN190: {OP_UNKNOWN190, "OP_UNKNOWN190", 1, opcodeInvalid},
@@ -579,8 +582,8 @@ var opcodeArray = [256]opcode{
 	OP_BIN2NUM:                       {OP_BIN2NUM, "OP_BIN2NUM", 1, opcodeBin2Num},
 	OP_REVERSEBYTES:                  {OP_REVERSEBYTES, "OP_REVERSEBYTES", 1, opcodeReverseBytes},
 	OP_MODEXP:                        {OP_MODEXP, "OP_MODEXP", 1, opcodeModexp},
-	OP_UNKNOWN219:                    {OP_UNKNOWN219, "OP_UNKNOWN219", 1, opcodeInvalid},
-	OP_UNKNOWN220:                    {OP_UNKNOWN220, "OP_UNKNOWN220", 1, opcodeInvalid},
+	OP_PUSHEXPIRY:                    {OP_PUSHEXPIRY, "OP_PUSHEXPIRY", 1, opcodePushExpiry},
+	OP_CHECKTIMEVERIFY:               {OP_CHECKTIMEVERIFY, "OP_CHECKTIMEVERIFY", 1, opcodeCheckTimeVerify},
 	OP_UNKNOWN221:                    {OP_UNKNOWN221, "OP_UNKNOWN221", 1, opcodeInvalid},
 	OP_UNKNOWN222:                    {OP_UNKNOWN222, "OP_UNKNOWN222", 1, opcodeInvalid},
 	OP_UNKNOWN223:                    {OP_UNKNOWN223, "OP_UNKNOWN223", 1, opcodeInvalid},
@@ -607,8 +610,8 @@ var opcodeArray = [256]opcode{
 	OP_INSPECTPACKET:                 {OP_INSPECTPACKET, "OP_INSPECTPACKET", 1, opcodeInspectPacket},
 	OP_INSPECTINPUTPACKET:            {OP_INSPECTINPUTPACKET, "OP_INSPECTINPUTPACKET", 1, opcodeInspectInputPacket},
 	OP_SIGHASH:                       {OP_SIGHASH, "OP_SIGHASH", 1, opcodeSighash},
-	OP_UNKNOWN247:                    {OP_UNKNOWN247, "OP_UNKNOWN247", 1, opcodeInvalid},
-	OP_UNKNOWN248:                    {OP_UNKNOWN248, "OP_UNKNOWN248", 1, opcodeInvalid},
+	OP_TUNNEL:                        {OP_TUNNEL, "OP_TUNNEL", 1, opcodeTunnel},
+	OP_INSPECTINTENTMESSAGE:          {OP_INSPECTINTENTMESSAGE, "OP_INSPECTINTENTMESSAGE", 1, opcodeInspectIntentMessage},
 	OP_UNKNOWN249:                    {OP_UNKNOWN249, "OP_UNKNOWN249", 1, opcodeInvalid},
 
 	// Bitcoin Core internal use opcode.  Defined here for completeness.
@@ -976,6 +979,26 @@ func opcodeCheckLockTimeVerify(op *opcode, data []byte, vm *Engine) error {
 	return nil
 }
 
+// opcodeCheckTimeVerify checks that the Unix timestamp on top of the data
+// stack is not later than the emulator's current time.
+// Stack transformation: [... timestamp] -> [...]
+func opcodeCheckTimeVerify(_ *opcode, _ []byte, vm *Engine) error {
+	n, err := vm.dstack.PopBigNum()
+	if err != nil {
+		return err
+	}
+	if n.Sign() < 0 {
+		return scriptError(txscript.ErrNegativeLockTime,
+			fmt.Sprintf("negative timestamp: %s", n.BigInt().Text(10)))
+	}
+	if n.Cmp(vm.currentTime) > 0 {
+		return scriptError(txscript.ErrUnsatisfiedLockTime,
+			fmt.Sprintf("timestamp is later than emulator time: %s > %s",
+				n.BigInt().Text(10), vm.currentTime.BigInt().Text(10)))
+	}
+	return nil
+}
+
 // opcodeCheckSequenceVerify compares the top item on the data stack to the
 // sequence number of the transaction input. The item is peeked as a BigNum.
 // The script fails if the value is negative or does not fit in uint32.
@@ -1170,6 +1193,26 @@ func opcodePick(op *opcode, data []byte, vm *Engine) error {
 	}
 
 	return vm.dstack.PickN(val.Int32())
+}
+
+// opcodePut treats the top item on the data stack as an integer and replaces
+// the item that number of items back with the value beneath it.
+//
+// Stack transformation: [xn ... x2 x1 x0 value n] -> [value ... x2 x1 x0]
+// Example with n=0: [x2 x1 x0 value 0] -> [x2 x1 value]
+// Example with n=2: [x2 x1 x0 value 2] -> [value x1 x0]
+func opcodePut(op *opcode, data []byte, vm *Engine) error {
+	val, err := vm.dstack.PopInt()
+	if err != nil {
+		return err
+	}
+
+	so, err := vm.dstack.PopByteArray()
+	if err != nil {
+		return err
+	}
+
+	return vm.dstack.PutN(val.Int32(), so)
 }
 
 // opcodeRoll treats the top item on the data stack as an integer and moves
@@ -2025,7 +2068,17 @@ func opcodeInspectInputValue(op *opcode, data []byte, vm *Engine) error {
 		return scriptError(txscript.ErrInvalidIndex, "previous output fetcher not set")
 	}
 	prevOut := vm.prevOutFetcher.FetchPrevOutput(vm.tx.TxIn[index].PreviousOutPoint)
-	return vm.dstack.PushBigNum(BigNumFromUint64(uint64(prevOut.Value)))
+	if prevOut == nil {
+		return scriptError(txscript.ErrInvalidIndex, "previous output not found")
+	}
+	return pushSatoshiValue(prevOut.Value, vm)
+}
+
+func pushSatoshiValue(value int64, vm *Engine) error {
+	if value < 0 || value > btcutil.MaxSatoshi {
+		return scriptError(txscript.ErrInvalidStackOperation, "value out of range")
+	}
+	return vm.dstack.PushBigNum(BigNumFromUint64(uint64(value)))
 }
 
 func pushScriptPubKey(scriptPubKey []byte, vm *Engine) error {
@@ -2096,10 +2149,7 @@ func opcodeInspectInputSequence(op *opcode, data []byte, vm *Engine) error {
 		return scriptError(txscript.ErrInvalidIndex, "input index out of range")
 	}
 
-	sequence := make([]byte, 4)
-	binary.LittleEndian.PutUint32(sequence, vm.tx.TxIn[index].Sequence)
-	vm.dstack.PushByteArray(sequence)
-	return nil
+	return vm.dstack.PushBigNum(BigNumFromUint64(uint64(vm.tx.TxIn[index].Sequence)))
 }
 
 // opcodePushCurrentInputIndex pushes the current input index onto the stack.
@@ -2123,7 +2173,7 @@ func opcodeInspectOutputValue(op *opcode, data []byte, vm *Engine) error {
 	if int(index) >= len(vm.tx.TxOut) {
 		return scriptError(txscript.ErrInvalidIndex, "output index out of range")
 	}
-	return vm.dstack.PushBigNum(BigNumFromUint64(uint64(vm.tx.TxOut[index].Value)))
+	return pushSatoshiValue(vm.tx.TxOut[index].Value, vm)
 }
 
 // opcodeInspectOutputScriptPubkey pushes the scriptPubKey of the output at the given index onto the stack.
@@ -2148,19 +2198,13 @@ func opcodeInspectOutputScriptPubkey(op *opcode, data []byte, vm *Engine) error 
 // opcodeInspectVersion pushes the transaction version onto the stack.
 // Stack transformation: [...] -> [... version]
 func opcodeInspectVersion(op *opcode, data []byte, vm *Engine) error {
-	version := make([]byte, 4)
-	binary.LittleEndian.PutUint32(version, uint32(vm.tx.Version))
-	vm.dstack.PushByteArray(version)
-	return nil
+	return vm.dstack.PushBigNum(BigNumFromUint64(uint64(uint32(vm.tx.Version))))
 }
 
 // opcodeInspectLocktime pushes the transaction locktime onto the stack.
 // Stack transformation: [...] -> [... locktime]
 func opcodeInspectLocktime(op *opcode, data []byte, vm *Engine) error {
-	locktime := make([]byte, 4)
-	binary.LittleEndian.PutUint32(locktime, vm.tx.LockTime)
-	vm.dstack.PushByteArray(locktime)
-	return nil
+	return vm.dstack.PushBigNum(BigNumFromUint64(uint64(vm.tx.LockTime)))
 }
 
 // opcodeInspectNumInputs pushes the number of inputs in the transaction onto the stack.
@@ -2180,10 +2224,7 @@ func opcodeInspectNumOutputs(op *opcode, data []byte, vm *Engine) error {
 // opcodeTxWeight pushes the transaction weight onto the stack.
 // Stack transformation: [...] -> [... weight]
 func opcodeTxWeight(op *opcode, data []byte, vm *Engine) error {
-	weight := make([]byte, 4)
-	binary.LittleEndian.PutUint32(weight, uint32(vm.tx.SerializeSizeStripped()*4))
-	vm.dstack.PushByteArray(weight)
-	return nil
+	return vm.dstack.PushBigNum(BigNumFromUint64(uint64(vm.tx.SerializeSizeStripped() * 4)))
 }
 
 // opcodeCat concatenates two byte arrays.
@@ -2204,7 +2245,7 @@ func opcodeCat(op *opcode, data []byte, vm *Engine) error {
 		return scriptError(txscript.ErrElementTooBig, str)
 	}
 
-	vm.dstack.PushByteArray(append(x1, x2...))
+	vm.dstack.PushByteArray(slices.Concat(x1, x2))
 	return nil
 }
 
@@ -2502,6 +2543,17 @@ func opcodeModexp(op *opcode, data []byte, vm *Engine) error {
 	return vm.dstack.PushBigNum(result)
 }
 
+// opcodePushExpiry pushes the VTXO's Unix expiry timestamp.
+//
+// Stack transformation: [...] -> [... expiry]
+func opcodePushExpiry(_ *opcode, _ []byte, vm *Engine) error {
+	if vm.expiry == nil {
+		return scriptError(txscript.ErrInvalidStackOperation, "OP_PUSHEXPIRY expiry not set")
+	}
+	vm.dstack.PushInt(scriptNum(*vm.expiry))
+	return nil
+}
+
 // opcodeLshift performs a left shift on BigNum operands. The shift count
 // operand must be non-negative. Fails the script if the result would exceed 520 bytes.
 //
@@ -2579,6 +2631,13 @@ func opcodeChecksigFromStack(op *opcode, data []byte, vm *Engine) error {
 	return nil
 }
 
+// isInfinity reports whether an affine point is the point at infinity, which secp
+// represents as zero coordinates. The point must already have been normalized with
+// ToAffine: a Jacobian identity may carry a non-zero Z.
+func isInfinity(point *secp.JacobianPoint) bool {
+	return point.X.IsZero() && point.Y.IsZero()
+}
+
 // opcodeECMulScalarVerify verifies that Q = k*P where k is a 32-byte big endian scalar
 // and P, Q are compressed EC points on the secp256k1 curve.
 // Stack transformation: [... k P Q] -> [...]
@@ -2602,6 +2661,12 @@ func opcodeECMulScalarVerify(op *opcode, data []byte, vm *Engine) error {
 		return scriptError(txscript.ErrInvalidStackOperation, "OP_ECMULSCALARVERIFY requires 32-byte scalar")
 	}
 
+	if len(P) != 33 {
+		return scriptError(
+			txscript.ErrInvalidStackOperation, "OP_ECMULSCALARVERIFY requires 33-byte compressed P",
+		)
+	}
+
 	pubKeyP, err := secp.ParsePubKey(P)
 	if err != nil {
 		return scriptError(txscript.ErrInvalidStackOperation, "invalid point P")
@@ -2621,6 +2686,12 @@ func opcodeECMulScalarVerify(op *opcode, data []byte, vm *Engine) error {
 	var result secp.JacobianPoint
 	secp.ScalarMultNonConst(&scalar, &point, &result)
 	result.ToAffine()
+
+	// The identity has no valid compressed encoding; serializing it would yield
+	// 02||0^32, which a byte comparison would then accept as a valid Q.
+	if isInfinity(&result) {
+		return scriptError(txscript.ErrInvalidStackOperation, "k*P is the point at infinity")
+	}
 
 	kP := secp.NewPublicKey(&result.X, &result.Y)
 
@@ -2687,6 +2758,10 @@ func opcodeTweakVerify(op *opcode, data []byte, vm *Engine) error {
 	secp.AddNonConst(&pointP, &kG, &result)
 	result.ToAffine()
 
+	if isInfinity(&result) {
+		return scriptError(txscript.ErrInvalidStackOperation, "P + k*G is the point at infinity")
+	}
+
 	tweakedKey := secp.NewPublicKey(&result.X, &result.Y)
 
 	// verify Q == P + k*G by comparing their serialized compressed forms
@@ -2695,6 +2770,46 @@ func opcodeTweakVerify(op *opcode, data []byte, vm *Engine) error {
 	}
 
 	return nil
+}
+
+// A serialized SHA256 context is the gob encoding of a hash state: a framing
+// prefix - the type descriptor plus the length of the marshaled state - followed
+// by the marshaled state itself. Both parts are a fixed size, so the framing is
+// identical for every context the VM emits.
+//
+// The gob decoder sizes its allocations from length prefixes carried in its own
+// input, so a handful of stack bytes can drive it into megabytes of allocation
+// before it fails. Requiring the exact framing we emit means every length the
+// decoder reads is one we produced. It also pins the encoding of a given state
+// to a single byte string.
+var sha256StatePrefix, sha256StateLen = sha256StateFraming()
+
+func sha256StateFraming() ([]byte, int) {
+	var state bytes.Buffer
+	if err := gob.NewEncoder(&state).Encode(sha256.New()); err != nil {
+		panic(fmt.Sprintf("failed to encode SHA256 state: %v", err))
+	}
+
+	marshaled, err := sha256.New().(encoding.BinaryMarshaler).MarshalBinary()
+	if err != nil {
+		panic(fmt.Sprintf("failed to marshal SHA256 state: %v", err))
+	}
+
+	encoded := state.Bytes()
+	return append([]byte(nil), encoded[:len(encoded)-len(marshaled)]...), len(encoded)
+}
+
+// decodeSha256State loads a serialized SHA256 context popped off the stack.
+func decodeSha256State(state []byte) (hash.Hash, error) {
+	if len(state) != sha256StateLen || !bytes.HasPrefix(state, sha256StatePrefix) {
+		return nil, scriptError(txscript.ErrInvalidStackOperation, "invalid hash state")
+	}
+
+	h := sha256.New()
+	if err := gob.NewDecoder(bytes.NewReader(state)).Decode(h); err != nil {
+		return nil, scriptError(txscript.ErrInvalidStackOperation, "failed to load hash state")
+	}
+	return h, nil
 }
 
 // opcodeSha256Initialize pops a bytestring and pushes a SHA256 context created by adding
@@ -2731,9 +2846,9 @@ func opcodeSha256Update(op *opcode, _ []byte, vm *Engine) error {
 		return err
 	}
 
-	h := sha256.New()
-	if err := gob.NewDecoder(bytes.NewReader(state)).Decode(h); err != nil {
-		return scriptError(txscript.ErrInvalidStackOperation, "failed to load hash state")
+	h, err := decodeSha256State(state)
+	if err != nil {
+		return err
 	}
 
 	if _, err := h.Write(data); err != nil {
@@ -2761,9 +2876,9 @@ func opcodeSha256Finalize(op *opcode, _ []byte, vm *Engine) error {
 		return err
 	}
 
-	h := sha256.New()
-	if err := gob.NewDecoder(bytes.NewReader(state)).Decode(h); err != nil {
-		return scriptError(txscript.ErrInvalidStackOperation, "failed to load hash state")
+	h, err := decodeSha256State(state)
+	if err != nil {
+		return err
 	}
 	if _, err := h.Write(data); err != nil {
 		return scriptError(txscript.ErrInvalidStackOperation, "failed to write data to SHA256")

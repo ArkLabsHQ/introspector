@@ -766,7 +766,7 @@ func TestNewOpcodes(t *testing.T) {
 			script: txscript.NewScriptBuilder().
 				AddData([]byte{0x00}).
 				AddOp(OP_INSPECTINPUTSEQUENCE).
-				AddData([]byte{0xFF, 0xFF, 0xFF, 0xFF}). // Max sequence number
+				AddInt64(1<<32 - 1). // Max sequence number
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{
@@ -995,7 +995,7 @@ func TestNewOpcodes(t *testing.T) {
 			name: "OP_INSPECTVERSION",
 			script: txscript.NewScriptBuilder().
 				AddOp(OP_INSPECTVERSION).
-				AddData([]byte{0x01, 0x00, 0x00, 0x00}). // Version 1 in LE32
+				AddInt64(1).
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{
@@ -1021,7 +1021,7 @@ func TestNewOpcodes(t *testing.T) {
 			name: "OP_INSPECTLOCKTIME",
 			script: txscript.NewScriptBuilder().
 				AddOp(OP_INSPECTLOCKTIME).
-				AddData([]byte{0x00, 0x00, 0x00, 0x00}). // LockTime 0 in LE32
+				AddInt64(0).
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{
@@ -1106,7 +1106,7 @@ func TestNewOpcodes(t *testing.T) {
 			name: "OP_TXWEIGHT",
 			script: txscript.NewScriptBuilder().
 				AddOp(OP_TXWEIGHT).
-				AddData([]byte{0xCC, 0x00, 0x00, 0x00}). // Expected weight 204 in LE32
+				AddInt64(204). // Expected weight
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{
@@ -2406,7 +2406,7 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 	}
 }
 
-// runTapscriptLeaf wires a witness-script leaf onto a single-input transaction
+// runTapscriptLeaf executes a tapscript leaf against a single-input transaction
 // and returns the engine ready to execute. The caller owns the pre-signature
 // `witnessStack` (anything below the leaf + control block); this helper
 // appends the leaf and control block itself.
@@ -2432,14 +2432,6 @@ func runTapscriptLeaf(
 		internalPriv.PubKey(), leafHash[:],
 	)
 
-	controlBlock := &txscript.ControlBlock{
-		InternalKey:     internalPriv.PubKey(),
-		LeafVersion:     txscript.BaseLeafVersion,
-		OutputKeyYIsOdd: outputKey.SerializeCompressed()[0] == 0x03,
-	}
-	controlBytes, err := controlBlock.ToBytes()
-	require.NoError(t, err)
-
 	prevScript, err := txscript.PayToTaprootScript(outputKey)
 	require.NoError(t, err)
 
@@ -2456,10 +2448,6 @@ func runTapscriptLeaf(
 		}},
 	}
 
-	witness := append(append(wire.TxWitness(nil), witnessStack...),
-		leafScript, controlBytes)
-	tx.TxIn[0].Witness = witness
-
 	prevouts := map[wire.OutPoint]*wire.TxOut{
 		outpoint: {Value: prevValue, PkScript: prevScript},
 	}
@@ -2467,14 +2455,17 @@ func runTapscriptLeaf(
 		txscript.NewMultiPrevOutFetcher(prevouts), nil, nil,
 	)
 
+	// Execute the leaf directly, as ArkadeScript.Execute does.
 	engine, err := NewEngine(
-		prevScript, tx, 0,
+		leafScript, tx, 0,
 		txscript.NewSigCache(32),
 		txscript.NewTxSigHashes(tx, fetcher),
 		prevValue,
 		fetcher,
 	)
 	require.NoError(t, err)
+	engine.taprootCtx = newTaprootExecutionCtxForLeaf(leaf)
+	engine.SetStack(witnessStack)
 
 	return engine
 }
@@ -2541,7 +2532,7 @@ func TestOpSighashMatchesCheckSigFromStack(t *testing.T) {
 		leafScript, txscript.SigHashDefault)
 	sig, err := schnorr.Sign(signingPriv, sigHash)
 	require.NoError(t, err)
-	engine.tx.TxIn[0].Witness[0] = sig.Serialize()
+	engine.SetStack(wire.TxWitness{sig.Serialize(), pubKeyX})
 
 	require.NoError(t, engine.Execute(),
 		"OP_SIGHASH digest must equal the arkade sighash a witness signature commits to")
@@ -2570,7 +2561,7 @@ func TestOpCheckSigArkadeSighash(t *testing.T) {
 		leafScript, txscript.SigHashDefault)
 	sig, err := schnorr.Sign(signingPriv, sigHash)
 	require.NoError(t, err)
-	engine.tx.TxIn[0].Witness[0] = sig.Serialize()
+	engine.SetStack(wire.TxWitness{sig.Serialize()})
 
 	require.NoError(t, engine.Execute(),
 		"OP_CHECKSIG must accept a signature over the arkade sighash")
@@ -3007,6 +2998,64 @@ func TestArkadeSighashByteLayoutMatchesBIP342WithAnnexAndCodeSep(t *testing.T) {
 	)
 	require.Equal(t, bip342Digest, arkadeWithBIP342Tag[:],
 		"annex and code-separator fields must match BIP342 byte layout")
+}
+
+// TestStepEnforcesAggregateStackByteSize proves the element-count cap alone is
+// not a memory bound: a stack that is comfortably under txscript.MaxStackSize
+// elements can still hold hundreds of kilobytes, so Step must also reject on
+// the combined byte size of the data and alt stacks.
+func TestStepEnforcesAggregateStackByteSize(t *testing.T) {
+	t.Parallel()
+
+	vm, err := newOpcodeEngine(buildOpcodeWorld(), 0)
+	require.NoError(t, err)
+
+	// 900 max-size elements: 100 elements below the count cap, but ~468 KB.
+	big := make([][]byte, 900)
+	for i := range big {
+		big[i] = make([]byte, txscript.MaxScriptElementSize)
+	}
+	vm.SetStack(big)
+
+	_, err = vm.Step()
+	requireScriptErrorCode(t, err, txscript.ErrStackOverflow)
+}
+
+// TestStepCountsAltStackBytes verifies the byte cap covers both stacks, so
+// parking data on the alt stack cannot be used to double the budget.
+func TestStepCountsAltStackBytes(t *testing.T) {
+	t.Parallel()
+
+	vm, err := newOpcodeEngine(buildOpcodeWorld(), 0)
+	require.NoError(t, err)
+
+	half := make([][]byte, 450)
+	for i := range half {
+		half[i] = make([]byte, txscript.MaxScriptElementSize)
+	}
+	vm.SetStack(half)
+	vm.SetAltStack(half)
+
+	_, err = vm.Step()
+	requireScriptErrorCode(t, err, txscript.ErrStackOverflow)
+}
+
+// TestStepAllowsStackUnderByteCap guards the other side of the cap: a stack
+// well within the byte budget must keep executing.
+func TestStepAllowsStackUnderByteCap(t *testing.T) {
+	t.Parallel()
+
+	vm, err := newOpcodeEngine(buildOpcodeWorld(), 0)
+	require.NoError(t, err)
+
+	small := make([][]byte, 100)
+	for i := range small {
+		small[i] = make([]byte, txscript.MaxScriptElementSize)
+	}
+	vm.SetStack(small)
+
+	_, err = vm.Step()
+	require.NoError(t, err)
 }
 
 // TestArkadeSighashIsDomainSeparated locks in the BIP-340 tag separation: the

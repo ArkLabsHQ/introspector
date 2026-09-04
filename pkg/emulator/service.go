@@ -10,19 +10,29 @@ import (
 	"encoding/hex"
 	"fmt"
 	"reflect"
+	"time"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
+	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 )
 
-// Finalizer is the subset of the go-sdk TransportClient used for the finalizer
-// role in SubmitTx. It is satisfied structurally by go-sdk's grpc client.
+// Finalizer is the subset of the client-lib Client used for the finalizer
+// role in SubmitTx. It is satisfied structurally by client-lib's grpc client.
 type Finalizer interface {
 	SubmitTx(ctx context.Context, signedArkTx string, checkpointTxs []string) (arkTxid, finalArkTx string, signedCheckpointTxs []string, err error)
 	FinalizeTx(ctx context.Context, arkTxid string, finalCheckpointTxs []string) error
+}
+
+// Indexer is the subset of the client-lib Indexer the Service queries: vtxo
+// expiry for OP_PUSHEXPIRY scripts and commitment tx existence before signing a
+// batch finalization. It is satisfied structurally by client-lib's grpc indexer.
+type Indexer interface {
+	GetVtxos(ctx context.Context, opts ...indexer.GetVtxosOption) (*indexer.VtxosResponse, error)
+	GetCommitmentTx(ctx context.Context, txid string) (*indexer.CommitmentTx, error)
 }
 
 type Info struct {
@@ -78,13 +88,32 @@ type Service interface {
 }
 
 type service struct {
-	signer               signer
-	deprecatedSigners    []signer
-	publicKey            string
-	deprecatedPublicKeys []string
-	finalizer            Finalizer
-	arkdPubKey           *btcec.PublicKey
-	computeLimits        arkade.ComputeLimits
+	signer                   signer
+	deprecatedSigners        []signer
+	deprecatedKeysValidUntil *time.Time
+	publicKey                string
+	deprecatedPublicKeys     []string
+	finalizer                Finalizer
+	indexerClient            Indexer
+	arkdPubKey               *btcec.PublicKey
+	computeLimits            arkade.ComputeLimits
+}
+
+// activeDeprecatedSigners returns the deprecated signers usable for the
+// current request. A requester steers which key signs by choosing which
+// tweaked key appears in the tapscript it submits, so deprecated keys carry
+// indefinite signing authority unless bounded here. When
+// deprecatedKeysValidUntil is set and has passed, deprecated keys stop being
+// honored for both fresh signing (resolveArkadeScriptSigner) and
+// finalization (getSignedInputAssociations) alike: a VTXO whose covenant
+// still names a deprecated key must be spent before the cutover, or it can no
+// longer be finalized by this emulator. A nil cutoff preserves the unbounded
+// behavior.
+func (s *service) activeDeprecatedSigners() []signer {
+	if s.deprecatedKeysValidUntil != nil && time.Now().After(*s.deprecatedKeysValidUntil) {
+		return nil
+	}
+	return s.deprecatedSigners
 }
 
 // isTypedNil reports whether v is a non-nil interface holding a nil value of a
@@ -102,20 +131,31 @@ func isTypedNil(v any) bool {
 }
 
 // New builds a signing Service. secretKey is the current arkade-signing key and
-// arkdPubKey is the arkd signer key. Both are required. deprecatedKeys may be nil.
+// arkdPubKey is the arkd signer key. Both are required. deprecatedKeys may be
+// nil; deprecatedKeysValidUntil optionally bounds how long they keep signing
+// authority (see activeDeprecatedSigners).
 //
 // finalizer may be nil: with a nil finalizer the Service runs signing-only, so
 // SubmitTx signs and returns without any arkd round-trip. Pass a non-nil
-// Finalizer (e.g. go-sdk's grpc client) to also submit and finalize on arkd. The
-// Service then owns that finalizer and Close closes it if it has a Close method
-// with no results, so do not pass a client whose lifecycle you manage elsewhere.
-// A typed nil (e.g. a nil *grpcClient wrapped in the interface) is rejected here
-// rather than left to panic on its nil receiver.
+// Finalizer (e.g. client-lib's grpc client) to also submit and finalize on arkd.
+//
+// indexerClient may be nil, but SubmitIntent on an OP_PUSHEXPIRY script and
+// SubmitFinalization then fail, since both need arkd's indexer.
+//
+// The Service owns finalizer and indexerClient: Close closes each one that has
+// a Close method with no results, so do not pass a client whose lifecycle you
+// manage elsewhere. A typed nil (e.g. a nil *grpcClient wrapped in the
+// interface) is rejected here rather than left to panic on its nil receiver.
 //
 // The context is currently unused; it is accepted for forward compatibility.
 // Note the standalone emulator's arkd-connect retry lives in
 // internal/config/retry.go, not here.
-func New(_ context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, arkdPubKey *btcec.PublicKey, finalizer Finalizer, computeLimits arkade.ComputeLimits) (Service, error) {
+func New(
+	_ context.Context,
+	secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, deprecatedKeysValidUntil *time.Time,
+	arkdPubKey *btcec.PublicKey, finalizer Finalizer, indexerClient Indexer,
+	computeLimits arkade.ComputeLimits,
+) (Service, error) {
 	if secretKey == nil {
 		return nil, fmt.Errorf("current signer key is required")
 	}
@@ -126,6 +166,10 @@ func New(_ context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btcec
 
 	if isTypedNil(finalizer) {
 		return nil, fmt.Errorf("finalizer is a typed nil, pass an untyped nil for signing-only mode")
+	}
+
+	if isTypedNil(indexerClient) {
+		return nil, fmt.Errorf("indexer is a typed nil, pass an untyped nil to run without one")
 	}
 
 	publicKey := hex.EncodeToString(secretKey.PubKey().SerializeCompressed())
@@ -140,21 +184,25 @@ func New(_ context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btcec
 	}
 
 	return &service{
-		signer:               signer{secretKey},
-		deprecatedSigners:    deprecatedSigners,
-		publicKey:            publicKey,
-		deprecatedPublicKeys: deprecatedPublicKeys,
-		finalizer:            finalizer,
-		arkdPubKey:           arkdPubKey,
-		computeLimits:        computeLimits,
+		signer:                   signer{secretKey},
+		deprecatedSigners:        deprecatedSigners,
+		deprecatedKeysValidUntil: deprecatedKeysValidUntil,
+		publicKey:                publicKey,
+		deprecatedPublicKeys:     deprecatedPublicKeys,
+		finalizer:                finalizer,
+		indexerClient:            indexerClient,
+		arkdPubKey:               arkdPubKey,
+		computeLimits:            computeLimits,
 	}, nil
 }
 
 func (s *service) Close() {
-	// go-sdk's client exposes Close() with no return value, so it does not
+	// client-lib's clients expose Close() with no return value, so they do not
 	// satisfy io.Closer; assert the actual signature instead.
-	if closer, ok := s.finalizer.(interface{ Close() }); ok {
-		closer.Close()
+	for _, c := range []any{s.finalizer, s.indexerClient} {
+		if closer, ok := c.(interface{ Close() }); ok {
+			closer.Close()
+		}
 	}
 }
 

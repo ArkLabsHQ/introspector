@@ -23,13 +23,41 @@ func (s signer) signInput(ptx *psbt.Packet, inputIndex int, tweak []byte, prevou
 	signingKey := arkade.ComputeArkadeScriptPrivateKey(s.secretKey, tweak)
 
 	input := ptx.Inputs[inputIndex]
+	// only sighash types committing to every input and output are safe: any other
+	// type lets the requester replace outputs or prevouts the covenant approved
+	if input.SighashType != txscript.SigHashDefault && input.SighashType != txscript.SigHashAll {
+		return fmt.Errorf("unsupported sighash type 0x%02x, cannot sign", uint32(input.SighashType))
+	}
+
 	// if not a taproot input, skip because arkd-wallet is taproot only accounts
 	if !txscript.IsPayToTaproot(input.WitnessUtxo.PkScript) {
 		return fmt.Errorf("not a taproot input, cannot sign")
 	}
 
-	if len(input.TaprootLeafScript) == 0 || input.TaprootLeafScript[0] == nil {
-		return fmt.Errorf("no taproot leaf script, cannot sign")
+	// the whole codebase reads and signs the leaf at index 0, reject ambiguous inputs
+	// instead of silently picking one of several declared leaves
+	if len(input.TaprootLeafScript) != 1 || input.TaprootLeafScript[0] == nil {
+		return fmt.Errorf(
+			"expected exactly 1 taproot leaf script, got %d, cannot sign",
+			len(input.TaprootLeafScript),
+		)
+	}
+
+	// the leaf script is the requester's assertion until it is checked against
+	// the taproot output key committed in the prevout being spent
+	if err := arkade.VerifyTaprootLeafCommitment(
+		input.WitnessUtxo.PkScript, input.TaprootLeafScript[0],
+	); err != nil {
+		return fmt.Errorf("cannot sign input: %w", err)
+	}
+
+	// only sign digests committing to every input and output: NONE, SINGLE and
+	// ANYONECANPAY leave part of the transaction free to change after signing
+	if input.SighashType != txscript.SigHashDefault &&
+		input.SighashType != txscript.SigHashAll {
+		return fmt.Errorf(
+			"unsupported sighash type 0x%02x, cannot sign", byte(input.SighashType),
+		)
 	}
 
 	tapLeaf := txscript.NewBaseTapLeaf(input.TaprootLeafScript[0].Script)

@@ -2,11 +2,34 @@ package arkade
 
 import (
 	"bytes"
+	"fmt"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/wire"
 )
+
+// MaxPrevoutTxLength is the maximum serialized size of a prevout transaction
+// carried by a psbt field. The value is attacker controlled and reaches
+// wire.MsgTx.Deserialize before any other validation, so it must be bounded to
+// cap parse work and allocation.
+const MaxPrevoutTxLength = 1_000_000
+
+// decodePrevoutTx deserializes a bounded prevout transaction from a psbt field.
+func decodePrevoutTx(value []byte) (*wire.MsgTx, error) {
+	if len(value) > MaxPrevoutTxLength {
+		return nil, fmt.Errorf(
+			"max prevout tx length exceeded, max=%d got=%d", MaxPrevoutTxLength, len(value),
+		)
+	}
+
+	tx := wire.NewMsgTx(wire.TxVersion)
+	if err := tx.Deserialize(bytes.NewReader(value)); err != nil {
+		return nil, err
+	}
+
+	return tx, nil
+}
 
 var (
 	ArkFieldPrevArkTx                                       = []byte("prevarktx")
@@ -32,12 +55,7 @@ func (c arkPsbtFieldCoderPrevArkTx) Decode(unknown *psbt.Unknown) (*wire.MsgTx, 
 		return nil, nil
 	}
 
-	tx := wire.NewMsgTx(wire.TxVersion)
-	if err := tx.Deserialize(bytes.NewReader(unknown.Value)); err != nil {
-		return nil, err
-	}
-
-	return tx, nil
+	return decodePrevoutTx(unknown.Value)
 }
 
 var (
@@ -64,12 +82,7 @@ func (c arkPsbtFieldCoderPrevoutTx) Decode(unknown *psbt.Unknown) (*wire.MsgTx, 
 		return nil, nil
 	}
 
-	tx := wire.NewMsgTx(wire.TxVersion)
-	if err := tx.Deserialize(bytes.NewReader(unknown.Value)); err != nil {
-		return nil, err
-	}
-
-	return tx, nil
+	return decodePrevoutTx(unknown.Value)
 }
 
 func makeArkPsbtKey(keyData []byte) []byte {

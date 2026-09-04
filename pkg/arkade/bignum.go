@@ -25,6 +25,8 @@ var (
 	ErrBigNumModuloByZero       = errors.New("modulo by zero")
 	ErrBigNumModulusNotPositive = errors.New("modulus must be positive")
 	ErrBigNumNegativeExponent   = errors.New("negative exponent")
+
+	ErrBigNumModexpOperandTooLarge = errors.New("modexp operand too large")
 )
 
 // BigNum is the unified numeric type used by the arkade VM. It is a tagged
@@ -179,7 +181,10 @@ func (n BigNum) Mul(m BigNum) BigNum {
 			return BigNum{small: 0}
 		}
 		r := n.small * m.small
-		if r/n.small == m.small {
+		// -1 * math.MinInt64 wraps to math.MinInt64, and Go defines
+		// math.MinInt64 / -1 as math.MinInt64, so the guard cannot see the
+		// overflow. It is the only pair for which the division itself wraps.
+		if (n.small != -1 || m.small != math.MinInt64) && r/n.small == m.small {
 			return BigNum{small: r}
 		}
 	}
@@ -212,9 +217,21 @@ func (n BigNum) Mod(m BigNum) (BigNum, error) {
 	return BigNum{big: new(big.Int).Rem(n.BigInt(), m.BigInt()), useBig: true}, nil
 }
 
+// maxModexpOperandBits bounds each Modexp operand to maxBigNumLen bytes, the
+// largest byte-length this file admits for a BigNum operand or result.
+//
+// big.Int.Exp does work proportional to the exponent's bit length times the
+// square of the modulus size, and BigNum values produced by arithmetic (Mul,
+// Add, ...) promote to the big path without any size check. Without this
+// bound a caller can drive a single Modexp call for an unbounded time: a
+// 4160-bit exponent against a 200,000-bit modulus was measured at 62.9 s.
+const maxModexpOperandBits = maxBigNumLen * 8
+
 // Modexp returns n^exp mod modulus in the canonical range [0, modulus).
 // Returns ErrBigNumModulusNotPositive if modulus <= 0.
 // Returns ErrBigNumNegativeExponent if exp is negative.
+// Returns ErrBigNumModexpOperandTooLarge if any operand exceeds
+// maxModexpOperandBits, which bounds the cost of the exponentiation.
 //
 // The result is always carried on the big.Int path; no demotion to the
 // int64 fast path is performed (consistent with the file-level policy).
@@ -225,7 +242,13 @@ func (n BigNum) Modexp(exp, modulus BigNum) (BigNum, error) {
 	if exp.Sign() < 0 {
 		return BigNum{}, ErrBigNumNegativeExponent
 	}
-	res := new(big.Int).Exp(n.BigInt(), exp.BigInt(), modulus.BigInt())
+	base, e, m := n.BigInt(), exp.BigInt(), modulus.BigInt()
+	for _, operand := range []*big.Int{base, e, m} {
+		if operand.BitLen() > maxModexpOperandBits {
+			return BigNum{}, ErrBigNumModexpOperandTooLarge
+		}
+	}
+	res := new(big.Int).Exp(base, e, m)
 	return BigNum{big: res, useBig: true}, nil
 }
 
