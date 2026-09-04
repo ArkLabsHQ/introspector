@@ -14,7 +14,7 @@
     # derives the migration intent bucket name rather than reading it from SSM. None of
     # that changes the baked environment — nonOverridableEnv is unchanged and
     # nix/build-eif.nix is untouched — but ark-infra must provide it before first boot.
-    enclave.url = "github:ArkLabsHQ/enclave/eddc62166cf2a433557e01d963f0813d960a76fb";
+    enclave.url = "github:ArkLabsHQ/enclave/8e0eff6999c8191b1c3f6ff3dda575af8b67626a";
   };
 
   outputs =
@@ -191,6 +191,7 @@
             # ENCLAVE_VERIFY_CLOCK_SOURCE is likewise unset. Enabling it asserts
             # kvm-clock at boot; worth doing on real Nitro, but not worth introducing a
             # new way for a genesis to fail to boot. Revisit once a chain is live.
+            ENCLAVE_VERIFY_CLOCK_SOURCE = "true";
           }
           // {
             # --- Baked, despite not being in nonOverridableEnv -------------------------
