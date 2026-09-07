@@ -186,6 +186,11 @@ func BuildRecycle(p Params) ([]byte, error) {
 
 // BuildPurchase pays the whole covenant to the receiver. The operator recovers
 // nothing, having been compensated at lockup.
+//
+// Unlike BuildRecycle this deliberately does not pin the input count. It reads
+// only in[0], and out[0] is tied to in[0]'s value and asset amount, so an extra
+// input cannot divert the covenant -- whatever a spender adds flows to their own
+// outputs. Recycle needs the guard because it reads a second input.
 func BuildPurchase(p Params) ([]byte, error) {
 	b := txscript.NewScriptBuilder().
 		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).AddInt64(0).AddOp(arkade.OP_EQUALVERIFY).

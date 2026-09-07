@@ -153,8 +153,20 @@ func assetID(index uint16) asset.AssetId {
 	return asset.AssetId{Txid: txid, Index: index}
 }
 
+// reversedAssetID flips the txid byte order. The id must be in chainhash
+// internal order; the reversed display hex is the classic way to get it wrong.
+func reversedAssetID(id *asset.AssetId) *asset.AssetId {
+	out := *id
+	for i, j := 0, len(out.Txid)-1; i < j; i, j = i+1, j-1 {
+		out.Txid[i], out.Txid[j] = out.Txid[j], out.Txid[i]
+	}
+	return &out
+}
+
 // packetOf builds a single-group packet. Zero amounts are omitted, so a receiver
 // holding none of the asset genuinely has no entry, which drives the miss path.
+// A packet need not balance: arkd is not involved here, so an unbalanced one
+// isolates the covenant's own arithmetic.
 func packetOf(
 	t *testing.T, id asset.AssetId, ins, outs map[uint16]uint64,
 ) asset.Packet {
@@ -284,12 +296,8 @@ func TestRecycle(t *testing.T) {
 	// The byte-order trap. A covenant built from a reversed txid can never match
 	// a real packet; it must fail loudly rather than pass vacuously.
 	t.Run("reject_reversed_asset_txid", func(t *testing.T) {
-		reversed := *p.AssetID
-		for i, j := 0, len(reversed.Txid)-1; i < j; i, j = i+1, j-1 {
-			reversed.Txid[i], reversed.Txid[j] = reversed.Txid[j], reversed.Txid[i]
-		}
 		bad := p
-		bad.AssetID = &reversed
+		bad.AssetID = reversedAssetID(p.AssetID)
 		badScripts, err := covenant.Build(bad, minAmount)
 		require.NoError(t, err)
 		requireRejected(t, run(t, badScripts.Recycle, valid(20)))
@@ -323,6 +331,33 @@ func TestPurchase(t *testing.T) {
 	t.Run("reject_wrong_receiver", func(t *testing.T) {
 		c := valid.clone()
 		c.outputs[0].PkScript = p2tr(t, key(t, 7))
+		requireRejected(t, run(t, s.Purchase, c))
+	})
+
+	// Purchase enforces the asset constraint with the same required-lookup
+	// pattern as recycle, so it needs the same rejection coverage: the
+	// silent-pass mode these guard against is the defect this design fixes.
+	t.Run("reject_foreign_asset_id", func(t *testing.T) {
+		c := valid.clone()
+		c.packet = packetOf(t, assetID(7),
+			map[uint16]uint64{0: 100}, map[uint16]uint64{0: 100},
+		)
+		requireRejected(t, run(t, s.Purchase, c))
+	})
+
+	t.Run("reject_reversed_asset_txid", func(t *testing.T) {
+		bad := p
+		bad.AssetID = reversedAssetID(p.AssetID)
+		badScripts, err := covenant.Build(bad, minAmount)
+		require.NoError(t, err)
+		requireRejected(t, run(t, badScripts.Purchase, valid))
+	})
+
+	t.Run("reject_asset_amount_shorted", func(t *testing.T) {
+		c := valid.clone()
+		c.packet = packetOf(t, *p.AssetID,
+			map[uint16]uint64{0: 100}, map[uint16]uint64{0: 99},
+		)
 		requireRejected(t, run(t, s.Purchase, c))
 	})
 }
@@ -363,6 +398,74 @@ func TestRefund(t *testing.T) {
 	t.Run("reject_sender_payload_diverted", func(t *testing.T) {
 		c := valid.clone()
 		c.outputs[1].PkScript = subDust(t, key(t, 7))
+		requireRejected(t, run(t, s.Refund, c))
+	})
+
+	// Refund is the operator's and the sender's recovery route, so its asset
+	// constraint needs the same rejection coverage as the claim paths.
+	t.Run("reject_foreign_asset_id", func(t *testing.T) {
+		c := valid.clone()
+		c.packet = packetOf(t, assetID(7),
+			map[uint16]uint64{0: 7}, map[uint16]uint64{1: 7},
+		)
+		requireRejected(t, run(t, s.Refund, c))
+	})
+
+	t.Run("reject_reversed_asset_txid", func(t *testing.T) {
+		bad := p
+		bad.AssetID = reversedAssetID(p.AssetID)
+		badScripts, err := covenant.Build(bad, minAmount)
+		require.NoError(t, err)
+		requireRejected(t, run(t, badScripts.Refund, valid))
+	})
+
+	t.Run("reject_asset_amount_shorted", func(t *testing.T) {
+		c := valid.clone()
+		c.packet = packetOf(t, *p.AssetID,
+			map[uint16]uint64{0: 7}, map[uint16]uint64{1: 6},
+		)
+		requireRejected(t, run(t, s.Refund, c))
+	})
+}
+
+// The refund path in bitcoin mode drops the asset clauses entirely and still has
+// to pin both sub-dust payouts, which TestRefund does not cover because it runs
+// with an asset.
+func TestBitcoinVariantRefund(t *testing.T) {
+	const payload = int64(50)
+
+	p := params(t, false)
+	p.Topup = dust - payload
+	s, err := covenant.Build(p, minAmount)
+	require.NoError(t, err)
+
+	// Topup is already below dust, so nothing is reserved and the operator
+	// recovers its advance whole.
+	topup := p.RefundTopup(minAmount)
+	require.Equal(t, dust-payload, topup)
+
+	valid := spend{
+		prevouts: []*wire.TxOut{{Value: dust, PkScript: p2tr(t, key(t, 9))}},
+		outputs: []*wire.TxOut{
+			{Value: topup, PkScript: subDust(t, p.OperatorKey)},
+			{Value: payload, PkScript: subDust(t, p.SenderKey)},
+		},
+	}
+
+	t.Run("valid", func(t *testing.T) {
+		require.NoError(t, run(t, s.Refund, valid))
+	})
+
+	t.Run("reject_operator_shorted", func(t *testing.T) {
+		c := valid.clone()
+		c.outputs[0].Value--
+		c.outputs[1].Value++
+		requireRejected(t, run(t, s.Refund, c))
+	})
+
+	t.Run("reject_p2tr_where_subdust_required", func(t *testing.T) {
+		c := valid.clone()
+		c.outputs[1].PkScript = p2tr(t, p.SenderKey)
 		requireRejected(t, run(t, s.Refund, c))
 	})
 }
