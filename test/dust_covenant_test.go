@@ -196,7 +196,13 @@ func TestDustCovenant(t *testing.T) {
 		if packet != nil {
 			addAssetPacketToTx(t, tx, *packet)
 		}
+
+		// arkd registers the new VTXOs asynchronously; spending one before it is
+		// observable fails with VTXO_NOT_FOUND. The subscription must be opened
+		// before submitting, and after the outputs are final.
+		confirmed := watchForPreconfirmedVtxos(t, indexerSvc, tx, 0, 1, 2)
 		submitWithArkd(t, ctx, tx, cps, senderWallet, grpcSender)
+		confirmed()
 
 		senderFunding = vtxoInputFromScriptOutput(
 			t, tx.UnsignedTx, 2, *senderAccount, onlyForfeitScript(t, *senderAccount),
@@ -245,7 +251,11 @@ func TestDustCovenant(t *testing.T) {
 				t, fundTx.TxHash(), 0, 0, 0, units,
 			))
 		}
+
+		confirmed := watchForPreconfirmedVtxos(t, indexerSvc, tx, 0)
 		submitWithArkd(t, ctx, tx, cps, senderWallet, grpcSender)
+		confirmed()
+
 		return tx.UnsignedTx
 	}
 
