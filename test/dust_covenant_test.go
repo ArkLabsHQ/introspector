@@ -119,12 +119,23 @@ func TestDustCovenant(t *testing.T) {
 	t.Cleanup(func() { grpcSender.Close() })
 	senderAddr := fundAndSettleAlice(t, ctx, sender, 100_000)
 
-	receiver, _, receiverPubKey, grpcReceiver := setupArkSDKwithPublicKey(t)
+	receiver, receiverWallet, receiverPubKey, grpcReceiver := setupArkSDKwithPublicKey(t)
 	t.Cleanup(func() { grpcReceiver.Close() })
 	_ = fundAndSettleAlice(t, ctx, receiver, 100_000)
 
 	_, _, operatorPubKey, grpcOperator := setupArkSDKwithPublicKey(t)
 	t.Cleanup(func() { grpcOperator.Close() })
+
+	// A separate identity pays for every funding transaction. Sighash commits to
+	// the prevout amount, and the wallet resolves an input by script, so two
+	// outputs sharing a script in one transaction make it sign for the wrong
+	// amount and produce an invalid checkpoint signature. The sender's account
+	// script is the only one their wallet can sign, so the sender cannot both
+	// hold a dust output and take change. A funder gives every output in a
+	// funding transaction a distinct script.
+	funder, funderWallet, funderPubKey, grpcFunder := setupArkSDKwithPublicKey(t)
+	t.Cleanup(func() { grpcFunder.Close() })
+	_ = fundAndSettleAlice(t, ctx, funder, 200_000)
 
 	emulator, emulatorPubKey, conn := setupEmulatorClient(t, ctx)
 	t.Cleanup(func() { _ = conn.Close() })
@@ -167,28 +178,31 @@ func TestDustCovenant(t *testing.T) {
 		}
 	}
 
+	funderAccount := defaultVtxoScript(funderPubKey, server, exitDelay)
+	funderAccountPk := p2trScriptForVtxoScript(t, *funderAccount)
+
 	// submitWithArkd goes straight to arkd, so the SDK's ListVtxos never learns
 	// the VTXO was spent and buildWalletFundedTx keeps handing back inputs this
-	// test already consumed. The sender's funding VTXO is therefore resolved once
-	// and threaded by hand. Every funding transaction lays its outputs out the
-	// same way:
+	// test already consumed. The funder's VTXO is resolved once and threaded by
+	// hand. Every funding transaction lays its outputs out the same way, each
+	// with a distinct script:
 	//
 	//	[0] receiver account, dust
 	//	[1] sender account, dust, carrying the sender's asset
-	//	[2] sender change, re-points senderFunding
-	senderFunding := findAccountInput(t, ctx, sender, indexerSvc, *senderAccount)
+	//	[2] funder change, re-points funderFunding
+	funderFunding := findAccountInput(t, ctx, funder, indexerSvc, *funderAccount)
 
 	fundAccounts := func(t *testing.T, packet *asset.Packet) *wire.MsgTx {
 		t.Helper()
-		change := senderFunding.Amount - 2*dust
+		change := funderFunding.Amount - 2*dust
 		require.Positive(t, change)
 
 		tx, cps, err := offchain.BuildTxs(
-			[]offchain.VtxoInput{senderFunding},
+			[]offchain.VtxoInput{funderFunding},
 			[]*wire.TxOut{
 				{Value: dust, PkScript: receiverAccountPk},
 				{Value: dust, PkScript: senderAccountPk},
-				{Value: change, PkScript: senderAccountPk},
+				{Value: change, PkScript: funderAccountPk},
 			},
 			checkpointScript,
 		)
@@ -201,11 +215,11 @@ func TestDustCovenant(t *testing.T) {
 		// observable fails with VTXO_NOT_FOUND. The subscription must be opened
 		// before submitting, and after the outputs are final.
 		confirmed := watchForPreconfirmedVtxos(t, indexerSvc, tx, 0, 1, 2)
-		submitWithArkd(t, ctx, tx, cps, senderWallet, grpcSender)
+		submitWithArkd(t, ctx, tx, cps, funderWallet, grpcFunder)
 		confirmed()
 
-		senderFunding = vtxoInputFromScriptOutput(
-			t, tx.UnsignedTx, 2, *senderAccount, onlyForfeitScript(t, *senderAccount),
+		funderFunding = vtxoInputFromScriptOutput(
+			t, tx.UnsignedTx, 2, *funderAccount, onlyForfeitScript(t, *funderAccount),
 		)
 		return tx.UnsignedTx
 	}
@@ -259,11 +273,26 @@ func TestDustCovenant(t *testing.T) {
 		return tx.UnsignedTx
 	}
 
+	// Leaves other than refundSender carry no human key, so the emulator's
+	// signature is the only one a covenant-only spend needs.
 	submitToEmulator := func(t *testing.T, ptx *psbt.Packet, cps []*psbt.Packet) error {
 		t.Helper()
 		encoded, err := ptx.B64Encode()
 		require.NoError(t, err)
 		_, _, err = emulator.SubmitTx(ctx, encoded, encodeCheckpoints(t, cps))
+		return err
+	}
+
+	// A merge also spends the receiver's own account, so the receiver must sign
+	// the arkade transaction and its checkpoints. The emulator supplies only the
+	// covenant input's signature.
+	submitMerge := func(t *testing.T, ptx *psbt.Packet, cps []*psbt.Packet) error {
+		t.Helper()
+		signed, err := receiverWallet.SignTransaction(ctx, b64(t, ptx), nil)
+		require.NoError(t, err)
+		_, _, err = emulator.SubmitTx(
+			ctx, signed, signCheckpoints(t, ctx, receiverWallet, nil, cps),
+		)
 		return err
 	}
 
@@ -332,7 +361,7 @@ func TestDustCovenant(t *testing.T) {
 		})
 
 		require.NoError(t, executeArkadeScripts(t, claimTx, claimCps, emulatorPubKey))
-		require.NoError(t, submitToEmulator(t, claimTx, claimCps))
+		require.NoError(t, submitMerge(t, claimTx, claimCps))
 
 		require.Equal(t, accountIn.Amount, claimTx.UnsignedTx.TxOut[1].Value,
 			"receiver's bitcoin balance must be unchanged")
@@ -451,7 +480,7 @@ func TestDustCovenant(t *testing.T) {
 		})
 
 		require.NoError(t, executeArkadeScripts(t, claimTx, claimCps, emulatorPubKey))
-		require.NoError(t, submitToEmulator(t, claimTx, claimCps))
+		require.NoError(t, submitMerge(t, claimTx, claimCps))
 
 		require.Equal(t, payload, claimTx.UnsignedTx.TxOut[1].Value-accountIn.Amount,
 			"receiver must gain exactly the payload")
