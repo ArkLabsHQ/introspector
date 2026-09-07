@@ -2,7 +2,9 @@ package test
 
 import (
 	"encoding/hex"
+	"sort"
 	"testing"
+	"time"
 
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
@@ -70,11 +72,19 @@ func (c dustContract) payout(t *testing.T, key *btcec.PublicKey, value int64) []
 }
 
 // issuancePacket mints a fresh asset across the given outputs. Zero amounts are
-// omitted, so a recipient genuinely holds no entry for the asset.
+// omitted, so a recipient genuinely holds no entry for the asset. Outputs are
+// emitted in vout order: ranging a map directly would randomise it between runs.
 func issuancePacket(t *testing.T, amounts map[uint16]uint64) asset.Packet {
 	t.Helper()
+	vouts := make([]uint16, 0, len(amounts))
+	for vout := range amounts {
+		vouts = append(vouts, vout)
+	}
+	sort.Slice(vouts, func(i, j int) bool { return vouts[i] < vouts[j] })
+
 	outs := make([]asset.AssetOutput, 0, len(amounts))
-	for vout, amt := range amounts {
+	for _, vout := range vouts {
+		amt := amounts[vout]
 		if amt == 0 {
 			continue
 		}
@@ -178,6 +188,21 @@ func TestDustCovenant(t *testing.T) {
 		}
 	}
 
+	// arkd registers a submitted transaction's outputs asynchronously, so
+	// spending one immediately can lose the race and fail with VTXO_NOT_FOUND.
+	// Polling the indexer for the transaction is used rather than the
+	// subscription helper: a subscription opened per funding transaction, over
+	// scripts an earlier subscription had already registered and removed, did not
+	// deliver its events (got 0/3) even though the transaction was accepted.
+	awaitIndexed := func(t *testing.T, tx *wire.MsgTx) {
+		t.Helper()
+		txid := tx.TxID()
+		require.Eventually(t, func() bool {
+			res, err := indexerSvc.GetVirtualTxs(ctx, []string{txid})
+			return err == nil && len(res.Txs) == 1
+		}, 30*time.Second, 250*time.Millisecond, "tx %s never indexed", txid)
+	}
+
 	funderAccount := defaultVtxoScript(funderPubKey, server, exitDelay)
 	funderAccountPk := p2trScriptForVtxoScript(t, *funderAccount)
 
@@ -211,12 +236,8 @@ func TestDustCovenant(t *testing.T) {
 			addAssetPacketToTx(t, tx, *packet)
 		}
 
-		// arkd registers the new VTXOs asynchronously; spending one before it is
-		// observable fails with VTXO_NOT_FOUND. The subscription must be opened
-		// before submitting, and after the outputs are final.
-		confirmed := watchForPreconfirmedVtxos(t, indexerSvc, tx, 0, 1, 2)
 		submitWithArkd(t, ctx, tx, cps, funderWallet, grpcFunder)
-		confirmed()
+		awaitIndexed(t, tx.UnsignedTx)
 
 		funderFunding = vtxoInputFromScriptOutput(
 			t, tx.UnsignedTx, 2, *funderAccount, onlyForfeitScript(t, *funderAccount),
@@ -266,9 +287,8 @@ func TestDustCovenant(t *testing.T) {
 			))
 		}
 
-		confirmed := watchForPreconfirmedVtxos(t, indexerSvc, tx, 0)
 		submitWithArkd(t, ctx, tx, cps, senderWallet, grpcSender)
-		confirmed()
+		awaitIndexed(t, tx.UnsignedTx)
 
 		return tx.UnsignedTx
 	}
