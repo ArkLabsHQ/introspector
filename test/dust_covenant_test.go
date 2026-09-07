@@ -167,73 +167,82 @@ func TestDustCovenant(t *testing.T) {
 		}
 	}
 
-	// senderVout is where buildWalletFundedTx puts the sender's change: it is
-	// appended after the outputs we ask for. The sender's share of a mint rides
-	// on that change output rather than on an output of its own, because
-	// buildWalletFundedTx sends change to the sender's account script -- the same
-	// script -- and findTaprootOutput picks the first output matching it. Two
-	// outputs with that script make the next call resolve the wrong index
-	// (utils_test.go:560).
-	const senderVout = uint32(1)
+	// submitWithArkd goes straight to arkd, so the SDK's ListVtxos never learns
+	// the VTXO was spent and buildWalletFundedTx keeps handing back inputs this
+	// test already consumed. The sender's funding VTXO is therefore resolved once
+	// and threaded by hand. Every funding transaction lays its outputs out the
+	// same way:
+	//
+	//	[0] receiver account, dust
+	//	[1] sender account, dust, carrying the sender's asset
+	//	[2] sender change, re-points senderFunding
+	senderFunding := findAccountInput(t, ctx, sender, indexerSvc, *senderAccount)
 
-	// fundAccounts gives the receiver a dust account and leaves the rest as the
-	// sender's change. No asset packet.
-	fundAccounts := func(t *testing.T) *wire.MsgTx {
+	fundAccounts := func(t *testing.T, packet *asset.Packet) *wire.MsgTx {
 		t.Helper()
-		tx, cps := buildWalletFundedTx(
-			t, ctx, sender, indexerSvc, senderPubKey, server, exitDelay,
-			[]*wire.TxOut{{Value: dust, PkScript: receiverAccountPk}}, checkpointScript,
-		)
-		submitWithArkd(t, ctx, tx, cps, senderWallet, grpcSender)
-		return tx.UnsignedTx
-	}
-
-	// mint does the same and issues an asset across both outputs. Issuance must
-	// happen in its own transaction: the covenant pins the AssetID, which for an
-	// issuance derives from that transaction's own txid, so issuing inside the
-	// lockup would make the address depend on a txid that depends on the address.
-	mint := func(
-		t *testing.T, receiverUnits, senderUnits uint64,
-	) (*wire.MsgTx, asset.AssetId) {
-		t.Helper()
-		tx, cps := buildWalletFundedTx(
-			t, ctx, sender, indexerSvc, senderPubKey, server, exitDelay,
-			[]*wire.TxOut{{Value: dust, PkScript: receiverAccountPk}}, checkpointScript,
-		)
-		addAssetPacketToTx(t, tx, issuancePacket(t, map[uint16]uint64{
-			0:                  receiverUnits,
-			uint16(senderVout): senderUnits,
-		}))
-		submitWithArkd(t, ctx, tx, cps, senderWallet, grpcSender)
-		h := tx.UnsignedTx.TxHash()
-		return tx.UnsignedTx, asset.AssetId{Txid: [asset.TX_HASH_SIZE]byte(h), Index: 0}
-	}
-
-	// lockup spends the sender's change into the covenant, returning the balance
-	// as fresh change so the sender's bitcoin is not burned as fee.
-	lockup := func(
-		t *testing.T, mintTx *wire.MsgTx, c dustContract, units uint64,
-	) *wire.MsgTx {
-		t.Helper()
-		in := vtxoInputFromScriptOutput(
-			t, mintTx, senderVout, *senderAccount, onlyForfeitScript(t, *senderAccount),
-		)
-		change := in.Amount - c.params.Dust
+		change := senderFunding.Amount - 2*dust
 		require.Positive(t, change)
 
 		tx, cps, err := offchain.BuildTxs(
-			[]offchain.VtxoInput{in},
+			[]offchain.VtxoInput{senderFunding},
 			[]*wire.TxOut{
-				{Value: c.params.Dust, PkScript: c.pkScript},
+				{Value: dust, PkScript: receiverAccountPk},
+				{Value: dust, PkScript: senderAccountPk},
 				{Value: change, PkScript: senderAccountPk},
 			},
 			checkpointScript,
 		)
 		require.NoError(t, err)
+		if packet != nil {
+			addAssetPacketToTx(t, tx, *packet)
+		}
+		submitWithArkd(t, ctx, tx, cps, senderWallet, grpcSender)
+
+		senderFunding = vtxoInputFromScriptOutput(
+			t, tx.UnsignedTx, 2, *senderAccount, onlyForfeitScript(t, *senderAccount),
+		)
+		return tx.UnsignedTx
+	}
+
+	// mint issues a fresh asset. Issuance must happen in its own transaction: the
+	// covenant pins the AssetID, which for an issuance derives from that
+	// transaction's own txid, so issuing inside the lockup would make the address
+	// depend on a txid that depends on the address.
+	mint := func(
+		t *testing.T, receiverUnits, senderUnits uint64,
+	) (*wire.MsgTx, asset.AssetId) {
+		t.Helper()
+		amounts := map[uint16]uint64{1: senderUnits}
+		if receiverUnits > 0 {
+			amounts[0] = receiverUnits
+		}
+		packet := issuancePacket(t, amounts)
+		tx := fundAccounts(t, &packet)
+		h := tx.TxHash()
+		return tx, asset.AssetId{Txid: [asset.TX_HASH_SIZE]byte(h), Index: 0}
+	}
+
+	// lockup spends the sender's whole dust account into the covenant, so there is
+	// no change and the sender's bitcoin commitment stays at exactly one dust unit.
+	lockup := func(
+		t *testing.T, fundTx *wire.MsgTx, c dustContract, units uint64,
+	) *wire.MsgTx {
+		t.Helper()
+		in := vtxoInputFromScriptOutput(
+			t, fundTx, 1, *senderAccount, onlyForfeitScript(t, *senderAccount),
+		)
+		require.Equal(t, c.params.Dust, in.Amount)
+
+		tx, cps, err := offchain.BuildTxs(
+			[]offchain.VtxoInput{in},
+			[]*wire.TxOut{{Value: c.params.Dust, PkScript: c.pkScript}},
+			checkpointScript,
+		)
+		require.NoError(t, err)
 		if c.params.AssetID != nil {
-			// vin is the transaction input index, not the mint's output index.
+			// vin is the transaction input index, not the funding output index.
 			addAssetPacketToTx(t, tx, createTransferAssetPacket(
-				t, mintTx.TxHash(), 0, 0, 0, units,
+				t, fundTx.TxHash(), 0, 0, 0, units,
 			))
 		}
 		submitWithArkd(t, ctx, tx, cps, senderWallet, grpcSender)
@@ -404,7 +413,7 @@ func TestDustCovenant(t *testing.T) {
 
 		// No asset anywhere: the bitcoin variant omits the asset clauses, and an
 		// unaccounted asset on the input would be rejected by arkd.
-		fundTx := fundAccounts(t)
+		fundTx := fundAccounts(t, nil)
 
 		p := baseParams()
 		p.Topup = dust - payload
