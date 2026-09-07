@@ -106,17 +106,30 @@ func pinOutput(
 	return nil
 }
 
-// appendAssetLookup leaves the asset amount on the stack, dropping the found
-// flag: a miss pushes (0, 0), which is exactly "holds none of this asset".
-// id.Txid must be in chainhash internal byte order, never the reversed display
-// hex -- the wrong order yields a covenant that silently never matches.
-func appendAssetLookup(b *txscript.ScriptBuilder, idx int64, id *asset.AssetId, output bool) {
+// appendAssetLookup leaves the asset amount on the stack and consumes the found
+// flag. id.Txid must be in chainhash internal byte order, never the reversed
+// display hex.
+//
+// required decides how the flag is consumed, and the distinction is load-bearing.
+// A miss pushes (0, 0). Dropping the flag everywhere makes a wrong AssetID --
+// whether from a byte-order slip or a deliberate substitution -- miss on every
+// read, degenerating the sum to 0 == 0 + 0 so the covenant passes with the asset
+// constraint silently unenforced. OP_VERIFY where the asset must exist turns
+// that quiet failure into a loud one. Only the receiver's prior balance may
+// legitimately be absent, so only that lookup drops.
+func appendAssetLookup(
+	b *txscript.ScriptBuilder, idx int64, id *asset.AssetId, output, required bool,
+) {
 	op := byte(arkade.OP_INSPECTINASSETLOOKUP)
 	if output {
 		op = byte(arkade.OP_INSPECTOUTASSETLOOKUP)
 	}
-	b.AddInt64(idx).AddData(id.Txid[:]).AddInt64(int64(id.Index)).
-		AddOp(op).AddOp(arkade.OP_DROP)
+	b.AddInt64(idx).AddData(id.Txid[:]).AddInt64(int64(id.Index)).AddOp(op)
+	if required {
+		b.AddOp(arkade.OP_VERIFY)
+		return
+	}
+	b.AddOp(arkade.OP_DROP)
 }
 
 func finish(b *txscript.ScriptBuilder, hasAsset bool) ([]byte, error) {
@@ -158,9 +171,9 @@ func BuildRecycle(p Params) ([]byte, error) {
 		AddOp(arkade.OP_EQUALVERIFY)
 
 	if p.AssetID != nil {
-		appendAssetLookup(b, 1, p.AssetID, true)
-		appendAssetLookup(b, 0, p.AssetID, false)
-		appendAssetLookup(b, 1, p.AssetID, false)
+		appendAssetLookup(b, 1, p.AssetID, true, true)
+		appendAssetLookup(b, 0, p.AssetID, false, true)
+		appendAssetLookup(b, 1, p.AssetID, false, false)
 		b.AddOp(arkade.OP_ADD).AddOp(arkade.OP_EQUAL)
 	}
 	return finish(b, p.AssetID != nil)
@@ -178,8 +191,8 @@ func BuildPurchase(p Params) ([]byte, error) {
 		AddInt64(0).AddOp(arkade.OP_INSPECTINPUTVALUE).AddOp(arkade.OP_EQUALVERIFY)
 
 	if p.AssetID != nil {
-		appendAssetLookup(b, 0, p.AssetID, true)
-		appendAssetLookup(b, 0, p.AssetID, false)
+		appendAssetLookup(b, 0, p.AssetID, true, true)
+		appendAssetLookup(b, 0, p.AssetID, false, true)
 		b.AddOp(arkade.OP_EQUAL)
 	}
 	return finish(b, p.AssetID != nil)
@@ -209,8 +222,8 @@ func BuildRefund(p Params, vtxoMinAmount int64) ([]byte, error) {
 	}
 
 	if p.AssetID != nil {
-		appendAssetLookup(b, 1, p.AssetID, true)
-		appendAssetLookup(b, 0, p.AssetID, false)
+		appendAssetLookup(b, 1, p.AssetID, true, true)
+		appendAssetLookup(b, 0, p.AssetID, false, true)
 		b.AddOp(arkade.OP_EQUAL)
 	}
 	return finish(b, p.AssetID != nil)

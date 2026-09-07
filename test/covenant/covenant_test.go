@@ -143,10 +143,12 @@ func requireRejected(t *testing.T, err error) {
 
 // assetID is arbitrary but must never equal the spending transaction's own hash,
 // which the engine rejects as a fresh-issuance identity collision.
+// Deliberately not palindromic, so reversing it produces a different value and
+// the byte-order test means something.
 func assetID(index uint16) asset.AssetId {
 	var txid chainhash.Hash
 	for i := range txid {
-		txid[i] = 0xab
+		txid[i] = byte(i + 1)
 	}
 	return asset.AssetId{Txid: txid, Index: index}
 }
@@ -268,17 +270,29 @@ func TestRecycle(t *testing.T) {
 		requireRejected(t, run(t, s.Recycle, c))
 	})
 
-	// Documents a limitation, not a guarantee. A foreign AssetID misses on every
-	// lookup, so the sum clause degenerates to 0 == 0 + 0 and the covenant
-	// accepts. Only arkd's asset-balance validation rejects such a spend, so this
-	// covenant must never be deployed against a validator that omits that check.
-	t.Run("foreign_asset_id_not_caught_by_covenant_alone", func(t *testing.T) {
+	// Before the found-flag was verified this passed: every lookup missed, the
+	// sum degenerated to 0 == 0 + 0, and the asset constraint went unenforced.
+	t.Run("reject_foreign_asset_id", func(t *testing.T) {
 		c := valid(20).clone()
 		c.packet = packetOf(t, assetID(7),
 			map[uint16]uint64{0: 1, 1: 20},
 			map[uint16]uint64{1: 21},
 		)
-		require.NoError(t, run(t, s.Recycle, c))
+		requireRejected(t, run(t, s.Recycle, c))
+	})
+
+	// The byte-order trap. A covenant built from a reversed txid can never match
+	// a real packet; it must fail loudly rather than pass vacuously.
+	t.Run("reject_reversed_asset_txid", func(t *testing.T) {
+		reversed := *p.AssetID
+		for i, j := 0, len(reversed.Txid)-1; i < j; i, j = i+1, j-1 {
+			reversed.Txid[i], reversed.Txid[j] = reversed.Txid[j], reversed.Txid[i]
+		}
+		bad := p
+		bad.AssetID = &reversed
+		badScripts, err := covenant.Build(bad, minAmount)
+		require.NoError(t, err)
+		requireRejected(t, run(t, badScripts.Recycle, valid(20)))
 	})
 }
 
