@@ -10,6 +10,7 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
+	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
 	"github.com/arkade-os/arkd/pkg/client-lib/types"
 	"github.com/arkade-os/emulator/pkg/arkade"
@@ -99,6 +100,20 @@ func issuancePacket(t *testing.T, amounts map[uint16]uint64) asset.Packet {
 	pkt, err := asset.NewPacket([]asset.AssetGroup{*grp})
 	require.NoError(t, err)
 	return pkt
+}
+
+// setPrevArkTxs attaches each input's previous arkade transaction. This is not
+// automatic: executeArkadeScripts and the emulator skip inputs without the
+// field, so FetchVtxoPrevOutPkScript returns nil and OP_INSPECTINPUTSCRIPTPUBKEY
+// fails with "previous output not found". Only recycle needs it, being the only
+// covenant that inspects a second input -- purchase reads input values, which
+// resolve through FetchPrevOutput and the PSBT's witness UTXO instead.
+// See test/cross_input_script_validation_test.go:345-346.
+func setPrevArkTxs(t *testing.T, ptx *psbt.Packet, prevs ...*wire.MsgTx) {
+	t.Helper()
+	for i, prev := range prevs {
+		require.NoError(t, txutils.SetArkPsbtField(ptx, i, arkade.PrevArkTxField, *prev))
+	}
 }
 
 // mergePacket moves the covenant's units at vin 0, plus whatever the receiver's
@@ -387,6 +402,7 @@ func TestDustCovenant(t *testing.T) {
 		)
 		require.NoError(t, err)
 		addAssetPacketToTx(t, claimTx, mergePacket(t, assetID, sent, priorUnits))
+		setPrevArkTxs(t, claimTx, lockTx, mintTx)
 		addEmulatorPacket(t, claimTx, []arkade.EmulatorEntry{
 			{Vin: 0, Script: c.scripts.Recycle},
 		})
@@ -506,6 +522,7 @@ func TestDustCovenant(t *testing.T) {
 			checkpointScript,
 		)
 		require.NoError(t, err)
+		setPrevArkTxs(t, claimTx, lockTx, fundTx)
 		addEmulatorPacket(t, claimTx, []arkade.EmulatorEntry{
 			{Vin: 0, Script: c.scripts.Recycle},
 		})
