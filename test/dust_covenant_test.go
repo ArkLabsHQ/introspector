@@ -509,11 +509,12 @@ func TestDustCovenant(t *testing.T) {
 			{Vin: 0, Script: c.scripts.Refund},
 		})
 
-		// arkd accepting this transaction is what validates the hardcoded
-		// vtxoMinAmount: the sender's returned payload is exactly that many sats,
-		// and a lower configured minimum would reject it.
-		require.Equal(t, dustCovenantVtxoMinAmount, dust-topup,
-			"refund reserves exactly one vtxoMinAmount for the sender's payload")
+		// The live validation of the hardcoded vtxoMinAmount is arkd accepting this
+		// transaction: the sender's returned payload is exactly that many sats, so
+		// a higher configured minimum rejects it. Asserting dust-topup ==
+		// dustCovenantVtxoMinAmount here would prove nothing, being true by
+		// construction once RefundTopup has been applied.
+		require.Less(t, dust-topup, dust, "sender's payload must be sub-dust")
 
 		require.NoError(t, executeArkadeScripts(t, refundTx, refundCps, emulatorPubKey))
 		require.NoError(t, submitToEmulator(t, refundTx, refundCps))
