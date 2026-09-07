@@ -422,6 +422,15 @@ func TestParamsValidation(t *testing.T) {
 		require.Error(t, err)
 	})
 
+	// A zero absolute locktime is always satisfied, so the recovery leaf would be
+	// spendable the moment the covenant is funded.
+	t.Run("rejects_zero_locktime", func(t *testing.T) {
+		bad := p
+		bad.Locktime = 0
+		_, err := covenant.Build(bad, minAmount)
+		require.ErrorContains(t, err, "locktime")
+	})
+
 	// RefundTopup only differs from Topup when the operator funded the whole
 	// dust unit; that single sat is the cost of an abandoned asset payment.
 	t.Run("refund_topup_reserves_one_min_amount_only_when_fully_funded", func(t *testing.T) {

@@ -60,6 +60,11 @@ func (p Params) Validate(vtxoMinAmount int64) error {
 		return fmt.Errorf(
 			"covenant: topup %d outside [%d, %d]", p.Topup, vtxoMinAmount, p.Dust,
 		)
+	case p.Locktime == 0:
+		// A zero absolute locktime is always satisfied, which would make the
+		// recovery leaf spendable the moment the covenant is funded and collapse
+		// the timeout the operator's exposure is bounded by.
+		return fmt.Errorf("covenant: locktime must be non-zero")
 	}
 	return nil
 }
