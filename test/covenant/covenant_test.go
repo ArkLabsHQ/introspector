@@ -506,6 +506,32 @@ func TestBitcoinVariant(t *testing.T) {
 		c.outputs[1].Value++
 		requireRejected(t, run(t, s.Recycle, c))
 	})
+
+	// Purchase in bitcoin mode terminates via the asset-free branch, which no
+	// other test reaches: recycle's bitcoin tests exercise a different script.
+	t.Run("purchase", func(t *testing.T) {
+		receiverPk := p2tr(t, p.ReceiverKey)
+		valid := spend{
+			prevouts: []*wire.TxOut{{Value: dust, PkScript: p2tr(t, key(t, 9))}},
+			outputs:  []*wire.TxOut{{Value: dust, PkScript: receiverPk}},
+		}
+
+		t.Run("valid", func(t *testing.T) {
+			require.NoError(t, run(t, s.Purchase, valid))
+		})
+
+		t.Run("reject_short_value", func(t *testing.T) {
+			c := valid.clone()
+			c.outputs[0].Value--
+			requireRejected(t, run(t, s.Purchase, c))
+		})
+
+		t.Run("reject_wrong_receiver", func(t *testing.T) {
+			c := valid.clone()
+			c.outputs[0].PkScript = p2tr(t, key(t, 7))
+			requireRejected(t, run(t, s.Purchase, c))
+		})
+	})
 }
 
 func TestParamsValidation(t *testing.T) {
@@ -532,6 +558,26 @@ func TestParamsValidation(t *testing.T) {
 		bad.Locktime = 0
 		_, err := covenant.Build(bad, minAmount)
 		require.ErrorContains(t, err, "locktime")
+	})
+
+	// Receiver == operator is the dangerous collapse: the operator could satisfy
+	// recycle while paying the top-up repayment to itself.
+	t.Run("rejects_reused_keys", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			set  func(*covenant.Params)
+		}{
+			{"receiver_is_operator", func(q *covenant.Params) { q.OperatorKey = q.ReceiverKey }},
+			{"receiver_is_sender", func(q *covenant.Params) { q.SenderKey = q.ReceiverKey }},
+			{"sender_is_operator", func(q *covenant.Params) { q.OperatorKey = q.SenderKey }},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				bad := p
+				tc.set(&bad)
+				_, err := covenant.Build(bad, minAmount)
+				require.ErrorContains(t, err, "distinct")
+			})
+		}
 	})
 
 	// RefundTopup only differs from Topup when the operator funded the whole

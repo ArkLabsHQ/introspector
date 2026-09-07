@@ -60,6 +60,14 @@ func (p Params) Validate(vtxoMinAmount int64) error {
 		return fmt.Errorf(
 			"covenant: topup %d outside [%d, %d]", p.Topup, vtxoMinAmount, p.Dust,
 		)
+	case p.ReceiverKey.IsEqual(p.OperatorKey) ||
+		p.ReceiverKey.IsEqual(p.SenderKey) ||
+		p.SenderKey.IsEqual(p.OperatorKey):
+		// Reusing a key collapses a role. Receiver == operator is the dangerous
+		// one: the operator could satisfy recycle while paying the top-up
+		// repayment to itself, collecting both sides of the trade. No signature
+		// check catches this, because each role's key is legitimately its own.
+		return fmt.Errorf("covenant: receiver, sender and operator keys must be distinct")
 	case p.Locktime == 0:
 		// A zero absolute locktime is always satisfied, which would make the
 		// recovery leaf spendable the moment the covenant is funded and collapse

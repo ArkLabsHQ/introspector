@@ -373,6 +373,18 @@ func TestDustCovenant(t *testing.T) {
 		return err
 	}
 
+	// LeafRefundSender's closure carries the sender's key, so the sender signs the
+	// arkade transaction and its checkpoints alongside the emulator.
+	submitSenderSigned := func(t *testing.T, ptx *psbt.Packet, cps []*psbt.Packet) error {
+		t.Helper()
+		signed, err := senderWallet.SignTransaction(ctx, b64(t, ptx), nil)
+		require.NoError(t, err)
+		_, _, err = emulator.SubmitTx(
+			ctx, signed, signCheckpoints(t, ctx, senderWallet, nil, cps),
+		)
+		return err
+	}
+
 	// A merge also spends the receiver's own account, so the receiver must sign
 	// the arkade transaction and its checkpoints. The emulator supplies only the
 	// covenant input's signature.
@@ -497,8 +509,51 @@ func TestDustCovenant(t *testing.T) {
 			{Vin: 0, Script: c.scripts.Refund},
 		})
 
+		// arkd accepting this transaction is what validates the hardcoded
+		// vtxoMinAmount: the sender's returned payload is exactly that many sats,
+		// and a lower configured minimum would reject it.
+		require.Equal(t, dustCovenantVtxoMinAmount, dust-topup,
+			"refund reserves exactly one vtxoMinAmount for the sender's payload")
+
 		require.NoError(t, executeArkadeScripts(t, refundTx, refundCps, emulatorPubKey))
 		require.NoError(t, submitToEmulator(t, refundTx, refundCps))
+	})
+
+	// LeafRefundSender is the only leaf carrying a human key. It shares the refund
+	// covenant with LeafRecovery but not its closure, so the end-to-end path --
+	// sender signs, emulator signs, arkd accepts -- needs its own coverage.
+	t.Run("refund/sender_signed", func(t *testing.T) {
+		const units = uint64(7)
+
+		mintTx, assetID := mint(t, units)
+
+		p := baseParams()
+		p.AssetID = &assetID
+		c := newDustContract(t, server, emulatorPubKey, senderPubKey, p)
+
+		lockTx := lockup(t, mintTx, c, units, 0)
+		topup := p.RefundTopup(dustCovenantVtxoMinAmount)
+
+		refundTx, refundCps, err := offchain.BuildTxs(
+			[]offchain.VtxoInput{c.input(t, lockTx, covenant.LeafRefundSender)},
+			[]*wire.TxOut{
+				{Value: topup, PkScript: c.payout(t, operatorKey, topup)},
+				{Value: dust - topup, PkScript: c.payout(t, senderKey, dust-topup)},
+			},
+			checkpointScript,
+		)
+		require.NoError(t, err)
+		addAssetPacketToTx(t, refundTx, createTransferAssetPacket(
+			t, mintTx.TxHash(), 0, 0, 1, units,
+		))
+		addEmulatorPacket(t, refundTx, []arkade.EmulatorEntry{
+			{Vin: 0, Script: c.scripts.Refund},
+		})
+
+		// No locktime is set: unlike recovery, this leaf is spendable immediately
+		// because the sender's signature stands in for the timeout.
+		require.NoError(t, executeArkadeScripts(t, refundTx, refundCps, emulatorPubKey))
+		require.NoError(t, submitSenderSigned(t, refundTx, refundCps))
 	})
 
 	// The covenant does not read the locktime; the CLTV closure does. Only a live
