@@ -102,6 +102,39 @@ func issuancePacket(t *testing.T, amounts map[uint16]uint64) asset.Packet {
 	return pkt
 }
 
+// transferPacket moves an existing asset from vin 0 across the given outputs.
+// Multi-output transfers are fine, unlike multi-output issuance; the
+// asset-account prototype's routing packet splits across three.
+func transferPacket(
+	t *testing.T, id asset.AssetId, total uint64, amounts map[uint16]uint64,
+) asset.Packet {
+	t.Helper()
+	in, err := asset.NewAssetInput(0, total)
+	require.NoError(t, err)
+
+	vouts := make([]uint16, 0, len(amounts))
+	for vout := range amounts {
+		vouts = append(vouts, vout)
+	}
+	sort.Slice(vouts, func(i, j int) bool { return vouts[i] < vouts[j] })
+
+	outs := make([]asset.AssetOutput, 0, len(amounts))
+	for _, vout := range vouts {
+		if amounts[vout] == 0 {
+			continue
+		}
+		o, err := asset.NewAssetOutput(vout, amounts[vout])
+		require.NoError(t, err)
+		outs = append(outs, *o)
+	}
+
+	grp, err := asset.NewAssetGroup(&id, nil, []asset.AssetInput{*in}, outs, []asset.Metadata{})
+	require.NoError(t, err)
+	pkt, err := asset.NewPacket([]asset.AssetGroup{*grp})
+	require.NoError(t, err)
+	return pkt
+}
+
 // setPrevArkTxs attaches each input's previous arkade transaction. This is not
 // automatic: executeArkadeScripts and the emulator skip inputs without the
 // field, so FetchVtxoPrevOutPkScript returns nil and OP_INSPECTINPUTSCRIPTPUBKEY
@@ -234,9 +267,11 @@ func TestDustCovenant(t *testing.T) {
 	// Outputs, each with a distinct script -- two outputs sharing one script make
 	// the wallet sign for the wrong prevout amount:
 	//
-	//	[0] receiver account, dust
-	//	[1] sender account, dust, carrying the sender's asset
-	//	[2] funder change, unused
+	//	[0] sender account, two dust units, carrying the whole issuance
+	//	[1] funder change, unused
+	//
+	// The sender gets two dust units because the lockup splits this account into
+	// the covenant and the receiver's account, and each needs one.
 	fundAccounts := func(t *testing.T, packet *asset.Packet) *wire.MsgTx {
 		t.Helper()
 
@@ -254,8 +289,7 @@ func TestDustCovenant(t *testing.T) {
 		tx, cps, err := offchain.BuildTxs(
 			[]offchain.VtxoInput{funding},
 			[]*wire.TxOut{
-				{Value: dust, PkScript: receiverAccountPk},
-				{Value: dust, PkScript: senderAccountPk},
+				{Value: 2 * dust, PkScript: senderAccountPk},
 				{Value: change, PkScript: funderAccountPk},
 			},
 			checkpointScript,
@@ -266,55 +300,65 @@ func TestDustCovenant(t *testing.T) {
 		}
 
 		submitWithArkd(t, ctx, tx, cps, funderWallet, grpcFunder)
-		awaitSpendable(t, tx.UnsignedTx, 0, 1)
+		awaitSpendable(t, tx.UnsignedTx, 0)
 
 		return tx.UnsignedTx
 	}
 
-	// mint issues a fresh asset. Issuance must happen in its own transaction: the
-	// covenant pins the AssetID, which for an issuance derives from that
-	// transaction's own txid, so issuing inside the lockup would make the address
-	// depend on a txid that depends on the address.
-	mint := func(
-		t *testing.T, receiverUnits, senderUnits uint64,
-	) (*wire.MsgTx, asset.AssetId) {
+	// mint issues a fresh asset to a single output. Issuance must happen in its
+	// own transaction: the covenant pins the AssetID, which for an issuance
+	// derives from that transaction's own txid, so issuing inside the lockup
+	// would make the address depend on a txid that depends on the address.
+	//
+	// Single-output deliberately. A two-output issuance made the funding
+	// transaction fail to finalize with an invalid checkpoint signature, while
+	// multi-output *transfers* are fine -- the asset-account prototype's routing
+	// packet splits across three. So the split happens in the lockup instead.
+	mint := func(t *testing.T, units uint64) (*wire.MsgTx, asset.AssetId) {
 		t.Helper()
-		amounts := map[uint16]uint64{1: senderUnits}
-		if receiverUnits > 0 {
-			amounts[0] = receiverUnits
-		}
-		packet := issuancePacket(t, amounts)
+		packet := issuancePacket(t, map[uint16]uint64{0: units})
 		tx := fundAccounts(t, &packet)
 		h := tx.TxHash()
 		return tx, asset.AssetId{Txid: [asset.TX_HASH_SIZE]byte(h), Index: 0}
 	}
 
-	// lockup spends the sender's whole dust account into the covenant, so there is
-	// no change and the sender's bitcoin commitment stays at exactly one dust unit.
+	// lockup splits the sender's funded account into the covenant and the
+	// receiver's account, in one transfer:
+	//
+	//	[0] covenant, dust, carrying sent units
+	//	[1] receiver account, dust, carrying priorUnits (its balance before the
+	//	    payment, which the recycle covenant must tolerate at any value)
+	//
+	// Doing the split here rather than at issuance is what keeps the issuance
+	// single-output; see mint. The sender's own bitcoin commitment is unchanged
+	// either way, since both dust units came from the funder.
 	lockup := func(
-		t *testing.T, fundTx *wire.MsgTx, c dustContract, units uint64,
+		t *testing.T, fundTx *wire.MsgTx, c dustContract, sent, priorUnits uint64,
 	) *wire.MsgTx {
 		t.Helper()
 		in := vtxoInputFromScriptOutput(
-			t, fundTx, 1, *senderAccount, onlyForfeitScript(t, *senderAccount),
+			t, fundTx, 0, *senderAccount, onlyForfeitScript(t, *senderAccount),
 		)
-		require.Equal(t, c.params.Dust, in.Amount)
+		require.Equal(t, 2*c.params.Dust, in.Amount)
 
 		tx, cps, err := offchain.BuildTxs(
 			[]offchain.VtxoInput{in},
-			[]*wire.TxOut{{Value: c.params.Dust, PkScript: c.pkScript}},
+			[]*wire.TxOut{
+				{Value: c.params.Dust, PkScript: c.pkScript},
+				{Value: c.params.Dust, PkScript: receiverAccountPk},
+			},
 			checkpointScript,
 		)
 		require.NoError(t, err)
 		if c.params.AssetID != nil {
 			// vin is the transaction input index, not the funding output index.
-			addAssetPacketToTx(t, tx, createTransferAssetPacket(
-				t, fundTx.TxHash(), 0, 0, 0, units,
+			addAssetPacketToTx(t, tx, transferPacket(t, *c.params.AssetID,
+				sent+priorUnits, map[uint16]uint64{0: sent, 1: priorUnits},
 			))
 		}
 
 		submitWithArkd(t, ctx, tx, cps, senderWallet, grpcSender)
-		awaitSpendable(t, tx.UnsignedTx, 0)
+		awaitSpendable(t, tx.UnsignedTx, 0, 1)
 
 		return tx.UnsignedTx
 	}
@@ -345,13 +389,13 @@ func TestDustCovenant(t *testing.T) {
 	t.Run("purchase", func(t *testing.T) {
 		const units = uint64(100)
 
-		mintTx, assetID := mint(t, 0, units)
+		mintTx, assetID := mint(t, units)
 
 		p := baseParams()
 		p.AssetID = &assetID
 		c := newDustContract(t, server, emulatorPubKey, senderPubKey, p)
 
-		lockTx := lockup(t, mintTx, c, units)
+		lockTx := lockup(t, mintTx, c, units, 0)
 
 		claimTx, claimCps, err := offchain.BuildTxs(
 			[]offchain.VtxoInput{c.input(t, lockTx, covenant.LeafPurchase)},
@@ -378,17 +422,17 @@ func TestDustCovenant(t *testing.T) {
 		t.Helper()
 		const sent = uint64(1)
 
-		mintTx, assetID := mint(t, priorUnits, sent)
+		mintTx, assetID := mint(t, sent+priorUnits)
 
 		p := baseParams()
 		p.AssetID = &assetID
 		c := newDustContract(t, server, emulatorPubKey, senderPubKey, p)
 
-		lockTx := lockup(t, mintTx, c, sent)
+		lockTx := lockup(t, mintTx, c, sent, priorUnits)
 
 		covenantIn := c.input(t, lockTx, covenant.LeafRecycle)
 		accountIn := vtxoInputFromScriptOutput(
-			t, mintTx, 0, *receiverAccount, onlyForfeitScript(t, *receiverAccount),
+			t, lockTx, 1, *receiverAccount, onlyForfeitScript(t, *receiverAccount),
 		)
 
 		merged := covenantIn.Amount + accountIn.Amount - p.Topup
@@ -402,7 +446,7 @@ func TestDustCovenant(t *testing.T) {
 		)
 		require.NoError(t, err)
 		addAssetPacketToTx(t, claimTx, mergePacket(t, assetID, sent, priorUnits))
-		setPrevArkTxs(t, claimTx, lockTx, mintTx)
+		setPrevArkTxs(t, claimTx, lockTx, lockTx)
 		addEmulatorPacket(t, claimTx, []arkade.EmulatorEntry{
 			{Vin: 0, Script: c.scripts.Recycle},
 		})
@@ -427,13 +471,13 @@ func TestDustCovenant(t *testing.T) {
 	t.Run("recovery/after_locktime", func(t *testing.T) {
 		const units = uint64(7)
 
-		mintTx, assetID := mint(t, 0, units)
+		mintTx, assetID := mint(t, units)
 
 		p := baseParams()
 		p.AssetID = &assetID
 		c := newDustContract(t, server, emulatorPubKey, senderPubKey, p)
 
-		lockTx := lockup(t, mintTx, c, units)
+		lockTx := lockup(t, mintTx, c, units, 0)
 		topup := p.RefundTopup(dustCovenantVtxoMinAmount)
 
 		refundTx, refundCps, err := offchain.BuildTxs(
@@ -463,13 +507,13 @@ func TestDustCovenant(t *testing.T) {
 	t.Run("recovery/rejected_before_locktime", func(t *testing.T) {
 		const units = uint64(7)
 
-		mintTx, assetID := mint(t, 0, units)
+		mintTx, assetID := mint(t, units)
 
 		p := baseParams()
 		p.AssetID = &assetID
 		c := newDustContract(t, server, emulatorPubKey, senderPubKey, p)
 
-		lockTx := lockup(t, mintTx, c, units)
+		lockTx := lockup(t, mintTx, c, units, 0)
 		topup := p.RefundTopup(dustCovenantVtxoMinAmount)
 
 		tx, cps, err := offchain.BuildTxs(
@@ -505,11 +549,11 @@ func TestDustCovenant(t *testing.T) {
 		p.Topup = dust - payload
 		c := newDustContract(t, server, emulatorPubKey, senderPubKey, p)
 
-		lockTx := lockup(t, fundTx, c, 0)
+		lockTx := lockup(t, fundTx, c, 0, 0)
 
 		covenantIn := c.input(t, lockTx, covenant.LeafRecycle)
 		accountIn := vtxoInputFromScriptOutput(
-			t, fundTx, 0, *receiverAccount, onlyForfeitScript(t, *receiverAccount),
+			t, lockTx, 1, *receiverAccount, onlyForfeitScript(t, *receiverAccount),
 		)
 
 		merged := covenantIn.Amount + accountIn.Amount - p.Topup
@@ -522,7 +566,7 @@ func TestDustCovenant(t *testing.T) {
 			checkpointScript,
 		)
 		require.NoError(t, err)
-		setPrevArkTxs(t, claimTx, lockTx, fundTx)
+		setPrevArkTxs(t, claimTx, lockTx, lockTx)
 		addEmulatorPacket(t, claimTx, []arkade.EmulatorEntry{
 			{Vin: 0, Script: c.scripts.Recycle},
 		})
