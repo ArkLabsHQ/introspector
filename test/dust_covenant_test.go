@@ -10,6 +10,8 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
+	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
+	"github.com/arkade-os/arkd/pkg/client-lib/types"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/arkade-os/emulator/test/covenant"
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -190,17 +192,32 @@ func TestDustCovenant(t *testing.T) {
 
 	// arkd registers a submitted transaction's outputs asynchronously, so
 	// spending one immediately can lose the race and fail with VTXO_NOT_FOUND.
-	// Polling the indexer for the transaction is used rather than the
-	// subscription helper: a subscription opened per funding transaction, over
-	// scripts an earlier subscription had already registered and removed, did not
-	// deliver its events (got 0/3) even though the transaction was accepted.
-	awaitIndexed := func(t *testing.T, tx *wire.MsgTx) {
+	//
+	// Waiting on the outpoints specifically, rather than on the transaction:
+	// GetVirtualTxs returns the transaction before its outputs are spendable, so
+	// waiting on that still raced. The subscription helper was not used either --
+	// a subscription opened per funding transaction, over scripts an earlier
+	// subscription had already registered and removed on cleanup, never delivered
+	// its events (got 0/3) even though the transaction was accepted.
+	awaitSpendable := func(t *testing.T, tx *wire.MsgTx, vouts ...uint32) {
 		t.Helper()
 		txid := tx.TxID()
+		outpoints := make([]types.Outpoint, 0, len(vouts))
+		for _, vout := range vouts {
+			outpoints = append(outpoints, types.Outpoint{Txid: txid, VOut: vout})
+		}
 		require.Eventually(t, func() bool {
-			res, err := indexerSvc.GetVirtualTxs(ctx, []string{txid})
-			return err == nil && len(res.Txs) == 1
-		}, 30*time.Second, 250*time.Millisecond, "tx %s never indexed", txid)
+			res, err := indexerSvc.GetVtxos(ctx, indexer.WithOutpoints(outpoints))
+			if err != nil || res == nil || len(res.Vtxos) != len(outpoints) {
+				return false
+			}
+			for _, v := range res.Vtxos {
+				if v.Spent {
+					return false
+				}
+			}
+			return true
+		}, 30*time.Second, 250*time.Millisecond, "vtxos of %s not spendable", txid)
 	}
 
 	funderAccount := defaultVtxoScript(funderPubKey, server, exitDelay)
@@ -237,7 +254,7 @@ func TestDustCovenant(t *testing.T) {
 		}
 
 		submitWithArkd(t, ctx, tx, cps, funderWallet, grpcFunder)
-		awaitIndexed(t, tx.UnsignedTx)
+		awaitSpendable(t, tx.UnsignedTx, 0, 1, 2)
 
 		funderFunding = vtxoInputFromScriptOutput(
 			t, tx.UnsignedTx, 2, *funderAccount, onlyForfeitScript(t, *funderAccount),
@@ -288,7 +305,7 @@ func TestDustCovenant(t *testing.T) {
 		}
 
 		submitWithArkd(t, ctx, tx, cps, senderWallet, grpcSender)
-		awaitIndexed(t, tx.UnsignedTx)
+		awaitSpendable(t, tx.UnsignedTx, 0)
 
 		return tx.UnsignedTx
 	}
