@@ -138,17 +138,6 @@ func TestDustCovenant(t *testing.T) {
 	_, _, operatorPubKey, grpcOperator := setupArkSDKwithPublicKey(t)
 	t.Cleanup(func() { grpcOperator.Close() })
 
-	// A separate identity pays for every funding transaction. Sighash commits to
-	// the prevout amount, and the wallet resolves an input by script, so two
-	// outputs sharing a script in one transaction make it sign for the wrong
-	// amount and produce an invalid checkpoint signature. The sender's account
-	// script is the only one their wallet can sign, so the sender cannot both
-	// hold a dust output and take change. A funder gives every output in a
-	// funding transaction a distinct script.
-	funder, funderWallet, funderPubKey, grpcFunder := setupArkSDKwithPublicKey(t)
-	t.Cleanup(func() { grpcFunder.Close() })
-	_ = fundAndSettleAlice(t, ctx, funder, 200_000)
-
 	emulator, emulatorPubKey, conn := setupEmulatorClient(t, ctx)
 	t.Cleanup(func() { _ = conn.Close() })
 
@@ -220,27 +209,35 @@ func TestDustCovenant(t *testing.T) {
 		}, 30*time.Second, 250*time.Millisecond, "vtxos of %s not spendable", txid)
 	}
 
-	funderAccount := defaultVtxoScript(funderPubKey, server, exitDelay)
-	funderAccountPk := p2trScriptForVtxoScript(t, *funderAccount)
-
-	// submitWithArkd goes straight to arkd, so the SDK's ListVtxos never learns
-	// the VTXO was spent and buildWalletFundedTx keeps handing back inputs this
-	// test already consumed. The funder's VTXO is resolved once and threaded by
-	// hand. Every funding transaction lays its outputs out the same way, each
-	// with a distinct script:
+	// Each funding transaction uses its own freshly settled funder and is never
+	// chained into the next. Spending a settled VTXO works; spending a funder's
+	// change from a previous arkade transaction produced an invalid signature in
+	// the checkpoint, and the asset-account prototype likewise funds once and
+	// only ever spends that transaction's first output. A funder per call also
+	// removes the cross-subtest coupling entirely.
+	//
+	// Outputs, each with a distinct script -- two outputs sharing one script make
+	// the wallet sign for the wrong prevout amount:
 	//
 	//	[0] receiver account, dust
 	//	[1] sender account, dust, carrying the sender's asset
-	//	[2] funder change, re-points funderFunding
-	funderFunding := findAccountInput(t, ctx, funder, indexerSvc, *funderAccount)
-
+	//	[2] funder change, unused
 	fundAccounts := func(t *testing.T, packet *asset.Packet) *wire.MsgTx {
 		t.Helper()
-		change := funderFunding.Amount - 2*dust
+
+		funder, funderWallet, funderPubKey, grpcFunder := setupArkSDKwithPublicKey(t)
+		t.Cleanup(func() { grpcFunder.Close() })
+		_ = fundAndSettleAlice(t, ctx, funder, 100_000)
+
+		funderAccount := defaultVtxoScript(funderPubKey, server, exitDelay)
+		funderAccountPk := p2trScriptForVtxoScript(t, *funderAccount)
+		funding := findAccountInput(t, ctx, funder, indexerSvc, *funderAccount)
+
+		change := funding.Amount - 2*dust
 		require.Positive(t, change)
 
 		tx, cps, err := offchain.BuildTxs(
-			[]offchain.VtxoInput{funderFunding},
+			[]offchain.VtxoInput{funding},
 			[]*wire.TxOut{
 				{Value: dust, PkScript: receiverAccountPk},
 				{Value: dust, PkScript: senderAccountPk},
@@ -254,11 +251,8 @@ func TestDustCovenant(t *testing.T) {
 		}
 
 		submitWithArkd(t, ctx, tx, cps, funderWallet, grpcFunder)
-		awaitSpendable(t, tx.UnsignedTx, 0, 1, 2)
+		awaitSpendable(t, tx.UnsignedTx, 0, 1)
 
-		funderFunding = vtxoInputFromScriptOutput(
-			t, tx.UnsignedTx, 2, *funderAccount, onlyForfeitScript(t, *funderAccount),
-		)
 		return tx.UnsignedTx
 	}
 
